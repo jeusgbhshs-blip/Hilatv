@@ -9,7 +9,7 @@
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002` |
-| T04 | 图像/视频/TTS adapter | T03 | 🔵 | t04-media-adapters | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T04 | 图像/视频/TTS adapter | T03 | 🔵 | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ⬜ | – | |
 | T06 | N4 脚本 + N5 分镜 | T05 | ⬜ | – | |
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ⬜ | – | |
