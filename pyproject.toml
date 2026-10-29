@@ -1,0 +1,54 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hilatv"
+version = "0.1.0"
+description = "HiLatv — one sentence in, a publishable commercial short video out."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115.6",
+  "uvicorn[standard]>=0.34.0",
+  "pydantic>=2.10.0",
+  "pydantic-settings>=2.7.0",
+  "jinja2>=3.1.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.4",
+  "httpx>=0.28.0",
+  "ruff>=0.8.4",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["gateway*", "workers*", "eval*"]
+
+[tool.setuptools.package-data]
+"workers.nodes.n01_brief" = ["prompts/*.j2"]
+
+[tool.pytest.ini_options]
+testpaths = [
+  "tests",
+  "apps/api/tests",
+  "gateway/tests",
+  "workers/nodes/n01_brief/tests",
+  "eval/tests",
+]
+pythonpath = [".", "apps/api"]
+addopts = "-q"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["apps", "workers", "gateway", "eval", "tests"]
+extend-exclude = [".venv", "apps/web", "node_modules"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app", "gateway", "workers", "eval"]
