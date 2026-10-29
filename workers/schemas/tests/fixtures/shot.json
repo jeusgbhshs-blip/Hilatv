@@ -1,0 +1,18 @@
+{
+  "shot_id": "S03",
+  "order": 3,
+  "duration_s": 4.2,
+  "purpose": "展示核心卖点：高压",
+  "visual": "柱塞泵特写，金属表面冷光扫过，背景虚化的车间",
+  "shot_size": "close_up",
+  "camera": "slow_push_in",
+  "subject_refs": ["product:HP-300"],
+  "scene_ref": "scene:workshop_01",
+  "voiceover": "Built for 30 MPa, every day.",
+  "on_screen_text": [
+    {"text": "30 MPa", "style": "spec_badge", "in": 0.8, "out": 3.8}
+  ],
+  "transition_out": "cut",
+  "generation_mode": "product_composite",
+  "status": "pending"
+}

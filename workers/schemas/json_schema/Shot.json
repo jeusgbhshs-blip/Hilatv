@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "GenerationMode": {
+      "description": "How N5 asks a later node to produce the shot. SPEC §5.3.",
+      "enum": [
+        "text_to_video",
+        "image_to_video",
+        "first_last_frame",
+        "reference_to_video",
+        "product_composite",
+        "motion_graphics"
+      ],
+      "title": "GenerationMode",
+      "type": "string"
+    },
+    "OnScreenText": {
+      "additionalProperties": false,
+      "description": "Text the render layer (N13/N14/N15) composites. Models must not draw it.",
+      "properties": {
+        "text": {
+          "minLength": 1,
+          "title": "Text",
+          "type": "string"
+        },
+        "style": {
+          "minLength": 1,
+          "title": "Style",
+          "type": "string"
+        },
+        "in": {
+          "minimum": 0,
+          "title": "In",
+          "type": "number"
+        },
+        "out": {
+          "minimum": 0,
+          "title": "Out",
+          "type": "number"
+        }
+      },
+      "required": [
+        "text",
+        "style",
+        "in",
+        "out"
+      ],
+      "title": "OnScreenText",
+      "type": "object"
+    },
+    "ShotStatus": {
+      "description": "Shot lifecycle. The SPEC sample uses ``pending``.",
+      "enum": [
+        "pending",
+        "generating",
+        "passed",
+        "rejected",
+        "fallback"
+      ],
+      "title": "ShotStatus",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "shot_id": {
+      "minLength": 1,
+      "title": "Shot Id",
+      "type": "string"
+    },
+    "order": {
+      "minimum": 1,
+      "title": "Order",
+      "type": "integer"
+    },
+    "duration_s": {
+      "exclusiveMinimum": 0,
+      "maximum": 180,
+      "title": "Duration S",
+      "type": "number"
+    },
+    "purpose": {
+      "minLength": 1,
+      "title": "Purpose",
+      "type": "string"
+    },
+    "visual": {
+      "minLength": 1,
+      "title": "Visual",
+      "type": "string"
+    },
+    "shot_size": {
+      "minLength": 1,
+      "title": "Shot Size",
+      "type": "string"
+    },
+    "camera": {
+      "minLength": 1,
+      "title": "Camera",
+      "type": "string"
+    },
+    "subject_refs": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Subject Refs",
+      "type": "array"
+    },
+    "scene_ref": {
+      "title": "Scene Ref",
+      "type": "string"
+    },
+    "voiceover": {
+      "title": "Voiceover",
+      "type": "string"
+    },
+    "on_screen_text": {
+      "items": {
+        "$ref": "#/$defs/OnScreenText"
+      },
+      "title": "On Screen Text",
+      "type": "array"
+    },
+    "transition_out": {
+      "minLength": 1,
+      "title": "Transition Out",
+      "type": "string"
+    },
+    "generation_mode": {
+      "$ref": "#/$defs/GenerationMode"
+    },
+    "status": {
+      "$ref": "#/$defs/ShotStatus"
+    }
+  },
+  "required": [
+    "shot_id",
+    "order",
+    "duration_s",
+    "purpose",
+    "visual",
+    "shot_size",
+    "camera",
+    "subject_refs",
+    "scene_ref",
+    "voiceover",
+    "on_screen_text",
+    "transition_out",
+    "generation_mode",
+    "status"
+  ],
+  "title": "Shot",
+  "type": "object"
+}

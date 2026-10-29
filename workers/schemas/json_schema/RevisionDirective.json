@@ -1,0 +1,32 @@
+{
+  "additionalProperties": false,
+  "description": "N18 change set: ``{targets, change, keep}``.",
+  "properties": {
+    "targets": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Targets",
+      "type": "array"
+    },
+    "change": {
+      "additionalProperties": true,
+      "title": "Change",
+      "type": "object"
+    },
+    "keep": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Keep",
+      "type": "array"
+    }
+  },
+  "required": [
+    "targets",
+    "change"
+  ],
+  "title": "RevisionDirective",
+  "type": "object"
+}

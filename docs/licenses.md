@@ -17,6 +17,10 @@
 | pytest | ≥ 8.3 | MIT | 单元测试 |
 | httpx | ≥ 0.28 | BSD-3-Clause | API 测试客户端 |
 | Ruff | ≥ 0.8 | MIT | Python lint / format |
+| SQLAlchemy | ≥ 2.0.36 | MIT | 迁移与数据库类型 |
+| Alembic | ≥ 1.14 | MIT | 数据库迁移 |
+| psycopg | ≥ 3.2 | LGPL-3.0 | PostgreSQL 驱动（业务迁移与 JSONB 读写） |
+| pytest-cov | ≥ 6.0 | MIT | 模型模块覆盖率 |
 | PostgreSQL | 16（`pgvector/pgvector:0.8.7-pg16`） | PostgreSQL License | 业务库 |
 | pgvector | 0.8.7 | PostgreSQL License | 向量检索扩展 |
 | Redis | 7.2.17-alpine | BSD-3-Clause | 缓存。钉在 7.2，避开 7.4+ 的 RSALv2 / SSPL |

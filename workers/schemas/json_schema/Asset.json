@@ -1,0 +1,97 @@
+{
+  "$defs": {
+    "AssetKind": {
+      "description": "Stored media. SPEC does not give an Asset sample; kinds follow N2/N7/N12/N17.",
+      "enum": [
+        "logo",
+        "product_photo",
+        "cutout",
+        "person_photo",
+        "product_anchor",
+        "person_anchor",
+        "scene_anchor",
+        "style_anchor",
+        "keyframe",
+        "video",
+        "voiceover",
+        "music",
+        "sound_effect",
+        "subtitle",
+        "deliverable"
+      ],
+      "title": "AssetKind",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "asset_id": {
+      "minLength": 1,
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "kind": {
+      "$ref": "#/$defs/AssetKind"
+    },
+    "uri": {
+      "minLength": 1,
+      "title": "Uri",
+      "type": "string"
+    },
+    "brand_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Brand Id"
+    },
+    "shot_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Shot Id"
+    },
+    "mime_type": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Mime Type"
+    },
+    "license_source": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "License Source"
+    }
+  },
+  "required": [
+    "asset_id",
+    "kind",
+    "uri"
+  ],
+  "title": "Asset",
+  "type": "object"
+}

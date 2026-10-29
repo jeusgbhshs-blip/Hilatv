@@ -1,0 +1,7 @@
+{
+  "action": "regenerate",
+  "target": {"node": "N10", "shot_id": "S04"},
+  "reason": "产品瓶身在第 3 秒出现变形",
+  "changes": {"model": "kling-o3", "motion_strength": "low", "candidates": 4},
+  "max_attempts_left": 2
+}

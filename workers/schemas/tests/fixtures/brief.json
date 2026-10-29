@@ -1,0 +1,15 @@
+{
+  "brief_id": "uuid",
+  "raw_input": "给我们的柱塞泵做个30秒外贸宣传片，英文",
+  "goal": "外贸获客",
+  "platform": ["YouTube", "LinkedIn"],
+  "duration_s": 30,
+  "aspect_ratios": ["16:9", "9:16"],
+  "languages": ["en"],
+  "video_type": "product_showcase",
+  "audience": "海外工业采购商",
+  "must_include": ["30MPa", "工厂实拍感"],
+  "style": "工业质感、冷色调、稳重",
+  "assumptions": ["未提供工厂视频，使用 AI 生成工厂场景"],
+  "open_questions": []
+}

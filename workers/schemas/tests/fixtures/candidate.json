@@ -1,0 +1,22 @@
+{
+  "candidate_id": "uuid",
+  "shot_id": "S03",
+  "node": "N10",
+  "model": "seedance-2.x",
+  "params": {"seed": 1234, "duration": 5, "prompt": "..."},
+  "uri": "oss://...",
+  "qa": {
+    "scores": {
+      "product_fidelity": 9,
+      "motion_quality": 8,
+      "aesthetics": 8,
+      "prompt_match": 9,
+      "artifact_free": 10
+    },
+    "hard_fail": [],
+    "total": 8.8,
+    "evaluator": "vlm-judge-v1",
+    "notes": "第 2 秒光效略强"
+  },
+  "selected": true
+}

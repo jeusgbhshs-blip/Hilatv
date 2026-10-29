@@ -14,11 +14,15 @@ dependencies = [
   "pydantic>=2.10.0",
   "pydantic-settings>=2.7.0",
   "jinja2>=3.1.4",
+  "sqlalchemy>=2.0.36",
+  "alembic>=1.14.0",
+  "psycopg[binary]>=3.2.3",
 ]
 
 [project.optional-dependencies]
 dev = [
   "pytest>=8.3.4",
+  "pytest-cov>=6.0.0",
   "httpx>=0.28.0",
   "ruff>=0.8.4",
 ]
@@ -29,6 +33,7 @@ include = ["gateway*", "workers*", "eval*"]
 
 [tool.setuptools.package-data]
 "workers.nodes.n01_brief" = ["prompts/*.j2"]
+"workers.schemas" = ["json_schema/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -36,6 +41,7 @@ testpaths = [
   "apps/api/tests",
   "gateway/tests",
   "workers/nodes/n01_brief/tests",
+  "workers/schemas/tests",
   "eval/tests",
 ]
 pythonpath = [".", "apps/api"]
@@ -44,7 +50,7 @@ addopts = "-q"
 [tool.ruff]
 target-version = "py312"
 line-length = 100
-src = ["apps", "workers", "gateway", "eval", "tests"]
+src = ["apps", "workers", "gateway", "eval", "tests", "migrations"]
 extend-exclude = [".venv", "apps/web", "node_modules"]
 
 [tool.ruff.lint]
@@ -52,3 +58,11 @@ select = ["E", "F", "I", "UP"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["app", "gateway", "workers", "eval"]
+
+[tool.coverage.run]
+source = ["workers/schemas"]
+omit = ["workers/schemas/tests/*"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true

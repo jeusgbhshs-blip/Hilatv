@@ -1,4 +1,7 @@
-"""Local node envelope. Chapter 5 models replace this in T02."""
+"""Node run envelope (project, payload, attempt).
+
+Chapter 5 documents live in ``workers.schemas``. T05 will put a Brief in ``payload``.
+"""
 
 from __future__ import annotations
 

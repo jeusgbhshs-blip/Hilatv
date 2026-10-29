@@ -15,6 +15,7 @@ python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 make test
 make up && make accept-t01
+make accept-t02
 ```
 
 没有 `.env` 时，`make` 读取 `.env.example` 里的开发默认值。API：`make api`（<http://localhost:8000/health>）。前端：`cd apps/web && npm install && npm run dev`。

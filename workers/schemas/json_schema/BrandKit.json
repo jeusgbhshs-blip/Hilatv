@@ -1,0 +1,311 @@
+{
+  "$defs": {
+    "BrandColors": {
+      "additionalProperties": false,
+      "properties": {
+        "primary": {
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Primary",
+          "type": "string"
+        },
+        "secondary": {
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Secondary",
+          "type": "string"
+        },
+        "accent": {
+          "pattern": "^#[0-9A-Fa-f]{6}$",
+          "title": "Accent",
+          "type": "string"
+        }
+      },
+      "required": [
+        "primary",
+        "secondary",
+        "accent"
+      ],
+      "title": "BrandColors",
+      "type": "object"
+    },
+    "BrandFonts": {
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "body": {
+          "minLength": 1,
+          "title": "Body",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "body"
+      ],
+      "title": "BrandFonts",
+      "type": "object"
+    },
+    "BrandVoice": {
+      "additionalProperties": false,
+      "properties": {
+        "tts_voice": {
+          "minLength": 1,
+          "title": "Tts Voice",
+          "type": "string"
+        },
+        "speed": {
+          "exclusiveMinimum": 0,
+          "maximum": 3,
+          "title": "Speed",
+          "type": "number"
+        }
+      },
+      "required": [
+        "tts_voice",
+        "speed"
+      ],
+      "title": "BrandVoice",
+      "type": "object"
+    },
+    "CallToAction": {
+      "additionalProperties": false,
+      "properties": {
+        "phone": {
+          "title": "Phone",
+          "type": "string"
+        },
+        "website": {
+          "title": "Website",
+          "type": "string"
+        },
+        "wechat_qr": {
+          "title": "Wechat Qr",
+          "type": "string"
+        }
+      },
+      "required": [
+        "phone",
+        "website",
+        "wechat_qr"
+      ],
+      "title": "CallToAction",
+      "type": "object"
+    },
+    "Industry": {
+      "description": "Chapter 7 industries. The SPEC sample uses ``manufacturing``.",
+      "enum": [
+        "manufacturing",
+        "foreign_trade",
+        "ecommerce",
+        "local_life",
+        "education",
+        "public_sector"
+      ],
+      "title": "Industry",
+      "type": "string"
+    },
+    "LogoAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "primary": {
+          "minLength": 1,
+          "title": "Primary",
+          "type": "string"
+        },
+        "mono_white": {
+          "minLength": 1,
+          "title": "Mono White",
+          "type": "string"
+        },
+        "safe_area_ratio": {
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "title": "Safe Area Ratio",
+          "type": "number"
+        }
+      },
+      "required": [
+        "primary",
+        "mono_white",
+        "safe_area_ratio"
+      ],
+      "title": "LogoAsset",
+      "type": "object"
+    },
+    "Person": {
+      "additionalProperties": false,
+      "description": "A person may be stored only with an explicit consent flag (N2).",
+      "properties": {
+        "person_id": {
+          "minLength": 1,
+          "title": "Person Id",
+          "type": "string"
+        },
+        "role": {
+          "minLength": 1,
+          "title": "Role",
+          "type": "string"
+        },
+        "photos": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Photos",
+          "type": "array"
+        },
+        "consent": {
+          "title": "Consent",
+          "type": "boolean"
+        },
+        "voice_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Voice Id"
+        }
+      },
+      "required": [
+        "person_id",
+        "role",
+        "photos",
+        "consent",
+        "voice_id"
+      ],
+      "title": "Person",
+      "type": "object"
+    },
+    "Product": {
+      "additionalProperties": false,
+      "properties": {
+        "product_id": {
+          "minLength": 1,
+          "title": "Product Id",
+          "type": "string"
+        },
+        "name": {
+          "minLength": 1,
+          "title": "Name",
+          "type": "string"
+        },
+        "photos": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Photos",
+          "type": "array"
+        },
+        "cutouts": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Cutouts",
+          "type": "array"
+        },
+        "selling_points": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Selling Points",
+          "type": "array"
+        },
+        "forbidden_changes": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Forbidden Changes",
+          "type": "array"
+        }
+      },
+      "required": [
+        "product_id",
+        "name",
+        "photos",
+        "cutouts",
+        "selling_points",
+        "forbidden_changes"
+      ],
+      "title": "Product",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "brand_id": {
+      "minLength": 1,
+      "title": "Brand Id",
+      "type": "string"
+    },
+    "company_name": {
+      "minLength": 1,
+      "title": "Company Name",
+      "type": "string"
+    },
+    "industry": {
+      "$ref": "#/$defs/Industry"
+    },
+    "logo": {
+      "$ref": "#/$defs/LogoAsset"
+    },
+    "colors": {
+      "$ref": "#/$defs/BrandColors"
+    },
+    "fonts": {
+      "$ref": "#/$defs/BrandFonts"
+    },
+    "products": {
+      "items": {
+        "$ref": "#/$defs/Product"
+      },
+      "title": "Products",
+      "type": "array"
+    },
+    "people": {
+      "items": {
+        "$ref": "#/$defs/Person"
+      },
+      "title": "People",
+      "type": "array"
+    },
+    "voice": {
+      "$ref": "#/$defs/BrandVoice"
+    },
+    "tone": {
+      "minLength": 1,
+      "title": "Tone",
+      "type": "string"
+    },
+    "banned_words": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Banned Words",
+      "type": "array"
+    },
+    "cta": {
+      "$ref": "#/$defs/CallToAction"
+    }
+  },
+  "required": [
+    "brand_id",
+    "company_name",
+    "industry",
+    "logo",
+    "colors",
+    "fonts",
+    "products",
+    "people",
+    "voice",
+    "tone",
+    "cta"
+  ],
+  "title": "BrandKit",
+  "type": "object"
+}
