@@ -11,7 +11,7 @@
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
 | T04 | 图像/视频/TTS adapter | T03 | ✅ | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ✅ | [t05-n1-brief](https://github.com/jeusgbhshs-blip/Hilatv/pull/25) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T06 | N4 脚本 + N5 分镜 | T05 | 🔵 | t06-script-storyboard | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T06 | N4 脚本 + N5 分镜 | T05 | 🔵 | [t06-script-storyboard](https://github.com/jeusgbhshs-blip/Hilatv/pull/26) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ⬜ | – | |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ⬜ | – | |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ⬜ | – | |
