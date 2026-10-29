@@ -1,0 +1,9 @@
+# Upstream Temporal development SQL dynamic config (MIT), from
+# temporalio/docker-compose dynamicconfig/development-sql.yaml.
+# Required so temporalio/auto-setup can boot against Postgres.
+limit.maxIDLength:
+  - value: 255
+    constraints: {}
+system.forceSearchAttributesCacheRefreshOnRead:
+  - value: true # Dev setup only. Please don't turn this on in production.
+    constraints: {}
