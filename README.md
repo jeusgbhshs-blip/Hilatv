@@ -14,6 +14,7 @@
 python3 -m venv .venv && . .venv/bin/activate
 pip install -e ".[dev]"
 make test
+make accept-t03
 make up && make accept-t01
 make accept-t02
 ```

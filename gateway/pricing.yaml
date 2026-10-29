@@ -1,0 +1,41 @@
+# Assumed public list prices in CNY per 1,000,000 tokens.
+# These are configuration, not a contract. Edit this file to match the invoice.
+# Unknown models use `default` so a new live route still has a non-zero estimate.
+
+default_output_tokens: 512
+
+default:
+  input_per_million: "2"
+  output_per_million: "8"
+
+models:
+  deepseek-chat:
+    input_per_million: "2"
+    output_per_million: "8"
+  qwen-plus:
+    input_per_million: "0.8"
+    output_per_million: "2"
+  doubao-pro-32k:
+    input_per_million: "0.8"
+    output_per_million: "2"
+  mock-llm:
+    input_per_million: "0"
+    output_per_million: "0"
+  mock-image:
+    input_per_million: "0"
+    output_per_million: "0"
+  mock-video:
+    input_per_million: "0"
+    output_per_million: "0"
+  mock-tts:
+    input_per_million: "0"
+    output_per_million: "0"
+  mock-asr:
+    input_per_million: "0"
+    output_per_million: "0"
+  mock-music:
+    input_per_million: "0"
+    output_per_million: "0"
+  mock-judge:
+    input_per_million: "0"
+    output_per_million: "0"
