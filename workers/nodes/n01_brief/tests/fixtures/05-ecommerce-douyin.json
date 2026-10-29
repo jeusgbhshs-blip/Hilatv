@@ -1,0 +1,30 @@
+{
+  "id": "05-ecommerce-douyin",
+  "request": {
+    "project_id": "05-ecommerce-douyin",
+    "payload": {
+      "raw_input": "这款运动鞋做一条15秒抖音带货短视频，节奏快，面向年轻女性，突出透气和轻到 200g"
+    }
+  },
+  "expect": {
+    "duration_s": 15,
+    "languages": [
+      "zh"
+    ],
+    "platforms": [
+      "抖音"
+    ],
+    "aspect_ratios": [
+      "9:16"
+    ],
+    "video_type": "live_commerce",
+    "goal": "带货转化",
+    "audience": "年轻女性",
+    "style": "节奏快",
+    "max_questions": 0,
+    "must_include_contains": [
+      "透气",
+      "200g"
+    ]
+  }
+}

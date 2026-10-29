@@ -1,0 +1,19 @@
+{
+  "id": "09-course",
+  "request": {
+    "project_id": "09-course",
+    "payload": {
+      "raw_input": "Python 入门课招生宣传，30秒，面向零基础职场人，报名入口放片尾"
+    }
+  },
+  "expect": {
+    "duration_s": 30,
+    "video_type": "course_promo",
+    "goal": "课程获客",
+    "audience": "零基础职场人",
+    "max_questions": 0,
+    "must_include_contains": [
+      "报名入口放片尾"
+    ]
+  }
+}

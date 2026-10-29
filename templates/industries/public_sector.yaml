@@ -1,0 +1,60 @@
+industry: public_sector
+label: 政企公共
+narrative:
+  - 背景
+  - 举措
+  - 成效
+  - 愿景
+shot_sequence:
+  - 先交代背景，不堆口号
+  - 用场景说明具体举措
+  - 数据以后期字幕呈现，且必须有出处
+  - 收在愿景或邀请，语气庄重
+duration_s: 60
+aspect_ratios:
+  - "16:9"
+  - "9:16"
+platforms:
+  - 官网
+  - 视频号
+languages:
+  - zh
+goal: 公共宣传
+audience: 公众与合作机构
+style_keywords:
+  - 庄重
+  - 克制
+music_mood: 缓、稳、留白多
+must_include:
+  - 背景
+  - 举措或成效
+forbidden:
+  - 无法核对的数据和排名
+  - 画面内生成的文字、Logo、价格或电话
+requirements:
+  - 庄重
+  - 数据准确
+  - 合规审核更严
+video_types:
+  - id: corporate_film
+    label: 招商宣传片
+    goal: 招商宣传
+    keywords:
+      - 招商宣传
+      - 招商
+      - 形象片
+  - id: policy_explainer
+    label: 政策解读
+    goal: 政策解读
+    keywords:
+      - 政策解读
+      - 政策
+default_video_type: corporate_film
+keywords:
+  - {text: 政策, weight: 5}
+  - {text: 政务, weight: 5}
+  - {text: 政府, weight: 5}
+  - {text: 园区, weight: 4}
+  - {text: 高新区, weight: 4}
+  - {text: 招商, weight: 4}
+clarify_question: 这条片是招商宣传，还是政策解读？

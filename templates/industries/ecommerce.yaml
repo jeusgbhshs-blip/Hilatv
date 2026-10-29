@@ -1,0 +1,60 @@
+industry: ecommerce
+label: 电商零售
+narrative:
+  - 三秒钩子
+  - 使用场景
+  - 卖点
+  - 促销
+  - 下单
+shot_sequence:
+  - 开头三秒给一个具体使用画面
+  - 产品在真实使用场景里出现
+  - 卖点以后期短句叠在安全区
+  - 价格和优惠只在后期出现
+  - 片尾指向店铺或下单动作
+duration_s: 15
+aspect_ratios:
+  - "9:16"
+platforms:
+  - 抖音
+languages:
+  - zh
+goal: 带货转化
+audience: 线上购物用户
+style_keywords:
+  - 节奏快
+  - 卖点突出
+music_mood: 轻快、短句、鼓点清楚
+must_include:
+  - 使用场景
+  - 核心卖点
+forbidden:
+  - 编造销量和评价
+  - 画面内生成的文字、Logo、价格或电话
+requirements:
+  - 竖屏优先
+  - 节奏快
+  - 同一风格可批量套 SKU
+video_types:
+  - id: hero_video
+    label: 主图视频
+    goal: 商品展示
+    keywords:
+      - 主图视频
+      - 主图
+  - id: live_commerce
+    label: 带货短视频
+    goal: 带货转化
+    keywords:
+      - 带货短视频
+      - 带货
+default_video_type: hero_video
+keywords:
+  - {text: 带货, weight: 5}
+  - {text: 主图, weight: 5}
+  - {text: 电商, weight: 5}
+  - {text: SKU, weight: 4}
+  - {text: 淘宝, weight: 4}
+  - {text: 拼多多, weight: 4}
+  - {text: 直播间, weight: 3}
+clarify_question: 这条片做主图视频，还是做带货短视频？

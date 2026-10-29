@@ -1,0 +1,35 @@
+{
+  "id": "01-pump-export",
+  "request": {
+    "project_id": "01-pump-export",
+    "payload": {
+      "raw_input": "给我们的柱塞泵做个30秒外贸宣传片，英文，投 YouTube 和 LinkedIn，横屏和竖屏都要，面向海外工业采购商，风格工业质感、冷色调、稳重，一定要带上 30MPa 和工厂实拍感"
+    }
+  },
+  "expect": {
+    "duration_s": 30,
+    "languages": [
+      "en"
+    ],
+    "platforms": [
+      "YouTube",
+      "LinkedIn"
+    ],
+    "aspect_ratios": [
+      "16:9",
+      "9:16"
+    ],
+    "video_type": "product_showcase",
+    "goal": "外贸获客",
+    "audience": "海外工业采购商",
+    "style": "工业质感、冷色调、稳重",
+    "max_questions": 0,
+    "must_include_contains": [
+      "30MPa",
+      "工厂实拍感"
+    ],
+    "assumption_contains": [
+      "未提供工厂视频"
+    ]
+  }
+}

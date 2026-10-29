@@ -1,0 +1,44 @@
+{
+  "id": "20-url-brochure",
+  "request": {
+    "project_id": "20-url-brochure",
+    "payload": {
+      "raw_input": "参考这个网页做外贸英文产品视频，30秒，YouTube",
+      "attachments": [
+        {
+          "kind": "url",
+          "uri": "http://127.0.0.1:{{port}}/brochure.html"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "duration_s": 30,
+    "languages": [
+      "en"
+    ],
+    "platforms": [
+      "YouTube"
+    ],
+    "aspect_ratios": [
+      "16:9"
+    ],
+    "video_type": "product_showcase",
+    "goal": "外贸获客",
+    "max_questions": 0,
+    "must_include_contains": [
+      "30MPa"
+    ],
+    "assumption_contains": [
+      "从附件识别产品",
+      "高压柱塞泵 HP-300",
+      "未提供工厂视频",
+      "Logo"
+    ],
+    "image_classes": [
+      "product",
+      "logo"
+    ],
+    "images_downloaded": true
+  }
+}

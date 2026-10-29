@@ -1,0 +1,69 @@
+industry: manufacturing
+label: 制造业
+narrative:
+  - 痛点
+  - 产品特写
+  - 参数
+  - 工厂与检测
+  - 认证
+  - 行动号召
+shot_sequence:
+  - 开场点出使用中的具体问题
+  - 产品中景或特写，产品本体保持真实
+  - 关键参数留给后期字幕，不画进画面
+  - 工厂、检测或装配场景
+  - 认证与资质以后期卡片展示
+  - 片尾放联系方式
+duration_s: 30
+aspect_ratios:
+  - "9:16"
+platforms:
+  - 视频号
+  - 抖音
+languages:
+  - zh
+goal: 产品宣传
+audience: 行业采购与工程决策者
+style_keywords:
+  - 工业质感
+  - 冷色调
+  - 稳重
+music_mood: 低沉、稳定、不煽情
+must_include:
+  - 产品特写
+  - 关键参数
+  - 工厂或检测画面
+forbidden:
+  - 编造认证和无法证明的参数
+  - 画面内生成的文字、Logo、价格或电话
+requirements:
+  - 产品零失真
+  - 工业质感
+  - 参数准确
+video_types:
+  - id: product_showcase
+    label: 产品宣传片
+    goal: 产品宣传
+    keywords:
+      - 产品宣传片
+      - 产品宣传
+      - 产品片
+      - 产品视频
+  - id: factory_strength
+    label: 工厂实力片
+    goal: 展示工厂实力
+    keywords:
+      - 工厂实力片
+      - 工厂实力
+      - 实力片
+default_video_type: product_showcase
+keywords:
+  - {text: 制造, weight: 4}
+  - {text: 机床, weight: 4}
+  - {text: 数控, weight: 3}
+  - {text: 柱塞泵, weight: 3}
+  - {text: 零部件, weight: 3}
+  - {text: 机械, weight: 2}
+  - {text: 工厂, weight: 2}
+  - {text: 车间, weight: 2}
+clarify_question: 这条片以产品宣传为主，还是以工厂实力为主？

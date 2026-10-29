@@ -1,0 +1,26 @@
+{
+  "id": "07-restaurant",
+  "request": {
+    "project_id": "07-restaurant",
+    "payload": {
+      "raw_input": "给海景餐厅做一条探店视频，20秒，竖屏，发抖音和视频号，风格真实感、食物质感，地址在青岛五四广场"
+    }
+  },
+  "expect": {
+    "duration_s": 20,
+    "platforms": [
+      "抖音",
+      "视频号"
+    ],
+    "aspect_ratios": [
+      "9:16"
+    ],
+    "video_type": "store_visit",
+    "goal": "到店引流",
+    "style": "真实感、食物质感",
+    "max_questions": 0,
+    "must_include_contains": [
+      "青岛五四广场"
+    ]
+  }
+}

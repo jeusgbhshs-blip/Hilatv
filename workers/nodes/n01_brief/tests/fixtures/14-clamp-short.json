@@ -1,0 +1,24 @@
+{
+  "id": "14-clamp-short",
+  "request": {
+    "project_id": "14-clamp-short",
+    "payload": {
+      "raw_input": "给机床做个3秒的抖音产品宣传片"
+    }
+  },
+  "expect": {
+    "duration_s": 5,
+    "platforms": [
+      "抖音"
+    ],
+    "aspect_ratios": [
+      "9:16"
+    ],
+    "video_type": "product_showcase",
+    "max_questions": 0,
+    "assumption_contains": [
+      "短于 5 秒",
+      "未提供工厂视频"
+    ]
+  }
+}

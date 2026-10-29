@@ -1,0 +1,25 @@
+{
+  "id": "03-factory-film",
+  "request": {
+    "project_id": "03-factory-film",
+    "payload": {
+      "raw_input": "拍一条工厂实力片，展示车间和检测线，60秒，横屏，放官网"
+    }
+  },
+  "expect": {
+    "duration_s": 60,
+    "platforms": [
+      "官网"
+    ],
+    "aspect_ratios": [
+      "16:9"
+    ],
+    "video_type": "factory_strength",
+    "goal": "展示工厂实力",
+    "max_questions": 0,
+    "assumption_contains": [
+      "未说明语种",
+      "未提供工厂视频"
+    ]
+  }
+}

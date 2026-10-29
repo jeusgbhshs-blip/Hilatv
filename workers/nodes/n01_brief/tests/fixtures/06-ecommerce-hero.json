@@ -1,0 +1,18 @@
+{
+  "id": "06-ecommerce-hero",
+  "request": {
+    "project_id": "06-ecommerce-hero",
+    "payload": {
+      "raw_input": "给新款保温杯做主图视频"
+    }
+  },
+  "expect": {
+    "duration_s": 15,
+    "video_type": "hero_video",
+    "goal": "商品展示",
+    "max_questions": 0,
+    "assumption_contains": [
+      "未说明时长"
+    ]
+  }
+}

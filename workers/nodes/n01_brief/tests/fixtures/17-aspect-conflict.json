@@ -1,0 +1,27 @@
+{
+  "id": "17-aspect-conflict",
+  "request": {
+    "project_id": "17-aspect-conflict",
+    "payload": {
+      "raw_input": "抖音产品宣传片，只要横屏 16:9，数控机床"
+    }
+  },
+  "expect": {
+    "platforms": [
+      "抖音"
+    ],
+    "aspect_ratios": [
+      "16:9",
+      "9:16"
+    ],
+    "video_type": "product_showcase",
+    "min_questions": 1,
+    "max_questions": 1,
+    "assumption_contains": [
+      "平台与画面比例不一致"
+    ],
+    "question_contains": [
+      "画面比例"
+    ]
+  }
+}
