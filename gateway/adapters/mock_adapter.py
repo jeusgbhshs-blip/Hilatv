@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from decimal import Decimal
 from typing import Any
 
@@ -70,6 +71,7 @@ def _unstructured(call: Invocation) -> dict[str, object]:
             "prompt": call.prompt,
             "negative_prompt": call.negative_prompt,
             "seed": call.seed,
+            "duration_s": _video_seconds(call),
         }
     if call.task == "tts":
         stamps, duration = speech_timestamps(call.prompt)
@@ -130,7 +132,8 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
             "seed": call.seed,
         }
     if call.task == "video":
-        data = render_mp4(call.seed)
+        seconds = _video_seconds(call)
+        data = render_mp4(call.seed, duration_s=seconds)
         uri = store.put(f"gateway/video/{digest}.mp4", data, "video/mp4")
         return {
             "mock": True,
@@ -139,7 +142,7 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
             "mime_type": "video/mp4",
             "width": MOCK_WIDTH,
             "height": MOCK_HEIGHT,
-            "duration_s": 1.0,
+            "duration_s": seconds,
             "prompt": call.prompt,
             "negative_prompt": call.negative_prompt,
             "seed": call.seed,
@@ -157,6 +160,19 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
         "duration_s": duration,
         "timestamps": stamps,
     }
+
+
+def _video_seconds(call: Invocation) -> float:
+    """Honor the requested length. Callers that omit it keep the 1 second sample."""
+
+    raw = call.params.get("duration_s", 1)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return 1.0
+    if not math.isfinite(value) or value <= 0:
+        return 1.0
+    return min(10.0, value)
 
 
 def _digest(call: Invocation) -> str:

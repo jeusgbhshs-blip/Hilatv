@@ -33,7 +33,7 @@
 | Temporal server | `temporalio/auto-setup:1.29.1` | MIT | 工作流 |
 | Temporal UI | `temporalio/ui:2.34.0` | MIT | 工作流界面 |
 | Temporal development-sql dynamic config | 与 `temporalio/docker-compose` 中同名文件一致 | MIT | 让 auto-setup 在 Postgres 上启动 |
-| FFmpeg | 系统包（开发机 / CI `apt install ffmpeg`；编码器 libx264） | LGPL / GPL（取决于发行版编译选项；libx264 为 GPL） | mock 视频样例编码，以及 T04 验收时解码 PNG / MP4 / WAV。未作为 Python 依赖链接进进程 |
+| FFmpeg | 系统包（开发机 / CI `apt install ffmpeg`；编码器 libx264） | LGPL / GPL（取决于发行版编译选项；libx264 为 GPL） | mock 视频样例编码；T04 验收时解码 PNG / MP4 / WAV；N10 用 ffprobe 量时长并用 libx264 裁到镜头时长。未作为 Python 依赖链接进进程 |
 
 尚未引入、因此未登记：React Flow（`@xyflow/react`）、shadcn/ui、Remotion、厂商模型 SDK、boto3、MinIO Python SDK。对象存储走自写的 SigV4 HTTP 客户端。
 
