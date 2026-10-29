@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import math
+import re
 import shutil
 import struct
 import subprocess
@@ -50,17 +51,99 @@ def speech_units(text: str) -> list[str]:
     return parts or [" "]
 
 
+# SPEC N4: about 4 Chinese characters per second, about 2.5 English words per second.
+ZH_CHAR_MS = 250
+EN_WORD_MS = 400
+_EN_WORD = re.compile(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*")
+
+
 def speech_timestamps(
-    text: str, *, seconds_per_unit: float = 0.2
+    text: str,
+    *,
+    language: str | None = None,
+    seconds_per_unit: float | None = None,
 ) -> tuple[list[dict[str, object]], float]:
-    units = speech_units(text)
+    """Word or character timings at the N4 speaking rate.
+
+    ``seconds_per_unit`` forces one flat rate for every token. The default
+    follows the language: 4 Han characters per second, 2.5 English words per second.
+    """
+
+    tokens = _timed_tokens(text, language=language, seconds_per_unit=seconds_per_unit)
     stamps: list[dict[str, object]] = []
-    for index, unit in enumerate(units):
-        start = round(index * seconds_per_unit, 3)
-        end = round((index + 1) * seconds_per_unit, 3)
-        stamps.append({"text": unit, "start_s": start, "end_s": end})
-    duration = round(max(seconds_per_unit, len(units) * seconds_per_unit), 3)
-    return stamps, duration
+    cursor = 0
+    for token, millis in tokens:
+        start = cursor
+        cursor += millis
+        stamps.append({"text": token, "start_s": start / 1000, "end_s": cursor / 1000})
+    if cursor <= 0 and text.strip():
+        cursor = ZH_CHAR_MS
+        stamps.append({"text": text.strip()[:1] or " ", "start_s": 0.0, "end_s": cursor / 1000})
+    return stamps, cursor / 1000
+
+
+def prosody_timing(
+    text: str,
+    *,
+    speed: float = 1.0,
+    pause_s: float = 0.0,
+    language: str | None = None,
+    seconds_per_unit: float | None = None,
+) -> tuple[list[dict[str, object]], float]:
+    """Scale word timings by speech rate and append a trailing pause.
+
+    Duration is an integer number of milliseconds so a 16 kHz WAV matches it.
+    """
+
+    tokens = _timed_tokens(text, language=language, seconds_per_unit=seconds_per_unit)
+    rate = speed if speed > 0 else 1.0
+    scale = 1.0 / rate
+    stamps: list[dict[str, object]] = []
+    cursor = 0
+    for token, millis in tokens:
+        scaled = int(round(millis * scale))
+        start = cursor
+        cursor += scaled
+        stamps.append({"text": token, "start_s": start / 1000, "end_s": cursor / 1000})
+    if cursor <= 0 and text.strip():
+        cursor = int(round(ZH_CHAR_MS * scale))
+        stamps.append({"text": text.strip()[:1] or " ", "start_s": 0.0, "end_s": cursor / 1000})
+    pause = int(round(pause_s * 1000)) if pause_s > 0 else 0
+    return stamps, (cursor + pause) / 1000
+
+
+def _timed_tokens(
+    text: str,
+    *,
+    language: str | None,
+    seconds_per_unit: float | None,
+) -> list[tuple[str, int]]:
+    if seconds_per_unit is not None:
+        millis = max(1, int(round(seconds_per_unit * 1000)))
+        return [(unit, millis) for unit in speech_units(text) if unit.strip()]
+    if _timing_mode(text, language) == "zh":
+        return [
+            (char, ZH_CHAR_MS)
+            for char in text
+            if 0x4E00 <= ord(char) <= 0x9FFF or (char.isascii() and char.isalnum())
+        ]
+    marks: list[tuple[int, str]] = []
+    for match in _EN_WORD.finditer(text):
+        marks.append((match.start(), match.group(0)))
+    for index, char in enumerate(text):
+        if 0x4E00 <= ord(char) <= 0x9FFF:
+            marks.append((index, char))
+    marks.sort(key=lambda item: item[0])
+    return [(token, EN_WORD_MS) for _index, token in marks]
+
+
+def _timing_mode(text: str, language: str | None) -> str:
+    if language:
+        primary = language.lower().split("-", 1)[0]
+        return "zh" if primary == "zh" else "en"
+    if any(0x4E00 <= ord(char) <= 0x9FFF for char in text):
+        return "zh"
+    return "en"
 
 
 def render_png(seed: int | None, *, width: int = MOCK_WIDTH, height: int = MOCK_HEIGHT) -> bytes:
@@ -118,13 +201,23 @@ def render_wav(
     seed: int | None,
     *,
     sample_rate: int = 16000,
+    speed: float = 1.0,
+    pause_s: float = 0.0,
+    language: str | None = None,
 ) -> tuple[bytes, list[dict[str, object]], float]:
-    stamps, duration = speech_timestamps(text)
-    frames = int(sample_rate * duration)
+    stamps, duration = prosody_timing(text, speed=speed, pause_s=pause_s, language=language)
+    millis = int(round(duration * 1000))
+    frames = sample_rate * millis // 1000
+    spoken_frames = 0
+    if stamps:
+        spoken_frames = min(frames, int(round(float(stamps[-1]["end_s"]) * sample_rate)))
     freq = 220 + (0 if seed is None else int(seed) % 12) * 20
     pcm = bytearray()
     for index in range(frames):
-        sample = int(6000 * math.sin(2 * math.pi * freq * index / sample_rate))
+        if index < spoken_frames:
+            sample = int(6000 * math.sin(2 * math.pi * freq * index / sample_rate))
+        else:
+            sample = 0
         pcm.extend(struct.pack("<h", sample))
     buf = io.BytesIO()
     with wave.open(buf, "wb") as handle:

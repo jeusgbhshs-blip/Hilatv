@@ -21,6 +21,10 @@ task_defaults:
   tts:
     unit: char
     per_thousand_chars: "2.00"
+  asr:
+    unit: second
+    per_second: "0.004"
+    default_seconds: 5
 
 models:
   deepseek-chat:
@@ -63,3 +67,7 @@ models:
   seed-tts-1.0:
     unit: char
     per_thousand_chars: "2.00"
+  volc-asr-1.0:
+    unit: second
+    per_second: "0.004"
+    default_seconds: 5

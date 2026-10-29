@@ -46,6 +46,9 @@ jobs:
       - name: Accept T06
         run: make accept-t06
 
+      - name: Accept T07
+        run: make accept-t07
+
       - name: Accept T08
         run: make accept-t08
 

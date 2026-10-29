@@ -12,10 +12,10 @@ from gateway.constants import TASKS
 from gateway.media_bytes import (
     MOCK_HEIGHT,
     MOCK_WIDTH,
+    prosody_timing,
     render_mp4,
     render_png,
     render_wav,
-    speech_timestamps,
 )
 from gateway.models import AdapterResult, Invocation
 from gateway.schema_util import fill_json_schema
@@ -74,7 +74,10 @@ def _unstructured(call: Invocation) -> dict[str, object]:
             "duration_s": _video_seconds(call),
         }
     if call.task == "tts":
-        stamps, duration = speech_timestamps(call.prompt)
+        speed, pause = _prosody(call)
+        stamps, duration = prosody_timing(
+            call.prompt, speed=speed, pause_s=pause, language=call.language
+        )
         return {
             "mock": True,
             "task": "tts",
@@ -83,14 +86,18 @@ def _unstructured(call: Invocation) -> dict[str, object]:
             "text": call.prompt,
             "voice": call.params.get("voice"),
             "seed": call.seed,
+            "speed": speed,
+            "pause_s": pause,
             "duration_s": duration,
             "timestamps": stamps,
         }
     if call.task == "asr":
+        reference = call.params.get("reference_text")
+        text = reference if isinstance(reference, str) else ""
         return {
             "mock": True,
             "task": "asr",
-            "text": "",
+            "text": text,
             "audio_uri": call.prompt,
             "language": call.language,
         }
@@ -147,7 +154,10 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
             "negative_prompt": call.negative_prompt,
             "seed": call.seed,
         }
-    data, stamps, duration = render_wav(call.prompt, call.seed)
+    speed, pause = _prosody(call)
+    data, stamps, duration = render_wav(
+        call.prompt, call.seed, speed=speed, pause_s=pause, language=call.language
+    )
     uri = store.put(f"gateway/tts/{digest}.wav", data, "audio/wav")
     return {
         "mock": True,
@@ -157,6 +167,8 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
         "text": call.prompt,
         "voice": call.params.get("voice"),
         "seed": call.seed,
+        "speed": speed,
+        "pause_s": pause,
         "duration_s": duration,
         "timestamps": stamps,
     }
@@ -175,6 +187,26 @@ def _video_seconds(call: Invocation) -> float:
     return min(10.0, value)
 
 
+def _prosody(call: Invocation) -> tuple[float, float]:
+    return _positive(call.params.get("speed"), 1.0), _nonneg(call.params.get("pause_s"), 0.0)
+
+
+def _positive(value: object, default: float) -> float:
+    try:
+        number = float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+    return number if number > 0 else default
+
+
+def _nonneg(value: object, default: float) -> float:
+    try:
+        number = float(value) if value is not None else default
+    except (TypeError, ValueError):
+        return default
+    return number if number >= 0 else default
+
+
 def _digest(call: Invocation) -> str:
     raw = json.dumps(
         {
@@ -183,6 +215,9 @@ def _digest(call: Invocation) -> str:
             "seed": call.seed,
             "voice": call.params.get("voice"),
             "duration_s": call.params.get("duration_s"),
+            "speed": call.params.get("speed"),
+            "pause_s": call.params.get("pause_s"),
+            "language": call.language,
         },
         ensure_ascii=False,
         sort_keys=True,

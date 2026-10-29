@@ -12,8 +12,8 @@
 | T04 | 图像/视频/TTS adapter | T03 | ✅ | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ✅ | [t05-n1-brief](https://github.com/jeusgbhshs-blip/Hilatv/pull/25) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T06 | N4 脚本 + N5 分镜 | T05 | ✅ | [t06-script-storyboard](https://github.com/jeusgbhshs-blip/Hilatv/pull/26) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T07 | N6 TTS + 时间戳回写 | T04, T06 | ⬜ | – | |
-| T08 | N8 关键帧 + N10 图生视频 | T04, T06 | 🔵 | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T07 | N6 TTS + 时间戳回写 | T04, T06 | 🔵 | [t07-n6-voiceover](https://github.com/jeusgbhshs-blip/Hilatv/pull/27) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ✅ | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ⬜ | – | |
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ⬜ | – | |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
@@ -37,6 +37,7 @@
 | 图像 Key（如 Seedream） | T04, T08, T13 | mock |
 | 视频 Key（如 Seedance / 火山方舟） | T04, T08 | mock |
 | 豆包/火山 TTS Key（公司已有） | T04, T07 | mock |
+| 豆包/火山 ASR Key | T07 | mock |
 | VLM 评审 Key | T12 | mock |
 | 内容安全服务 Key | T20 | mock |
 | 预算上限 `HILATV_BUDGET_CNY` / `HILATV_DAILY_BUDGET_CNY` | 网关 | 未设置（= 不允许 live） |
@@ -57,9 +58,20 @@
 -->
 
 ### 2026-10-29
-- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）、T05（PR #25，无新迁移）、T06（PR #26，无新迁移）
-- 正在做什么：T08 N8 关键帧 + N10 图生视频，分支 `t08-keyframe-video`。无 Key，`make accept-t08` 走 mock。不新增迁移，Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）、T05（PR #25，无新迁移）、T06（PR #26，无新迁移）、T08（PR #28，无新迁移）
+- 正在做什么：T07 N6 配音先行，已变基到含 T08 的 main。无 Key，`make accept-t07` 走 mock TTS / mock ASR。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+
+## T07 假设
+
+- N6 的输入是第 5 章的 `Script`，可选 `BrandKit` 和 `Brief`。回写的是同一份 `Script` 里每个 `Shot.duration_s`，旁白文件是 `Asset`（`kind=voiceover`）。第 5 章的 Shot 没有逐字时间戳，时间戳放在节点输出的 `voiceovers` 里，给 N13 用。不改 Shot 的字段，也不新增迁移。Alembic 仍是单一 head `t03_gateway_0002`。
+- 先配音，再改时长。Mock TTS 按 N4 的语速计时：中文 4 字/秒（每字 250ms），英文 2.5 词/秒（每词 400ms）。镜头 `duration_s` 不短于该句音频（含规定停顿）。旁白短于 Brief 时，缺口按各句音频比例做成画面停留（hold），分镜总时长落到 Brief 上。旁白长过 Brief 的 5% 时，先把语速最多再提高 15%；仍然超长就记 `copy_over_long` / `trim_copy`，交给 N4 删文案，并且不重试。SPEC N5 的总时长误差 ≤ 5% 是这条线的验收阈值。没有 Brief 时不补时长，镜头等于音频。
+- 语速基准是 Brand Kit 的 `voice.speed`，没有资料时是 1.0。钩子镜 ×1.05，结尾 CTA ×0.90 并在句尾加 0.4 秒停顿。同一镜既是钩子又是结尾 CTA（例如 5 秒成片被收成一镜）时按结尾 CTA。更早的 CTA 镜只放慢，不停顿。语速夹在 0.2–3.0。音色用 `voice.tts_voice`，否则 `zh_male_steady`。
+- 这些数放进 gateway `tts` 的 `speed` 和 `pause_s`。火山 v1 请求把它们写成 `audio.speed_ratio` 和 `request.silence_duration`（毫秒）。多音字和术语在 `workers/nodes/n06_voiceover/lexicon.yaml`，命中后由 adapter 包成 SSML `<phoneme alphabet="py">`。更长的词优先，所以「柱塞泵」不会再标成「柱塞」。
+- 质检：ASR 回听字错率必须小于 2%（等于 2% 也不过）。比较前去掉空白和标点。响度用 RMS dBFS 近似 LUFS，窗口 -28 到 -12，对应旁白大约 -16。任一采样点顶到 16-bit 满幅（±32767）算爆音。无 Key 时 mock ASR 回放请求里的 `reference_text`，字错率比对逻辑用植入错字的单测验收。Live 火山 ASR 不把 `reference_text` 发给厂商。
+- 画面上的字、Logo、价格、电话仍只留在 `on_screen_text`。N6 不调用图像或视频模型，也不把卡片上的电话拼进旁白。镜头变长或变短时，卡片的 in/out 按比例缩进新时长。
+- 真人录音只留 `align_user_recording`，本任务不把它当验收项。ASR 走豆包录音文件极速识别 HTTP（`volc.bigasr.auc_turbo`），单价写在 `gateway/pricing.yaml`，是配置不是合同：¥0.004/秒。没有 `VOLC_ASR_APP_ID` 和 `VOLC_ASR_API_KEY` 时走 mock。TTS Key 不会顺便打开 ASR。
+- 不新增数据库迁移。验收把网关日志放到独立 SQLite，并清掉对象存储环境变量，避免连到没启动的 MinIO。`mock://` 音频按同一语速和停顿在本地重放成 WAV 再做响度和爆音检测。画面停留不写进音频文件，只加在镜头时长上，避免静音把响度拉出窗口。
 
 ## T08 假设
 
