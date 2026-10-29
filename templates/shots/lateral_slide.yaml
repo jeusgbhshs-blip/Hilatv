@@ -1,0 +1,13 @@
+id: lateral_slide
+label: 横向平移
+shot_sizes:
+  - wide
+purposes:
+  - proof
+  - hook
+prompt_fragment: >-
+  The camera slides sideways at a steady pace and keeps the horizon level.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: wan
+motion_strength: medium

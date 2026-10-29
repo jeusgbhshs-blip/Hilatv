@@ -1,0 +1,18 @@
+Do not render any on-screen text, logos, prices, or phone numbers. Those are composited later.
+请只做自评，不要重写脚本。有问题就把对应字段设为 false，没问题保持 true。
+
+检查：
+- 钩子是否能在前 3 秒说完
+- 卖点是否都能在品牌资料或用户原话里找到
+- 是否有资料里没有的数字
+- 是否出现禁用词
+
+禁用词：{{ banned }}
+资料：{{ corpus }}
+
+脚本（{{ language }}）：
+{{ script_text }}
+{% if feedback %}
+
+上次质检未通过：{{ feedback }}
+{% endif %}

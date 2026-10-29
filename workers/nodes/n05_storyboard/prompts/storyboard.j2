@@ -1,0 +1,17 @@
+Do not render any on-screen text, logos, prices, or phone numbers. Those are composited later.
+画面里的文字、Logo、价格、电话只交给后期叠加，不要写进镜头描述。
+
+请为每个镜头选一个运镜预设 id。只能从下面的预设里选，不要发明新的运镜名。
+不确定就让 camera 留空。
+
+可用预设：
+{{ presets }}
+
+旁白：
+{{ voiceover }}
+
+时长：{{ duration_s }} 秒。单镜 {{ min_s }}–{{ max_s }} 秒。
+{% if feedback %}
+
+上次质检未通过：{{ feedback }}
+{% endif %}

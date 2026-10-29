@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# T06 acceptance: N4/N5 unit tests, then fixture briefs must meet the duration and provenance rules.
+# No API key is required. HILATV_LIVE=1 still has to satisfy the same rules.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$ROOT"
+
+if [[ -z "${ENV_FILE:-}" ]]; then
+  if [[ -f "$ROOT/.env" ]]; then
+    ENV_FILE="$ROOT/.env"
+  else
+    ENV_FILE="$ROOT/.env.example"
+  fi
+fi
+
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
+if [[ -x "$ROOT/.venv/bin/python" ]]; then
+  PYTHON="$ROOT/.venv/bin/python"
+else
+  PYTHON="${PYTHON:-python3}"
+fi
+
+# N4/N5 do not need Postgres. Keep the call log off the app database.
+export HILATV_GATEWAY_STORE=sqlite
+export HILATV_SQLITE_PATH="${TMPDIR:-/tmp}/hilatv-t06-$$.sqlite"
+export HILATV_LIVE=0
+
+echo "== pytest n04_script n05_storyboard =="
+"$PYTHON" -m pytest workers/nodes/n04_script/tests workers/nodes/n05_storyboard/tests -q
+
+echo "== fixture scripts and storyboards =="
+"$PYTHON" -m workers.nodes.n04_script.accept

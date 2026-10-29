@@ -1,0 +1,14 @@
+id: slow_pull_back
+label: 缓慢拉远
+shot_sizes:
+  - medium
+  - wide
+purposes:
+  - proof
+  - hook
+prompt_fragment: >-
+  The camera eases backward so more of the place comes into view. Motion stays low.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: low
