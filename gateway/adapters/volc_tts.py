@@ -160,6 +160,16 @@ def _body(call: Invocation, *, app_id: str, voice: str, cluster: str) -> dict[st
         speed_ratio = float(speed) if speed is not None else 1.0
     except (TypeError, ValueError):
         speed_ratio = 1.0
+    if speed_ratio <= 0:
+        speed_ratio = 1.0
+    pause = call.params.get("pause_s")
+    try:
+        pause_s = float(pause) if pause is not None else 0.0
+    except (TypeError, ValueError):
+        pause_s = 0.0
+    if pause_s < 0:
+        pause_s = 0.0
+    text, text_type = apply_ssml(call.prompt, call.params.get("lexicon"))
     return {
         "app": {"appid": app_id, "token": "hilatv", "cluster": cluster},
         "user": {"uid": call.project_id or "hilatv"},
@@ -171,11 +181,69 @@ def _body(call: Invocation, *, app_id: str, voice: str, cluster: str) -> dict[st
         },
         "request": {
             "reqid": uuid4().hex,
-            "text": call.prompt,
+            "text": text,
+            "text_type": text_type,
             "operation": "query",
             "with_timestamp": 1,
+            # Trailing silence in milliseconds. 0 keeps a line tight; N6 sets this on the CTA.
+            "silence_duration": int(round(pause_s * 1000)),
         },
     }
+
+
+def apply_ssml(text: str, lexicon: object) -> tuple[str, str]:
+    """Wrap dictionary hits in SSML phoneme tags. Unmatched lines stay plain text."""
+
+    entries = _lexicon_entries(lexicon)
+    if not entries or not text:
+        return text, "plain"
+    entries.sort(key=lambda item: len(item[0]), reverse=True)
+    occupied = [False] * len(text)
+    spans: list[tuple[int, int, str, str]] = []
+    for term, pinyin in entries:
+        start = 0
+        while True:
+            index = text.find(term, start)
+            if index < 0:
+                break
+            end = index + len(term)
+            if not any(occupied[index:end]):
+                spans.append((index, end, term, pinyin))
+                for cursor in range(index, end):
+                    occupied[cursor] = True
+            start = index + 1
+    if not spans:
+        return text, "plain"
+    spans.sort()
+    parts = ["<speak>"]
+    cursor = 0
+    for index, end, term, pinyin in spans:
+        parts.append(_xml(text[cursor:index]))
+        parts.append(f'<phoneme alphabet="py" ph="{_xml(pinyin)}">{_xml(term)}</phoneme>')
+        cursor = end
+    parts.append(_xml(text[cursor:]))
+    parts.append("</speak>")
+    return "".join(parts), "ssml"
+
+
+def _lexicon_entries(lexicon: object) -> list[tuple[str, str]]:
+    if not isinstance(lexicon, list):
+        return []
+    entries: list[tuple[str, str]] = []
+    for item in lexicon:
+        if not isinstance(item, dict):
+            continue
+        term = item.get("text")
+        pinyin = item.get("pinyin")
+        if isinstance(term, str) and term and isinstance(pinyin, str) and pinyin:
+            entries.append((term, pinyin))
+    return entries
+
+
+def _xml(value: str) -> str:
+    return (
+        value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+    )
 
 
 def _voice(call: Invocation, default_voice: str) -> str:

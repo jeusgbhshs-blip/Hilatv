@@ -1,0 +1,20 @@
+# Pronunciations for polyphonic characters and product terms.
+# Pinyin uses tone numbers. The TTS adapter turns a hit into an SSML phoneme.
+# This list is ours. It is not copied from another product.
+entries:
+  - text: "柱塞泵"
+    pinyin: "zhu4 sai1 beng4"
+  - text: "柱塞"
+    pinyin: "zhu4 sai1"
+  - text: "兆帕"
+    pinyin: "zhao4 pa4"
+  - text: "重载"
+    pinyin: "zhong4 zai4"
+  - text: "行业"
+    pinyin: "hang2 ye4"
+  - text: "压力"
+    pinyin: "ya1 li4"
+  - text: "调质"
+    pinyin: "tiao2 zhi4"
+  - text: "银行"
+    pinyin: "yin2 hang2"

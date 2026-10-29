@@ -97,7 +97,9 @@ class Pricing:
             count = int(usage.get("images") or 1)
             return money(card.per_image * Decimal(count))
         if card is not None and card.unit == "second":
-            seconds = usage.get("video_seconds")
+            seconds = usage.get("audio_seconds")
+            if seconds is None:
+                seconds = usage.get("video_seconds")
             if seconds is None:
                 seconds = card.default_seconds
             return money(card.per_second * Decimal(str(seconds)))

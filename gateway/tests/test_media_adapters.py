@@ -392,12 +392,15 @@ def test_registry_media_adapters_stay_off_without_keys(monkeypatch: pytest.Monke
         "SEEDANCE_API_KEY",
         "VOLC_TTS_API_KEY",
         "VOLC_TTS_APP_ID",
+        "VOLC_ASR_API_KEY",
+        "VOLC_ASR_APP_ID",
     ):
         monkeypatch.setenv(name, "")
     registry = build_registry(store=MemoryObjectStore())
     assert registry["seedream"].available() is False
     assert registry["seedance"].available() is False
     assert registry["volc_tts"].available() is False
+    assert registry["volc_asr"].available() is False
     monkeypatch.setenv("ARK_API_KEY", "ark")
     monkeypatch.setenv("VOLC_TTS_API_KEY", "tok")
     monkeypatch.setenv("VOLC_TTS_APP_ID", "app")
@@ -405,6 +408,11 @@ def test_registry_media_adapters_stay_off_without_keys(monkeypatch: pytest.Monke
     assert registry["seedream"].available() is True
     assert registry["seedance"].available() is True
     assert registry["volc_tts"].available() is True
+    assert registry["volc_asr"].available() is False
+    monkeypatch.setenv("VOLC_ASR_API_KEY", "asr-tok")
+    monkeypatch.setenv("VOLC_ASR_APP_ID", "asr-app")
+    registry = build_registry(store=MemoryObjectStore())
+    assert registry["volc_asr"].available() is True
 
 
 def test_media_price_table() -> None:

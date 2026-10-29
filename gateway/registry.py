@@ -12,12 +12,15 @@ from gateway.adapters.mock_adapter import MockAdapter
 from gateway.adapters.openai_compat import OpenAICompatAdapter
 from gateway.adapters.seedance import SeedanceAdapter
 from gateway.adapters.seedream import SeedreamAdapter
+from gateway.adapters.volc_asr import VolcAsrAdapter
 from gateway.adapters.volc_tts import VolcTtsAdapter
 from gateway.constants import (
     ARK_BASE_URL,
     DASHSCOPE_BASE_URL,
     DEEPSEEK_BASE_URL,
     DEFAULT_TTS_VOICE,
+    VOLC_ASR_BASE_URL,
+    VOLC_ASR_RESOURCE,
     VOLC_TTS_BASE_URL,
 )
 from gateway.storage import ObjectStore, object_store_from_env
@@ -78,6 +81,15 @@ def build_registry(
             cluster=os.getenv("VOLC_TTS_CLUSTER", "volcano_tts").strip() or "volcano_tts",
             default_voice=os.getenv("VOLC_TTS_VOICE", DEFAULT_TTS_VOICE).strip()
             or DEFAULT_TTS_VOICE,
+            store=media_store,
+            transport=transport,
+        ),
+        "volc_asr": VolcAsrAdapter(
+            base_url=os.getenv("VOLC_ASR_BASE_URL", VOLC_ASR_BASE_URL),
+            key_fn=lambda: os.getenv("VOLC_ASR_API_KEY", ""),
+            app_id_fn=lambda: os.getenv("VOLC_ASR_APP_ID", ""),
+            resource_id=os.getenv("VOLC_ASR_RESOURCE_ID", VOLC_ASR_RESOURCE).strip()
+            or VOLC_ASR_RESOURCE,
             store=media_store,
             transport=transport,
         ),

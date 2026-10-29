@@ -63,6 +63,35 @@ def speech_timestamps(
     return stamps, duration
 
 
+def prosody_timing(
+    text: str,
+    *,
+    speed: float = 1.0,
+    pause_s: float = 0.0,
+    seconds_per_unit: float = 0.2,
+) -> tuple[list[dict[str, object]], float]:
+    """Scale word timings by speech rate and append a trailing pause.
+
+    Duration is rounded to milliseconds so a 16 kHz WAV of that length matches.
+    """
+
+    stamps, spoken = speech_timestamps(text, seconds_per_unit=seconds_per_unit)
+    rate = speed if speed > 0 else 1.0
+    scale = 1.0 / rate
+    scaled: list[dict[str, object]] = []
+    for item in stamps:
+        scaled.append(
+            {
+                "text": item["text"],
+                "start_s": round(float(item["start_s"]) * scale, 3),
+                "end_s": round(float(item["end_s"]) * scale, 3),
+            }
+        )
+    pause = pause_s if pause_s > 0 else 0.0
+    millis = int(round((spoken * scale + pause) * 1000))
+    return scaled, millis / 1000
+
+
 def render_png(seed: int | None, *, width: int = MOCK_WIDTH, height: int = MOCK_HEIGHT) -> bytes:
     rgb = color_rgb(seed)
     rows = bytearray()
@@ -118,13 +147,22 @@ def render_wav(
     seed: int | None,
     *,
     sample_rate: int = 16000,
+    speed: float = 1.0,
+    pause_s: float = 0.0,
 ) -> tuple[bytes, list[dict[str, object]], float]:
-    stamps, duration = speech_timestamps(text)
-    frames = int(sample_rate * duration)
+    stamps, duration = prosody_timing(text, speed=speed, pause_s=pause_s)
+    millis = int(round(duration * 1000))
+    frames = sample_rate * millis // 1000
+    spoken_frames = 0
+    if stamps:
+        spoken_frames = min(frames, int(round(float(stamps[-1]["end_s"]) * sample_rate)))
     freq = 220 + (0 if seed is None else int(seed) % 12) * 20
     pcm = bytearray()
     for index in range(frames):
-        sample = int(6000 * math.sin(2 * math.pi * freq * index / sample_rate))
+        if index < spoken_frames:
+            sample = int(6000 * math.sin(2 * math.pi * freq * index / sample_rate))
+        else:
+            sample = 0
         pcm.extend(struct.pack("<h", sample))
     buf = io.BytesIO()
     with wave.open(buf, "wb") as handle:

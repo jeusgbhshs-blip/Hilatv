@@ -114,7 +114,8 @@ def test_packaged_routes_cover_every_task() -> None:
     assert table.resolve("image", None, None).primary.provider == "seedream"
     assert table.resolve("video", None, None).primary.provider == "seedance"
     assert table.resolve("tts", None, None).primary.provider == "volc_tts"
-    for task in ("image", "video", "tts"):
+    assert table.resolve("asr", None, None).primary.provider == "volc_asr"
+    for task in ("image", "video", "tts", "asr"):
         assert table.resolve(task, None, None).fallbacks[-1].provider == "mock"
 
 

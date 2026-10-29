@@ -110,8 +110,9 @@ routes:
     shot_type: "*"
     language: "*"
     timeout_s: 60
-    primary: {provider: mock, model: mock-asr}
-    fallbacks: []
+    primary: {provider: volc_asr, model: volc-asr-1.0}
+    fallbacks:
+      - {provider: mock, model: mock-asr}
 
   - id: music-default
     task: music

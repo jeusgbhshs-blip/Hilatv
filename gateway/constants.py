@@ -8,6 +8,9 @@ DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
 VOLC_TTS_BASE_URL = "https://openspeech.bytedance.com"
+VOLC_ASR_BASE_URL = "https://openspeech.bytedance.com"
+VOLC_ASR_FLASH_PATH = "/api/v3/auc/bigmodel/recognize/flash"
+VOLC_ASR_RESOURCE = "volc.bigasr.auc_turbo"
 
 # SPEC Brand Kit voice id mapped onto a documented Doubao voice. Override with VOLC_TTS_VOICE.
 DEFAULT_TTS_VOICE = "zh_male_M392_conversation_wvae_bigtts"

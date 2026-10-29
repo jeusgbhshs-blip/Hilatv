@@ -29,6 +29,13 @@ def test_wav_duration_matches_character_timestamps() -> None:
     ffmpeg_decode(data, ".wav")
 
 
+def test_wav_respects_speed_and_trailing_pause() -> None:
+    _data, stamps, duration = render_wav("三十兆帕", 1, speed=1.05, pause_s=0.4)
+    assert stamps[-1]["end_s"] == 0.762
+    assert duration == 1.162
+    assert abs(decode_wav(_data) - duration) < 1e-6
+
+
 def test_mp4_is_decodable_and_silent() -> None:
     data = render_mp4(4)
     assert data[4:8] == b"ftyp"

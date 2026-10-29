@@ -41,6 +41,7 @@ include = ["gateway*", "workers*", "eval*"]
 "workers.nodes.n01_brief" = ["prompts/*.j2"]
 "workers.nodes.n04_script" = ["prompts/*.j2"]
 "workers.nodes.n05_storyboard" = ["prompts/*.j2"]
+"workers.nodes.n06_voiceover" = ["lexicon.yaml"]
 "workers.nodes.n08_keyframe" = ["prompts/*.j2"]
 "workers.nodes.n10_video" = ["prompts/*.j2"]
 "workers.schemas" = ["json_schema/*.json"]
@@ -54,6 +55,7 @@ testpaths = [
   "workers/nodes/n01_brief/tests",
   "workers/nodes/n04_script/tests",
   "workers/nodes/n05_storyboard/tests",
+  "workers/nodes/n06_voiceover/tests",
   "workers/nodes/n08_keyframe/tests",
   "workers/nodes/n10_video/tests",
   "workers/schemas/tests",
