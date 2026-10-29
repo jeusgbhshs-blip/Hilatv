@@ -1,0 +1,18 @@
+{
+  "id": "10-explainer",
+  "request": {
+    "project_id": "10-explainer",
+    "payload": {
+      "raw_input": "做个知识讲解短片，讲清楚如何选液压油"
+    }
+  },
+  "expect": {
+    "duration_s": 30,
+    "video_type": "explainer",
+    "goal": "知识讲解",
+    "max_questions": 0,
+    "assumption_contains": [
+      "未说明时长"
+    ]
+  }
+}

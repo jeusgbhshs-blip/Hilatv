@@ -1,0 +1,92 @@
+{
+  "id": "04-brandkit-ambiguous",
+  "request": {
+    "project_id": "04-brandkit-ambiguous",
+    "payload": {
+      "raw_input": "给我们公司做条视频",
+      "brand_kit": {
+        "brand_id": "uuid",
+        "company_name": "青岛某某机械有限公司",
+        "industry": "manufacturing",
+        "logo": {
+          "primary": "oss://.../logo.png",
+          "mono_white": "oss://...",
+          "safe_area_ratio": 0.2
+        },
+        "colors": {
+          "primary": "#0A3D91",
+          "secondary": "#FFFFFF",
+          "accent": "#F5A623"
+        },
+        "fonts": {
+          "title": "NotoSansSC-Bold",
+          "body": "NotoSansSC-Regular"
+        },
+        "products": [
+          {
+            "product_id": "uuid",
+            "name": "高压柱塞泵 HP-300",
+            "photos": [
+              "oss://...front.jpg",
+              "oss://...side.jpg"
+            ],
+            "cutouts": [
+              "oss://...front_cutout.png"
+            ],
+            "selling_points": [
+              "压力 30MPa",
+              "寿命 2 万小时"
+            ],
+            "forbidden_changes": [
+              "铭牌文字",
+              "颜色",
+              "接口数量"
+            ]
+          }
+        ],
+        "people": [
+          {
+            "person_id": "uuid",
+            "role": "老板",
+            "photos": [],
+            "consent": true,
+            "voice_id": null
+          }
+        ],
+        "voice": {
+          "tts_voice": "zh_male_steady",
+          "speed": 1.0
+        },
+        "tone": "专业、可靠、不夸张",
+        "banned_words": [
+          "最好",
+          "第一",
+          "国家级"
+        ],
+        "cta": {
+          "phone": "0532-xxxx",
+          "website": "",
+          "wechat_qr": "oss://..."
+        }
+      }
+    }
+  },
+  "expect": {
+    "max_questions": 1,
+    "min_questions": 1,
+    "video_type": "product_showcase",
+    "duration_s": 30,
+    "must_include_contains": [
+      "30MPa"
+    ],
+    "assumption_contains": [
+      "沿用品牌资料库",
+      "未说明视频类型",
+      "未说明时长",
+      "必含卖点来自品牌资料库"
+    ],
+    "question_contains": [
+      "产品宣传"
+    ]
+  }
+}

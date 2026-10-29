@@ -1,0 +1,18 @@
+{
+  "id": "12-policy",
+  "request": {
+    "project_id": "12-policy",
+    "payload": {
+      "raw_input": "把这条政策解读成短视频"
+    }
+  },
+  "expect": {
+    "duration_s": 60,
+    "video_type": "policy_explainer",
+    "goal": "政策解读",
+    "max_questions": 0,
+    "assumption_contains": [
+      "未说明时长"
+    ]
+  }
+}

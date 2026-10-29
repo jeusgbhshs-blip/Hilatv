@@ -1,0 +1,27 @@
+{
+  "id": "15-clamp-long",
+  "request": {
+    "project_id": "15-clamp-long",
+    "payload": {
+      "raw_input": "外贸产品视频，英文，YouTube，要 4 分钟"
+    }
+  },
+  "expect": {
+    "duration_s": 180,
+    "languages": [
+      "en"
+    ],
+    "platforms": [
+      "YouTube"
+    ],
+    "aspect_ratios": [
+      "16:9"
+    ],
+    "video_type": "product_showcase",
+    "goal": "外贸获客",
+    "max_questions": 0,
+    "assumption_contains": [
+      "超过 180 秒"
+    ]
+  }
+}

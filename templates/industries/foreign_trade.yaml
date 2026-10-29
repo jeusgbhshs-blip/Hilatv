@@ -1,0 +1,59 @@
+industry: foreign_trade
+label: 外贸出海
+narrative:
+  - 应用场景
+  - 产品
+  - 优势
+  - 工厂
+  - 联系方式
+shot_sequence:
+  - 海外买家能认出的使用场景
+  - 产品主体，包装和铭牌保持原样
+  - 交期、认证或起订量以后期字幕表达
+  - 工厂与质检画面建立信任
+  - 片尾放官网或联系方式
+duration_s: 30
+aspect_ratios:
+  - "16:9"
+  - "9:16"
+platforms:
+  - YouTube
+  - LinkedIn
+languages:
+  - en
+goal: 外贸获客
+audience: 海外工业采购商
+style_keywords:
+  - 清晰产品
+  - 海外审美
+  - 稳重
+music_mood: 干净、克制、有空间感
+must_include:
+  - 应用场景
+  - 产品主体
+  - 交期或认证
+forbidden:
+  - 编造 MOQ、交期和认证
+  - 画面内生成的文字、Logo、价格或电话
+requirements:
+  - 本地化文案
+  - 多语种配音
+  - 产品零失真
+video_types:
+  - id: product_showcase
+    label: 产品宣传片
+    goal: 外贸获客
+    keywords:
+      - 宣传片
+      - 产品视频
+      - 产品
+default_video_type: product_showcase
+keywords:
+  - {text: 外贸, weight: 5}
+  - {text: 出海, weight: 5}
+  - {text: 出口, weight: 4}
+  - {text: MOQ, weight: 4}
+  - {text: 海外, weight: 3}
+  - {text: 采购商, weight: 3}
+  - {text: 交期, weight: 3}
+clarify_question: ""

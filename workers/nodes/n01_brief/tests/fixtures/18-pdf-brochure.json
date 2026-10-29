@@ -1,0 +1,27 @@
+{
+  "id": "18-pdf-brochure",
+  "request": {
+    "project_id": "18-pdf-brochure",
+    "payload": {
+      "raw_input": "根据机床画册做一条产品宣传片",
+      "attachments": [
+        {
+          "kind": "pdf",
+          "uri": "workers/nodes/n01_brief/tests/fixtures/assets/brochure.pdf"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "video_type": "product_showcase",
+    "max_questions": 0,
+    "must_include_contains": [
+      "0.01mm"
+    ],
+    "assumption_contains": [
+      "从附件识别产品",
+      "数控机床 XK-200",
+      "未说明时长"
+    ]
+  }
+}

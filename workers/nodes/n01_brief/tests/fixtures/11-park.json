@@ -1,0 +1,24 @@
+{
+  "id": "11-park",
+  "request": {
+    "project_id": "11-park",
+    "payload": {
+      "raw_input": "高新区招商宣传片，90秒，横屏，放官网和视频号，面向投资人，风格庄重"
+    }
+  },
+  "expect": {
+    "duration_s": 90,
+    "platforms": [
+      "官网",
+      "视频号"
+    ],
+    "aspect_ratios": [
+      "16:9"
+    ],
+    "video_type": "corporate_film",
+    "goal": "招商宣传",
+    "audience": "投资人",
+    "style": "庄重",
+    "max_questions": 0
+  }
+}

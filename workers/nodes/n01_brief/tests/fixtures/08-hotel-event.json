@@ -1,0 +1,18 @@
+{
+  "id": "08-hotel-event",
+  "request": {
+    "project_id": "08-hotel-event",
+    "payload": {
+      "raw_input": "酒店周年庆活动推广"
+    }
+  },
+  "expect": {
+    "duration_s": 20,
+    "video_type": "event_promo",
+    "goal": "活动推广",
+    "max_questions": 0,
+    "assumption_contains": [
+      "未说明时长"
+    ]
+  }
+}

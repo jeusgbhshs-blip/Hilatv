@@ -19,6 +19,7 @@
 | PyYAML | ≥ 6.0 | MIT | 路由表与单价表 |
 | redis-py | ≥ 5.2 | MIT | 网关响应缓存 |
 | jsonschema | ≥ 4.23 | MIT | 字典形式 JSON Schema 校验 |
+| pypdf | ≥ 5.1 | BSD-3-Clause | N1 从 PDF / 画册抽取文本 |
 | fakeredis | ≥ 2.26 | MIT | 缓存单元测试（开发依赖） |
 | Ruff | ≥ 0.8 | MIT | Python lint / format |
 | SQLAlchemy | ≥ 2.0.36 | MIT | 迁移与数据库类型 |

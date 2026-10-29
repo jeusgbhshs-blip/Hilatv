@@ -1,0 +1,21 @@
+Do not render any on-screen text, logos, prices, or phone numbers. Those are composited later.
+画面里的文字、Logo、价格、电话只作为需求记录，后期叠加，不要让图像或视频模型画出来。
+
+用户原话：
+{{ raw_input }}
+
+附件摘要：
+{{ attachment_summary }}
+
+品牌资料（只读）：
+{{ brand_summary }}
+{% if feedback %}
+
+上次质检未通过：{{ feedback }}
+请只修正抽取，仍然不要编造原话和附件里没有的参数。
+{% endif %}
+
+请只抽取原话和附件里已经出现的信息。没有说的字段留空，不要编造参数、价格、电话或认证。
+行业只能是 manufacturing、foreign_trade、ecommerce、local_life、education、public_sector 之一，无法判断则留空。
+平台请用这些名字：抖音、TikTok、视频号、快手、小红书、YouTube、LinkedIn、B站、官网、Instagram、微信朋友圈。
+语种用短标签，例如 zh、en。时长用秒，不确定就留空。

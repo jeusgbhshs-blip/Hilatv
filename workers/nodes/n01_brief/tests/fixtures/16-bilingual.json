@@ -1,0 +1,27 @@
+{
+  "id": "16-bilingual",
+  "request": {
+    "project_id": "16-bilingual",
+    "payload": {
+      "raw_input": "中英双语，TikTok 和 YouTube，30秒，出海产品视频，竖屏和横屏"
+    }
+  },
+  "expect": {
+    "duration_s": 30,
+    "languages": [
+      "zh",
+      "en"
+    ],
+    "platforms": [
+      "TikTok",
+      "YouTube"
+    ],
+    "aspect_ratios": [
+      "9:16",
+      "16:9"
+    ],
+    "video_type": "product_showcase",
+    "goal": "外贸获客",
+    "max_questions": 0
+  }
+}

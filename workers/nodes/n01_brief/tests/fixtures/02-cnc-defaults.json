@@ -1,0 +1,34 @@
+{
+  "id": "02-cnc-defaults",
+  "request": {
+    "project_id": "02-cnc-defaults",
+    "payload": {
+      "raw_input": "给数控机床做一条产品宣传片"
+    }
+  },
+  "expect": {
+    "duration_s": 30,
+    "languages": [
+      "zh"
+    ],
+    "platforms": [
+      "视频号",
+      "抖音"
+    ],
+    "aspect_ratios": [
+      "9:16"
+    ],
+    "video_type": "product_showcase",
+    "goal": "产品宣传",
+    "max_questions": 0,
+    "assumption_contains": [
+      "未说明时长",
+      "未说明投放平台",
+      "未说明语种",
+      "未说明受众",
+      "未说明风格",
+      "未说明必含信息",
+      "未提供工厂视频"
+    ]
+  }
+}

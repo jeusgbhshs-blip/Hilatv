@@ -8,9 +8,9 @@
 |---|---|---|---|---|---|
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
-| T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002` |
-| T04 | 图像/视频/TTS adapter | T03 | 🔵 | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ⬜ | – | |
+| T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
+| T04 | 图像/视频/TTS adapter | T03 | ✅ | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T05 | N1 需求理解 + 行业默认值表 | T02, T03 | 🔵 | [t05-n1-brief](https://github.com/jeusgbhshs-blip/Hilatv/pull/25) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T06 | N4 脚本 + N5 分镜 | T05 | ⬜ | – | |
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ⬜ | – | |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ⬜ | – | |
@@ -57,9 +57,21 @@
 -->
 
 ### 2026-10-29
-- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）
-- 正在做什么：T04 图像 / 视频 / TTS adapter。mock 样例转存 MinIO；live 仅在 `HILATV_LIVE=1` 且有 Key 时启用。无新 Alembic revision
-- 需要提供什么：图像 Key（Seedream / `ARK_API_KEY`）、视频 Key（Seedance / `ARK_API_KEY`）、豆包 TTS 的 `VOLC_TTS_APP_ID` + `VOLC_TTS_API_KEY`，以及非零预算后才可打开 `HILATV_LIVE=1`
+- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）
+- 正在做什么：T05 N1 需求理解。行业模板在 `templates/industries/`。无 Key，`make accept-t05` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+
+## T05 假设
+
+- Brief 没有行业字段。行业只用来选择 `templates/industries/` 里的 6 份模板，并写进 `assumptions`。原话判断不了时，若输入里带了 Brand Kit，就沿用它的 `industry`；仍然没有，就先按制造业继续，并提一个带默认项的问题。
+- 无 Key 时 LLM 走 T03 mock。抽取模型的字段都有空默认值，mock 不会填出 `"mock"` 这种假值。时长、平台、语种、比例、类型先从原话用规则抽出，空的再用行业模板补，并在 `assumptions` 里说明。Live 模型只填空位，不覆盖原话里已经写明的事实。
+- 只有会改掉成片走向、且模板不能唯一决定的缺口才追问，最多 2 个，推荐项同时写进 Brief：行业不明、同一行业有多种主推类型且原话没点明、用户指定的比例不被该平台接受。其余缺口只写 `assumptions`。推荐默认值已经落在 Brief 里，流程不阻塞。
+- 平台和比例的允许关系是自建的：抖音 / TikTok 以 9:16 为主，YouTube / 官网以 16:9 为主，视频号两者都允许。某个平台在当前比例里一个都对不上时，补上该平台的推荐比例。
+- 时长超出 5–180 秒时夹到边界并写入 `assumptions`，质检看到的是夹完之后的值。
+- 网址用 httpx 抓取，HTML 用标准库解析，按 UTF-8 解码。PDF 文本用 pypdf（BSD-3-Clause，已写入 `docs/licenses.md`）。图片分类先看文件名和 alt；判断不了再经 gateway 做一次文本分类，不把像素送给视觉厂商，也不引入视觉 SDK。
+- 制造业和外贸在没有工厂成片附件时写入「未提供工厂视频，使用 AI 生成工厂场景」，与 SPEC §5.2 示例一致。Logo、价格、电话只作为需求记录，提示词写明后期叠加。
+- 不新增数据库迁移。Brand Kit 由调用方放在输入 JSON 里，本任务不实现 N2。`brief_id` 用 `uuid5(project_id + raw_input)`，同一输入重跑结果稳定。
+- 验收脚本把网关日志放到独立 SQLite，不依赖 Postgres。`HILATV_LIVE=1` 且有 Key、预算大于 0 时走真实 LLM，此时只校验 Brief 合法，不锁定 mock 下的字段级期望。
 
 ## T03 假设
 

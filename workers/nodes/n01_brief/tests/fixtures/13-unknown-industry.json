@@ -1,0 +1,24 @@
+{
+  "id": "13-unknown-industry",
+  "request": {
+    "project_id": "13-unknown-industry",
+    "payload": {
+      "raw_input": "做个视频"
+    }
+  },
+  "expect": {
+    "duration_s": 30,
+    "video_type": "product_showcase",
+    "min_questions": 2,
+    "max_questions": 2,
+    "assumption_contains": [
+      "未能从原话判断行业",
+      "未说明视频类型",
+      "未说明时长"
+    ],
+    "question_contains": [
+      "行业",
+      "产品宣传"
+    ]
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "id": "19-images",
+  "request": {
+    "project_id": "19-images",
+    "payload": {
+      "raw_input": "给柱塞泵做产品宣传片，素材见附件",
+      "attachments": [
+        {
+          "kind": "image",
+          "uri": "workers/nodes/n01_brief/tests/fixtures/assets/logo.png"
+        },
+        {
+          "kind": "image",
+          "uri": "workers/nodes/n01_brief/tests/fixtures/assets/product-front.png"
+        },
+        {
+          "kind": "image",
+          "uri": "workers/nodes/n01_brief/tests/fixtures/assets/person-boss.png"
+        },
+        {
+          "kind": "image",
+          "uri": "workers/nodes/n01_brief/tests/fixtures/assets/scene-workshop.png"
+        }
+      ]
+    }
+  },
+  "expect": {
+    "video_type": "product_showcase",
+    "max_questions": 0,
+    "image_classes": [
+      "logo",
+      "product",
+      "person",
+      "scene"
+    ],
+    "assumption_contains": [
+      "检测到 Logo",
+      "人物素材",
+      "未提供工厂视频"
+    ]
+  }
+}

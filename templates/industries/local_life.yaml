@@ -1,0 +1,62 @@
+industry: local_life
+label: 本地生活
+narrative:
+  - 环境
+  - 招牌产品
+  - 氛围
+  - 优惠
+  - 地址
+shot_sequence:
+  - 先看到门店或环境
+  - 招牌产品特写，食物质感优先
+  - 店内氛围，不靠画面里的字说明
+  - 优惠信息以后期字幕给出
+  - 片尾留下地址或到店方式
+duration_s: 20
+aspect_ratios:
+  - "9:16"
+platforms:
+  - 抖音
+  - 视频号
+languages:
+  - zh
+goal: 到店引流
+audience: 本地到店消费者
+style_keywords:
+  - 真实感
+  - 食物质感
+  - 烟火气
+music_mood: 轻、近、有环境声的空间
+must_include:
+  - 招牌产品
+  - 到店信息
+forbidden:
+  - 编造评分和客流
+  - 画面内生成的文字、Logo、价格或电话
+requirements:
+  - 真实感
+  - 食物质感
+  - 地址信息清楚
+video_types:
+  - id: store_visit
+    label: 探店视频
+    goal: 到店引流
+    keywords:
+      - 探店
+      - 到店
+  - id: event_promo
+    label: 活动推广
+    goal: 活动推广
+    keywords:
+      - 活动推广
+      - 周年庆
+default_video_type: store_visit
+keywords:
+  - {text: 探店, weight: 5}
+  - {text: 餐厅, weight: 4}
+  - {text: 餐饮, weight: 4}
+  - {text: 酒店, weight: 4}
+  - {text: 美业, weight: 4}
+  - {text: 奶茶, weight: 4}
+  - {text: 到店, weight: 3}
+clarify_question: 这条片是探店，还是活动推广？

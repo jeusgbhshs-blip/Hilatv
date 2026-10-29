@@ -1,0 +1,61 @@
+industry: education
+label: 教育培训
+narrative:
+  - 问题
+  - 解法
+  - 课程亮点
+  - 讲师
+  - 报名
+shot_sequence:
+  - 开头抛出一个学习者真正会遇到的问题
+  - 用画面演示解法，概念文字后期叠加
+  - 课程亮点拆成短句
+  - 讲师出镜必须已有肖像授权
+  - 片尾放报名方式
+duration_s: 30
+aspect_ratios:
+  - "9:16"
+platforms:
+  - 抖音
+  - 视频号
+languages:
+  - zh
+goal: 课程获客
+audience: 潜在学员
+style_keywords:
+  - 信息清晰
+  - 可信
+music_mood: 清楚、平稳、不吵
+must_include:
+  - 课程亮点
+  - 报名方式
+forbidden:
+  - 保证提分或包就业
+  - 画面内生成的文字、Logo、价格或电话
+requirements:
+  - 信息清晰
+  - 讲师出镜需授权
+video_types:
+  - id: course_promo
+    label: 课程宣传
+    goal: 课程获客
+    keywords:
+      - 课程宣传
+      - 招生
+      - 入门课
+  - id: explainer
+    label: 知识讲解
+    goal: 知识讲解
+    keywords:
+      - 知识讲解
+      - 讲清楚
+default_video_type: course_promo
+keywords:
+  - {text: 招生, weight: 5}
+  - {text: 知识讲解, weight: 5}
+  - {text: 入门课, weight: 4}
+  - {text: 课程, weight: 4}
+  - {text: 培训, weight: 4}
+  - {text: 讲师, weight: 4}
+  - {text: 学员, weight: 3}
+clarify_question: 这条片是课程招生，还是知识讲解？
