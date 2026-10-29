@@ -1,0 +1,74 @@
+# Model routes. Re-read on every call when the file contents change (hot reload).
+# shot_type / language "*" is the wildcard. A more specific row wins.
+
+version: 1
+defaults:
+  timeout_s: 60
+
+routes:
+  - id: llm-close-up-en
+    task: llm
+    shot_type: close_up
+    language: en
+    timeout_s: 45
+    primary: {provider: deepseek, model: deepseek-chat}
+    fallbacks:
+      - {provider: dashscope, model: qwen-plus}
+
+  - id: llm-default
+    task: llm
+    shot_type: "*"
+    language: "*"
+    timeout_s: 60
+    primary: {provider: deepseek, model: deepseek-chat}
+    fallbacks:
+      - {provider: dashscope, model: qwen-plus}
+      - {provider: ark, model: doubao-pro-32k}
+
+  - id: image-default
+    task: image
+    shot_type: "*"
+    language: "*"
+    timeout_s: 120
+    primary: {provider: mock, model: mock-image}
+    fallbacks: []
+
+  - id: video-default
+    task: video
+    shot_type: "*"
+    language: "*"
+    timeout_s: 300
+    primary: {provider: mock, model: mock-video}
+    fallbacks: []
+
+  - id: tts-default
+    task: tts
+    shot_type: "*"
+    language: "*"
+    timeout_s: 60
+    primary: {provider: mock, model: mock-tts}
+    fallbacks: []
+
+  - id: asr-default
+    task: asr
+    shot_type: "*"
+    language: "*"
+    timeout_s: 60
+    primary: {provider: mock, model: mock-asr}
+    fallbacks: []
+
+  - id: music-default
+    task: music
+    shot_type: "*"
+    language: "*"
+    timeout_s: 120
+    primary: {provider: mock, model: mock-music}
+    fallbacks: []
+
+  - id: judge-default
+    task: judge
+    shot_type: "*"
+    language: "*"
+    timeout_s: 60
+    primary: {provider: mock, model: mock-judge}
+    fallbacks: []

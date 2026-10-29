@@ -17,6 +17,10 @@ dependencies = [
   "sqlalchemy>=2.0.36",
   "alembic>=1.14.0",
   "psycopg[binary]>=3.2.3",
+  "httpx>=0.28.0",
+  "pyyaml>=6.0.2",
+  "redis>=5.2.0",
+  "jsonschema>=4.23.0",
 ]
 
 [project.optional-dependencies]
@@ -25,6 +29,7 @@ dev = [
   "pytest-cov>=6.0.0",
   "httpx>=0.28.0",
   "ruff>=0.8.4",
+  "fakeredis>=2.26.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -34,6 +39,7 @@ include = ["gateway*", "workers*", "eval*"]
 [tool.setuptools.package-data]
 "workers.nodes.n01_brief" = ["prompts/*.j2"]
 "workers.schemas" = ["json_schema/*.json"]
+gateway = ["routes.yaml", "pricing.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = [

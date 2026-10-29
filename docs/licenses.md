@@ -15,11 +15,15 @@
 | pydantic-settings | ≥ 2.7 | MIT | 环境配置 |
 | Jinja2 | ≥ 3.1 | BSD-3-Clause | 节点提示词模板 |
 | pytest | ≥ 8.3 | MIT | 单元测试 |
-| httpx | ≥ 0.28 | BSD-3-Clause | API 测试客户端 |
+| httpx | ≥ 0.28 | BSD-3-Clause | API 测试客户端；网关 OpenAI 兼容 HTTP（运行时） |
+| PyYAML | ≥ 6.0 | MIT | 路由表与单价表 |
+| redis-py | ≥ 5.2 | MIT | 网关响应缓存 |
+| jsonschema | ≥ 4.23 | MIT | 字典形式 JSON Schema 校验 |
+| fakeredis | ≥ 2.26 | MIT | 缓存单元测试（开发依赖） |
 | Ruff | ≥ 0.8 | MIT | Python lint / format |
 | SQLAlchemy | ≥ 2.0.36 | MIT | 迁移与数据库类型 |
-| Alembic | ≥ 1.14 | MIT | 数据库迁移 |
-| psycopg | ≥ 3.2 | LGPL-3.0 | PostgreSQL 驱动（业务迁移与 JSONB 读写） |
+| Alembic | ≥ 1.14 | MIT | 数据库迁移（业务表与 call_logs/alerts） |
+| psycopg | ≥ 3.2 | LGPL-3.0 | PostgreSQL 驱动（`psycopg-binary` 同上） |
 | pytest-cov | ≥ 6.0 | MIT | 模型模块覆盖率 |
 | PostgreSQL | 16（`pgvector/pgvector:0.8.7-pg16`） | PostgreSQL License | 业务库 |
 | pgvector | 0.8.7 | PostgreSQL License | 向量检索扩展 |
