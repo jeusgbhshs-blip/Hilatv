@@ -24,15 +24,18 @@ def test_png_is_a_flat_color_frame() -> None:
 def test_wav_duration_matches_character_timestamps() -> None:
     data, stamps, duration = render_wav("三十兆帕", 3)
     assert [item["text"] for item in stamps] == ["三", "十", "兆", "帕"]
-    assert duration == 0.8
+    assert duration == 1.0
     assert abs(decode_wav(data) - duration) < 0.02
     ffmpeg_decode(data, ".wav")
+    english, _words, english_duration = render_wav("Built for pressure", 1, language="en")
+    assert english_duration == 1.2
+    assert abs(decode_wav(english) - 1.2) < 1e-6
 
 
 def test_wav_respects_speed_and_trailing_pause() -> None:
     _data, stamps, duration = render_wav("三十兆帕", 1, speed=1.05, pause_s=0.4)
-    assert stamps[-1]["end_s"] == 0.762
-    assert duration == 1.162
+    assert stamps[-1]["end_s"] == 0.952
+    assert duration == 1.352
     assert abs(decode_wav(_data) - duration) < 1e-6
 
 

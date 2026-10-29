@@ -50,6 +50,8 @@ class ShotVoiceover(BaseModel):
     voice: str = Field(min_length=1)
     speed: float = Field(gt=0)
     pause_s: float = Field(ge=0)
+    audio_s: float = Field(gt=0)
+    hold_s: float = Field(ge=0)
     duration_s: float = Field(gt=0)
     timestamps: list[WordStamp]
     transcript: str

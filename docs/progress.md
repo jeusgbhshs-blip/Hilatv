@@ -70,13 +70,13 @@
 ## T07 假设
 
 - N6 的输入是第 5 章的 `Script`，可选 `BrandKit` 和 `Brief`。回写的是同一份 `Script` 里每个 `Shot.duration_s`，旁白文件是 `Asset`（`kind=voiceover`）。第 5 章的 Shot 没有逐字时间戳，时间戳放在节点输出的 `voiceovers` 里，给 N13 用。不改 Shot 的字段，也不新增迁移。Alembic 仍是单一 head `t03_gateway_0002`。
-- 先配音，再改时长。N5 按 Brief 摊过的时长会被音频覆盖，不再要求总和等于 Brief 时长。每个有旁白的镜头，`duration_s` 等于该句音频时长（含规定停顿）。全片音频总时长与分镜总时长的误差不超过一帧（30fps，即 1/30 秒）。
+- 先配音，再改时长。Mock TTS 按 N4 的语速计时：中文 4 字/秒（每字 250ms），英文 2.5 词/秒（每词 400ms）。镜头 `duration_s` 不短于该句音频（含规定停顿）。旁白短于 Brief 时，缺口按各句音频比例做成画面停留（hold），分镜总时长落到 Brief 上。旁白长过 Brief 的 5% 时，先把语速最多再提高 15%；仍然超长就记 `copy_over_long` / `trim_copy`，交给 N4 删文案，并且不重试。SPEC N5 的总时长误差 ≤ 5% 是这条线的验收阈值。没有 Brief 时不补时长，镜头等于音频。
 - 语速基准是 Brand Kit 的 `voice.speed`，没有资料时是 1.0。钩子镜 ×1.05，结尾 CTA ×0.90 并在句尾加 0.4 秒停顿。同一镜既是钩子又是结尾 CTA（例如 5 秒成片被收成一镜）时按结尾 CTA。更早的 CTA 镜只放慢，不停顿。语速夹在 0.2–3.0。音色用 `voice.tts_voice`，否则 `zh_male_steady`。
 - 这些数放进 gateway `tts` 的 `speed` 和 `pause_s`。火山 v1 请求把它们写成 `audio.speed_ratio` 和 `request.silence_duration`（毫秒）。多音字和术语在 `workers/nodes/n06_voiceover/lexicon.yaml`，命中后由 adapter 包成 SSML `<phoneme alphabet="py">`。更长的词优先，所以「柱塞泵」不会再标成「柱塞」。
 - 质检：ASR 回听字错率必须小于 2%（等于 2% 也不过）。比较前去掉空白和标点。响度用 RMS dBFS 近似 LUFS，窗口 -28 到 -12，对应旁白大约 -16。任一采样点顶到 16-bit 满幅（±32767）算爆音。无 Key 时 mock ASR 回放请求里的 `reference_text`，字错率比对逻辑用植入错字的单测验收。Live 火山 ASR 不把 `reference_text` 发给厂商。
 - 画面上的字、Logo、价格、电话仍只留在 `on_screen_text`。N6 不调用图像或视频模型，也不把卡片上的电话拼进旁白。镜头变长或变短时，卡片的 in/out 按比例缩进新时长。
 - 真人录音只留 `align_user_recording`，本任务不把它当验收项。ASR 走豆包录音文件极速识别 HTTP（`volc.bigasr.auc_turbo`），单价写在 `gateway/pricing.yaml`，是配置不是合同：¥0.004/秒。没有 `VOLC_ASR_APP_ID` 和 `VOLC_ASR_API_KEY` 时走 mock。TTS Key 不会顺便打开 ASR。
-- 不新增数据库迁移。验收把网关日志放到独立 SQLite，并清掉对象存储环境变量，避免连到没启动的 MinIO。`mock://` 音频按同一语速和停顿在本地重放成 WAV 再做响度和爆音检测。
+- 不新增数据库迁移。验收把网关日志放到独立 SQLite，并清掉对象存储环境变量，避免连到没启动的 MinIO。`mock://` 音频按同一语速和停顿在本地重放成 WAV 再做响度和爆音检测。画面停留不写进音频文件，只加在镜头时长上，避免静音把响度拉出窗口。
 
 ## T08 假设
 

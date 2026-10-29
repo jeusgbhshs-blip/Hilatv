@@ -66,9 +66,9 @@ def test_flash_asr_posts_audio_and_returns_text(tmp_path) -> None:
     assert "reference_text" not in body
     assert out["text"] == "三十"
     assert out["mock"] is False
-    # 0.4s * ¥0.004
-    assert duration == 0.4
-    assert Decimal(gateway.store.list_logs()[-1]["cost_cny"]) == Decimal("0.001600")
+    # 2 characters at 4/s = 0.5s, ¥0.004 per second
+    assert duration == 0.5
+    assert Decimal(gateway.store.list_logs()[-1]["cost_cny"]) == Decimal("0.002000")
 
 
 def test_parse_transcript_reads_a_result_list() -> None:

@@ -75,7 +75,9 @@ def _unstructured(call: Invocation) -> dict[str, object]:
         }
     if call.task == "tts":
         speed, pause = _prosody(call)
-        stamps, duration = prosody_timing(call.prompt, speed=speed, pause_s=pause)
+        stamps, duration = prosody_timing(
+            call.prompt, speed=speed, pause_s=pause, language=call.language
+        )
         return {
             "mock": True,
             "task": "tts",
@@ -153,7 +155,9 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
             "seed": call.seed,
         }
     speed, pause = _prosody(call)
-    data, stamps, duration = render_wav(call.prompt, call.seed, speed=speed, pause_s=pause)
+    data, stamps, duration = render_wav(
+        call.prompt, call.seed, speed=speed, pause_s=pause, language=call.language
+    )
     uri = store.put(f"gateway/tts/{digest}.wav", data, "audio/wav")
     return {
         "mock": True,
@@ -213,6 +217,7 @@ def _digest(call: Invocation) -> str:
             "duration_s": call.params.get("duration_s"),
             "speed": call.params.get("speed"),
             "pause_s": call.params.get("pause_s"),
+            "language": call.language,
         },
         ensure_ascii=False,
         sort_keys=True,

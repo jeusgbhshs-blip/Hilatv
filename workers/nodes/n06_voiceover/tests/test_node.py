@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,6 +17,8 @@ from workers.nodes.n06_voiceover.qa import QAError, check
 from workers.nodes.n06_voiceover.schema import NodeResult
 from workers.schemas.asset import AssetKind
 from workers.schemas.script import Script
+
+FIXTURES = Path(__file__).resolve().parents[3] / "schemas" / "tests" / "fixtures"
 
 
 def _shot(
@@ -90,6 +94,8 @@ def test_durations_follow_the_audio(gateway) -> None:
     for shot in script.shots:
         take = takes[shot.shot_id]
         assert abs(shot.duration_s - take["duration_s"]) <= 0.001
+        assert shot.duration_s + 1e-3 >= take["audio_s"]
+        assert take["hold_s"] == 0
         assert shot.duration_s != 4.0
         assert take["cer"] < 0.02
         assert take["clipped"] is False
@@ -187,6 +193,37 @@ def test_clipped_wav_fails_the_node(gateway, monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(node_mod, "load_take", fake_load)
     with pytest.raises(QAError, match="clipped"):
         run(_request(), gateway=gateway, max_attempts=1)
+
+
+def test_short_read_pads_to_the_brief(gateway) -> None:
+    raw = _request()
+    brief = json.loads((FIXTURES / "brief.json").read_text(encoding="utf-8"))
+    brief["duration_s"] = 30
+    brief["languages"] = ["zh"]
+    raw["payload"]["brief"] = brief
+    result = run(raw, gateway=gateway)
+    script = check(result)
+    total = sum(shot.duration_s for shot in script.shots)
+    assert abs(total - 30) / 30 <= 0.05
+    assert result.payload["speed_factor"] == 1.0
+    takes = {item["shot_id"]: item for item in result.payload["voiceovers"]}
+    assert sum(item["hold_s"] for item in takes.values()) > 0
+    for shot in script.shots:
+        take = takes[shot.shot_id]
+        assert shot.duration_s + 1e-3 >= take["audio_s"]
+        assert take["audio_s"] < 30
+
+
+def test_overlong_copy_is_flagged_for_the_script(gateway) -> None:
+    raw = _request()
+    brief = json.loads((FIXTURES / "brief.json").read_text(encoding="utf-8"))
+    brief["duration_s"] = 10
+    brief["languages"] = ["zh"]
+    raw["payload"]["brief"] = brief
+    for shot in raw["payload"]["script"]["shots"]:
+        shot["voiceover"] = "测" * 80
+    with pytest.raises(QAError, match="trim_copy"):
+        run(raw, gateway=gateway, max_attempts=3)
 
 
 def test_invalid_input_fails_fast(gateway) -> None:
