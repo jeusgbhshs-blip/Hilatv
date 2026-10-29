@@ -1,0 +1,140 @@
+{
+  "$defs": {
+    "QAReport": {
+      "additionalProperties": false,
+      "properties": {
+        "scores": {
+          "$ref": "#/$defs/QAScores"
+        },
+        "hard_fail": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Hard Fail",
+          "type": "array"
+        },
+        "total": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Total",
+          "type": "number"
+        },
+        "evaluator": {
+          "minLength": 1,
+          "title": "Evaluator",
+          "type": "string"
+        },
+        "notes": {
+          "title": "Notes",
+          "type": "string"
+        }
+      },
+      "required": [
+        "scores",
+        "hard_fail",
+        "total",
+        "evaluator",
+        "notes"
+      ],
+      "title": "QAReport",
+      "type": "object"
+    },
+    "QAScores": {
+      "additionalProperties": false,
+      "description": "Five integer dimensions from the §5.4 sample, each 0–10.",
+      "properties": {
+        "product_fidelity": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Product Fidelity",
+          "type": "integer"
+        },
+        "motion_quality": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Motion Quality",
+          "type": "integer"
+        },
+        "aesthetics": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Aesthetics",
+          "type": "integer"
+        },
+        "prompt_match": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Prompt Match",
+          "type": "integer"
+        },
+        "artifact_free": {
+          "maximum": 10,
+          "minimum": 0,
+          "title": "Artifact Free",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "product_fidelity",
+        "motion_quality",
+        "aesthetics",
+        "prompt_match",
+        "artifact_free"
+      ],
+      "title": "QAScores",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "candidate_id": {
+      "minLength": 1,
+      "title": "Candidate Id",
+      "type": "string"
+    },
+    "shot_id": {
+      "minLength": 1,
+      "title": "Shot Id",
+      "type": "string"
+    },
+    "node": {
+      "pattern": "^N(?:[1-9]|1[0-8])$",
+      "title": "Node",
+      "type": "string"
+    },
+    "model": {
+      "minLength": 1,
+      "title": "Model",
+      "type": "string"
+    },
+    "params": {
+      "additionalProperties": true,
+      "title": "Params",
+      "type": "object"
+    },
+    "uri": {
+      "minLength": 1,
+      "title": "Uri",
+      "type": "string"
+    },
+    "qa": {
+      "$ref": "#/$defs/QAReport"
+    },
+    "selected": {
+      "title": "Selected",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "candidate_id",
+    "shot_id",
+    "node",
+    "model",
+    "params",
+    "uri",
+    "qa",
+    "selected"
+  ],
+  "title": "Candidate",
+  "type": "object"
+}

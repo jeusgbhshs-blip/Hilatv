@@ -1,0 +1,77 @@
+{
+  "$defs": {
+    "DecisionAction": {
+      "description": "Chapter 4 outcomes: 通过 / 重生 / 换模型 / 降级方案 / 求助用户.\n\nThe sample decision uses ``regenerate``.",
+      "enum": [
+        "pass",
+        "regenerate",
+        "switch_model",
+        "fallback",
+        "ask_user"
+      ],
+      "title": "DecisionAction",
+      "type": "string"
+    },
+    "DecisionTarget": {
+      "additionalProperties": false,
+      "properties": {
+        "node": {
+          "pattern": "^N(?:[1-9]|1[0-8])$",
+          "title": "Node",
+          "type": "string"
+        },
+        "shot_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shot Id"
+        }
+      },
+      "required": [
+        "node"
+      ],
+      "title": "DecisionTarget",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "action": {
+      "$ref": "#/$defs/DecisionAction"
+    },
+    "target": {
+      "$ref": "#/$defs/DecisionTarget"
+    },
+    "reason": {
+      "minLength": 1,
+      "title": "Reason",
+      "type": "string"
+    },
+    "changes": {
+      "additionalProperties": true,
+      "title": "Changes",
+      "type": "object"
+    },
+    "max_attempts_left": {
+      "maximum": 3,
+      "minimum": 0,
+      "title": "Max Attempts Left",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "action",
+    "target",
+    "reason",
+    "changes",
+    "max_attempts_left"
+  ],
+  "title": "DirectorDecision",
+  "type": "object"
+}

@@ -1,0 +1,133 @@
+{
+  "$defs": {
+    "ClarifyingQuestion": {
+      "additionalProperties": false,
+      "description": "One N1 follow-up. Each question carries a recommended default.",
+      "properties": {
+        "question": {
+          "minLength": 1,
+          "title": "Question",
+          "type": "string"
+        },
+        "recommended": {
+          "minLength": 1,
+          "title": "Recommended",
+          "type": "string"
+        },
+        "options": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Options",
+          "type": "array"
+        }
+      },
+      "required": [
+        "question",
+        "recommended"
+      ],
+      "title": "ClarifyingQuestion",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "brief_id": {
+      "minLength": 1,
+      "title": "Brief Id",
+      "type": "string"
+    },
+    "raw_input": {
+      "minLength": 1,
+      "title": "Raw Input",
+      "type": "string"
+    },
+    "goal": {
+      "minLength": 1,
+      "title": "Goal",
+      "type": "string"
+    },
+    "platform": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Platform",
+      "type": "array"
+    },
+    "duration_s": {
+      "maximum": 180,
+      "minimum": 5,
+      "title": "Duration S",
+      "type": "integer"
+    },
+    "aspect_ratios": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Aspect Ratios",
+      "type": "array"
+    },
+    "languages": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Languages",
+      "type": "array"
+    },
+    "video_type": {
+      "minLength": 1,
+      "title": "Video Type",
+      "type": "string"
+    },
+    "audience": {
+      "minLength": 1,
+      "title": "Audience",
+      "type": "string"
+    },
+    "must_include": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Must Include",
+      "type": "array"
+    },
+    "style": {
+      "minLength": 1,
+      "title": "Style",
+      "type": "string"
+    },
+    "assumptions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Assumptions",
+      "type": "array"
+    },
+    "open_questions": {
+      "items": {
+        "$ref": "#/$defs/ClarifyingQuestion"
+      },
+      "title": "Open Questions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "brief_id",
+    "raw_input",
+    "goal",
+    "platform",
+    "duration_s",
+    "aspect_ratios",
+    "languages",
+    "video_type",
+    "audience",
+    "must_include",
+    "style",
+    "assumptions"
+  ],
+  "title": "Brief",
+  "type": "object"
+}
