@@ -7,7 +7,7 @@
 | 任务 | 名称 | 依赖 | 状态 | 分支 / PR | 备注 |
 |---|---|---|---|---|---|
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
-| T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | 🔵 | t02-schemas-migrations | 验收中。假设见 PR。revision `t02_business_0001`；不建 call_logs/alerts |
+| T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | 🔵 | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 验收中。假设见 PR #22。revision `t02_business_0001`；不建 call_logs/alerts |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ⬜ | – | |
 | T04 | 图像/视频/TTS adapter | T03 | ⬜ | – | |
 | T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ⬜ | – | |
