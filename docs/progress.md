@@ -11,9 +11,9 @@
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
 | T04 | 图像/视频/TTS adapter | T03 | ✅ | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ✅ | [t05-n1-brief](https://github.com/jeusgbhshs-blip/Hilatv/pull/25) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T06 | N4 脚本 + N5 分镜 | T05 | 🔵 | [t06-script-storyboard](https://github.com/jeusgbhshs-blip/Hilatv/pull/26) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T06 | N4 脚本 + N5 分镜 | T05 | ✅ | [t06-script-storyboard](https://github.com/jeusgbhshs-blip/Hilatv/pull/26) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ⬜ | – | |
-| T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ⬜ | – | |
+| T08 | N8 关键帧 + N10 图生视频 | T04, T06 | 🔵 | t08-keyframe-video | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ⬜ | – | |
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ⬜ | – | |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
@@ -57,9 +57,27 @@
 -->
 
 ### 2026-10-29
-- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）、T05（PR #25，无新迁移）
-- 正在做什么：T06 N4 脚本 + N5 分镜。镜头预设在 `templates/shots/`。无 Key，`make accept-t06` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
+- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）、T05（PR #25，无新迁移）、T06（PR #26，无新迁移）
+- 正在做什么：T08 N8 关键帧 + N10 图生视频，分支 `t08-keyframe-video`。无 Key，`make accept-t08` 走 mock。不新增迁移，Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+
+## T08 假设
+
+- N7 锚点和 `product_composite` 实拍合成留给 T13。N8 仍为每个可生成镜头出关键帧。`product_composite` 的提示词把产品写成无标识的占位体，不在这里做抠图合成。没有锚点图时，场景句用 `scene_ref`，风格句用 Brief 的 `style`。调用方可以另给一段文字描述。
+- `motion_graphics` 不调用图像或视频模型，留给渲染层 / T14。验收里的「每镜 ≥ 3 候选」统计可生成镜头。参数镜和行动号召镜被跳过。
+- 需要尾帧的运镜是 `gentle_arc`、`slow_push_in`、`slow_pull_back`、`rise_reveal`，外加 `generation_mode=first_last_frame`。N5 目前不会写出 `first_last_frame`。尾帧与首帧共用同一组 seed，选中的尾帧与选中的首帧是同一个 seed。
+- 关键帧和视频都默认 4 条候选（不少于 3，不超过 8）。视频候选用不同 seed。网关路由按镜头族选模型；可灵、万相还没有 adapter，没 Key 时也会落到 mock。候选上的 `model` 是实际跑起来的模型（mock 下是 `mock-image` / `mock-video`）。提示词模板跟路由表里的首选模型名走，所以人物镜用可灵模板，氛围镜用万相模板，产品和 Seedance 用各自的模板。
+- 镜头族：目的里有「人物」或引用以 `person:` 开头 → `person`；`reference_to_video` 且至少两个引用、又不是人物 → `multi_ref`；`product_composite`、`reference_to_video` 或带 `product:` 引用 → `product`；其余 → `atmosphere`。`motion_graphics` 不进路由。
+- 产品镜头运动强度强制为 `low`。氛围镜头若预设是 `low`，提高到 `medium`。其余沿用镜头语言库里的强度。
+- 生成时长：`duration_s + 2 × 余量 ≤ 5` 时用 5 秒，否则用 10 秒。余量默认 0.2 秒（`HILATV_TRIM_MARGIN_S`）。裁切窗口长度等于 `duration_s`，起点是首部余量，尾部余量是生成片里剩下的部分。对象存储里拿得到字节时，用 ffmpeg 重编码这个窗口，候选 `uri` 指向裁后的文件。只有 `mock://`、没有字节时，保留裁切参数和原 uri。验收用内存对象存储，所以文件会被真正裁短。mock 视频改成按请求的 `duration_s` 出片；不传时长时仍是 1 秒，原有测试不变。
+- T12 之前不做 VLM 打分。每条候选带一个占位 `QAReport`（`evaluator=rule-select-v0`，五项都是 8）。每个镜头只选 1 条首帧：若有候选的模型等于路由首选模型就选它，否则选最小 seed。尾帧选同一个 seed。视频同样。
+- 画面文字、Logo、价格、电话从提示词里删掉，并写入网关那条「无文字」负面约束。屏幕上的徽章句子不会进提示词。
+- 镜头级并行，线程数默认 4（`HILATV_SHOT_WORKERS`）。一个镜头抛错只记日志，不取消其他镜头。节点重试时只重跑还没成功的镜头。超时仍让整个节点失败。
+- 候选就是第 5 章的 `Candidate`，节点结果里的 JSON 就是 `candidates.document` 的形状。只有调用方给了 `enterprise_id` 且 Postgres 可达时才插入 `candidates` 表。验收不提供企业 id，因此不写库。本任务不新增 Alembic revision，head 仍是 `t03_gateway_0002`。
+- N10 一律从 N8 选中的首帧做图生视频，包含分镜里标成 `text_to_video` 的镜头。本任务没有单独的文生视频调用。有选中尾帧时，把地址放进 `last_frame_url`。当前 Seedance adapter 只提交一张首帧图，尾帧地址留在参数里给以后的 adapter。
+- 不新增厂商 SDK。路由表里的 `kling` / `wanx` 只是首选名字，没有对应 adapter 时会被跳过。
+- `candidate_id` 用 `uuid5(project_id + shot_id + node + frame + seed)`，同一输入重跑结果稳定。
+- 验收脚本自己建 mock 网关和内存对象存储，不读 MinIO，也不因为 `HILATV_LIVE=1` 去打真实接口。
 
 ## T06 假设
 

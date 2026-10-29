@@ -25,6 +25,18 @@ routes:
       - {provider: dashscope, model: qwen-plus}
       - {provider: ark, model: doubao-pro-32k}
 
+  # N8 still has one live image adapter. Person shots name a different model so the
+  # prompt template can follow the route. Missing providers fall through to mock.
+  - id: image-person
+    task: image
+    shot_type: person
+    language: "*"
+    timeout_s: 120
+    primary: {provider: kling, model: kling-image-v1}
+    fallbacks:
+      - {provider: seedream, model: doubao-seedream-4-0-250828}
+      - {provider: mock, model: mock-image}
+
   - id: image-default
     task: image
     shot_type: "*"
@@ -33,6 +45,47 @@ routes:
     primary: {provider: seedream, model: doubao-seedream-4-0-250828}
     fallbacks:
       - {provider: mock, model: mock-image}
+
+  # N10 routes by shot family. Only Seedance is implemented; the other names are
+  # the route table's preferred models and are skipped until an adapter exists.
+  - id: video-product
+    task: video
+    shot_type: product
+    language: "*"
+    timeout_s: 300
+    primary: {provider: seedance, model: doubao-seedance-1-0-pro-250528}
+    fallbacks:
+      - {provider: mock, model: mock-video}
+
+  - id: video-person
+    task: video
+    shot_type: person
+    language: "*"
+    timeout_s: 300
+    primary: {provider: kling, model: kling-o3}
+    fallbacks:
+      - {provider: seedance, model: doubao-seedance-1-0-pro-250528}
+      - {provider: mock, model: mock-video}
+
+  - id: video-multi-ref
+    task: video
+    shot_type: multi_ref
+    language: "*"
+    timeout_s: 300
+    primary: {provider: seedance, model: doubao-seedance-1-0-pro-250528}
+    fallbacks:
+      - {provider: kling, model: kling-o3}
+      - {provider: mock, model: mock-video}
+
+  - id: video-atmosphere
+    task: video
+    shot_type: atmosphere
+    language: "*"
+    timeout_s: 300
+    primary: {provider: dashscope, model: wanx-v1}
+    fallbacks:
+      - {provider: seedance, model: doubao-seedance-1-0-pro-250528}
+      - {provider: mock, model: mock-video}
 
   - id: video-default
     task: video
