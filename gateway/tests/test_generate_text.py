@@ -111,6 +111,11 @@ def test_packaged_routes_cover_every_task() -> None:
         assert route.task == task
     assert table.resolve("llm", "close_up", "en").id == "llm-close-up-en"
     assert table.resolve("llm", "wide", "zh").id == "llm-default"
+    assert table.resolve("image", None, None).primary.provider == "seedream"
+    assert table.resolve("video", None, None).primary.provider == "seedance"
+    assert table.resolve("tts", None, None).primary.provider == "volc_tts"
+    for task in ("image", "video", "tts"):
+        assert table.resolve(task, None, None).fallbacks[-1].provider == "mock"
 
 
 def test_module_entrypoint_stays_on_mock_without_keys(

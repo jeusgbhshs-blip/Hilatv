@@ -13,3 +13,7 @@ class AdapterError(GatewayError):
 
 class AdapterTimeout(AdapterError):
     """The adapter exceeded its timeout."""
+
+
+class StorageError(GatewayError):
+    """Object storage rejected a put or get."""

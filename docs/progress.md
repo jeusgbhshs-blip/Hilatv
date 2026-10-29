@@ -8,8 +8,8 @@
 |---|---|---|---|---|---|
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
-| T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | 🔵 | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 验收中。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
-| T04 | 图像/视频/TTS adapter | T03 | ⬜ | – | |
+| T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002` |
+| T04 | 图像/视频/TTS adapter | T03 | 🔵 | t04-media-adapters | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ⬜ | – | |
 | T06 | N4 脚本 + N5 分镜 | T05 | ⬜ | – | |
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ⬜ | – | |
@@ -57,9 +57,9 @@
 -->
 
 ### 2026-10-29
-- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）
-- 正在做什么：T03 模型网关。`call_logs` / `alerts` 接在 Alembic `t03_gateway_0002`（down_revision `t02_business_0001`）。无 Key，验收走 mock
-- 需要提供什么：LLM Key 与非零预算后才可打开 `HILATV_LIVE=1`
+- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）
+- 正在做什么：T04 图像 / 视频 / TTS adapter。mock 样例转存 MinIO；live 仅在 `HILATV_LIVE=1` 且有 Key 时启用。无新 Alembic revision
+- 需要提供什么：图像 Key（Seedream / `ARK_API_KEY`）、视频 Key（Seedance / `ARK_API_KEY`）、豆包 TTS 的 `VOLC_TTS_APP_ID` + `VOLC_TTS_API_KEY`，以及非零预算后才可打开 `HILATV_LIVE=1`
 
 ## T03 假设
 
@@ -71,4 +71,16 @@
 - `alerts` 每次超限一行；`docs/progress.md` 相同文案不重复追加。总上限调高后无需重启（每次调用重读环境变量）。
 - 缓存键含规范化输入、seed 和路由指纹。预算回退的 mock 结果不写入缓存。Redis 不可用时用进程内缓存，CI 无 Redis 仍可通过；单元测试用 fakeredis 覆盖 Redis 客户端。
 - 图像/视频提示词在网关追加「无文字 / 无 Logo / 无价格 / 无电话」负面约束。非 LLM 任务本任务只有 mock。全部候选都失败时抛 `GatewayError`（已记错误日志）。`qa_score` 列先空着。
+
+## T04 假设
+
+- 图像、视频、TTS 各接 1 家，全部用 httpx。不引入厂商 SDK，也不引入 boto3 / MinIO SDK。对象存储是自写的 SigV4 客户端：本地 MinIO 用 path-style，生产阿里云 OSS 把 `S3_ADDRESSING=virtual`。返回的 URI 默认 `oss://bucket/key`（`HILATV_OBJECT_URI_SCHEME=s3` 可改）。
+- 图像是火山方舟 Seedream，`POST /images/generations`，默认同模型 `doubao-seedream-4-0-250828`。该接口是同步的，不轮询。请求里 `watermark: false`。当前文档没有 `seed` 字段，live 请求不传 seed；seed 仍进入缓存键和调用日志。`SEEDREAM_API_KEY` 为空时用 `ARK_API_KEY`。
+- 视频是火山方舟 Seedance，`POST/GET /contents/generations/tasks`，默认模型 `doubao-seedance-1-0-pro-250528`。状态：queued / running / succeeded / failed / cancelled / expired。`watermark: false`。轮询间隔 `HILATV_POLL_INTERVAL_S`（默认 2 秒），总超时用路由 `timeout_s`。时长按 2–10 秒取整，默认 5 秒。
+- TTS 用豆包语音 v1 HTTP `POST /api/v1/tts`（官方标为不推荐，但一次返回 base64 音频，并用 `with_timestamp=1` 取字级时间戳）。需要 `VOLC_TTS_APP_ID` 和 `VOLC_TTS_API_KEY`。鉴权头是 `Bearer;{token}`。`zh_male_steady` 映射到 `zh_male_M392_conversation_wvae_bigtts`。时间戳统一成秒。v3 流式接口未接。
+- 画面上的文字、Logo、价格、电话继续只靠网关负面约束，不让图像/视频模型画。Mock 图是纯色 PNG，mock 视频是 ffmpeg `color` 源加 libx264，不用 drawtext。
+- 单价写在 `gateway/pricing.yaml`，是配置不是合同：图像按张 ¥0.20，视频按秒 ¥0.50，TTS 按千字 ¥2.00。模型不在表里时用 `task_defaults`。视频即使厂商返回 token，也按秒计。
+- 没配对象存储时，mock 仍返回 `mock://`，好让 T03 单测不用 MinIO。配了存储之后，图像/视频/TTS 必须转存成功才返回 `oss://`。Live adapter 没有存储配置时失败，网关回退 mock。
+- 不新增数据库迁移。媒体只进对象存储，调用日志沿用 `call_logs`。Alembic 仍然只有 head `t03_gateway_0002`。
+- 没有 Key，本轮不贴真实厂商样例。`HILATV_LIVE=1` 且预算和对应 Key 都有时，`make accept-t04` 会额外各跑一条 live。
 

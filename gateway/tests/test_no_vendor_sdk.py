@@ -46,6 +46,7 @@ def test_business_code_does_not_call_vendors() -> None:
         "api.deepseek.com",
         "dashscope.aliyuncs.com",
         "volces.com",
+        "openspeech.bytedance.com",
         "api.openai.com",
     )
     roots = [REPO_ROOT / "apps", REPO_ROOT / "workers", REPO_ROOT / "eval"]

@@ -128,6 +128,9 @@ def env_model_overrides() -> dict[str, str]:
         "deepseek": os.getenv("DEEPSEEK_MODEL", "").strip(),
         "dashscope": os.getenv("DASHSCOPE_MODEL", "").strip(),
         "ark": os.getenv("ARK_MODEL", "").strip(),
+        "seedream": os.getenv("SEEDREAM_MODEL", "").strip(),
+        "seedance": os.getenv("SEEDANCE_MODEL", "").strip(),
+        "volc_tts": os.getenv("VOLC_TTS_MODEL", "").strip(),
     }
 
 

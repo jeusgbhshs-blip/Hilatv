@@ -7,6 +7,11 @@ TASKS = frozenset({"llm", "image", "video", "tts", "asr", "music", "judge"})
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+VOLC_TTS_BASE_URL = "https://openspeech.bytedance.com"
+
+# SPEC Brand Kit voice id mapped onto a documented Doubao voice. Override with VOLC_TTS_VOICE.
+DEFAULT_TTS_VOICE = "zh_male_M392_conversation_wvae_bigtts"
+TTS_VOICE_ALIASES = {"zh_male_steady": DEFAULT_TTS_VOICE}
 
 # Image and video models must not paint copy. The render nodes overlay text.
 NO_RENDERED_TEXT = (

@@ -30,24 +30,27 @@ routes:
     shot_type: "*"
     language: "*"
     timeout_s: 120
-    primary: {provider: mock, model: mock-image}
-    fallbacks: []
+    primary: {provider: seedream, model: doubao-seedream-4-0-250828}
+    fallbacks:
+      - {provider: mock, model: mock-image}
 
   - id: video-default
     task: video
     shot_type: "*"
     language: "*"
     timeout_s: 300
-    primary: {provider: mock, model: mock-video}
-    fallbacks: []
+    primary: {provider: seedance, model: doubao-seedance-1-0-pro-250528}
+    fallbacks:
+      - {provider: mock, model: mock-video}
 
   - id: tts-default
     task: tts
     shot_type: "*"
     language: "*"
     timeout_s: 60
-    primary: {provider: mock, model: mock-tts}
-    fallbacks: []
+    primary: {provider: volc_tts, model: seed-tts-1.0}
+    fallbacks:
+      - {provider: mock, model: mock-tts}
 
   - id: asr-default
     task: asr

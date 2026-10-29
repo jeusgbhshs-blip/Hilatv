@@ -35,4 +35,4 @@ class AdapterResult:
     model: str
     output: dict[str, Any]
     cost_cny: Decimal
-    usage: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int | float] = field(default_factory=dict)

@@ -26,6 +26,9 @@ jobs:
       - name: Install Python package
         run: python -m pip install -e ".[dev]"
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Ruff
         run: |
           ruff check .
@@ -72,6 +75,14 @@ jobs:
         env:
           ACCEPT_T03_REQUIRE_POSTGRES: "1"
           ACCEPT_T03_REQUIRE_REDIS: "1"
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Accept T04 media samples from MinIO
+        run: make accept-t04
+        env:
+          ACCEPT_T04_REQUIRE_MINIO: "1"
 
   schema:
     runs-on: ubuntu-latest
