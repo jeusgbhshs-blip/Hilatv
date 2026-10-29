@@ -1,4 +1,8 @@
-"""call_logs and alerts. PostgreSQL when it is up, SQLite otherwise."""
+"""call_logs and alerts.
+
+Postgres tables come from Alembic revision ``t03_gateway_0002``. SQLite is only
+for unit tests and creates the same columns in-process.
+"""
 
 from __future__ import annotations
 
@@ -7,13 +11,51 @@ import os
 import sqlite3
 import threading
 import uuid
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from gateway.db import MIGRATION_SQL, MIGRATION_VERSION
 from gateway.errors import GatewayError
 from gateway.money import money
+
+# Kept in sync with migrations/versions/20261029_0002_t03_gateway_logs.py.
+SQLITE_DDL = """
+CREATE TABLE IF NOT EXISTS call_logs (
+    id TEXT PRIMARY KEY,
+    seq BIGINT NOT NULL,
+    created_at TEXT NOT NULL,
+    day TEXT NOT NULL,
+    project_id TEXT,
+    node TEXT,
+    shot_id TEXT,
+    attempt INTEGER,
+    task TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    params TEXT NOT NULL,
+    latency_ms INTEGER NOT NULL,
+    cost_cny TEXT NOT NULL,
+    status TEXT NOT NULL,
+    cache_hit INTEGER NOT NULL DEFAULT 0,
+    qa_score TEXT,
+    live INTEGER NOT NULL DEFAULT 0,
+    fallback_reason TEXT,
+    output TEXT,
+    error TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_call_logs_day ON call_logs (day);
+CREATE INDEX IF NOT EXISTS ix_call_logs_seq ON call_logs (seq);
+CREATE TABLE IF NOT EXISTS alerts (
+    id TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    message TEXT NOT NULL,
+    spent_cny TEXT NOT NULL,
+    limit_cny TEXT NOT NULL,
+    daily_spent_cny TEXT,
+    daily_limit_cny TEXT,
+    details TEXT
+);
+"""
 
 
 class SqlStore:
@@ -38,14 +80,26 @@ class SqlStore:
         return cls(conn, "postgres")
 
     def migrate(self) -> None:
+        if self.dialect == "sqlite":
+            with self._lock:
+                self._script(SQLITE_DDL)
+                self.conn.commit()
+            return
+        self._require_postgres_tables()
+
+    def _require_postgres_tables(self) -> None:
         with self._lock:
-            self._script(MIGRATION_SQL)
-            self._run(
-                "INSERT INTO gateway_schema_migrations (version, applied_at) "
-                "VALUES (%s, %s) ON CONFLICT (version) DO NOTHING",
-                (MIGRATION_VERSION, datetime.now(UTC).isoformat()),
+            cursor = self._run(
+                "SELECT to_regclass('public.call_logs') AS call_logs, "
+                "to_regclass('public.alerts') AS alerts"
             )
-            self.conn.commit()
+            row = self._mapping(cursor.fetchone())
+            self.conn.rollback()
+        if row.get("call_logs") is None or row.get("alerts") is None:
+            raise GatewayError(
+                "Postgres is missing call_logs or alerts. "
+                "Run `alembic upgrade head` (revision t03_gateway_0002)."
+            )
 
     def close(self) -> None:
         self.conn.close()

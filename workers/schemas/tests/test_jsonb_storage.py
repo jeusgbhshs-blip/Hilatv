@@ -76,7 +76,9 @@ def test_documents_roundtrip_through_jsonb() -> None:
                 WHERE schemaname = 'public' AND tablename IN ('call_logs', 'alerts')
                 """
             )
-            assert cur.fetchall() == []
+            # t02_business_0001 does not create these. Head now includes
+            # t03_gateway_0002, which does.
+            assert {row[0] for row in cur.fetchall()} == {"alerts", "call_logs"}
 
             cur.execute(
                 "INSERT INTO enterprises (enterprise_id, name) VALUES (%s, %s)",
