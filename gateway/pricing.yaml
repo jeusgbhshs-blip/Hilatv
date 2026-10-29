@@ -8,6 +8,20 @@ default:
   input_per_million: "2"
   output_per_million: "8"
 
+# Used when the route model is not listed below (for example an endpoint id override).
+# These are configuration, not an invoice. Edit them with the vendor price sheet.
+task_defaults:
+  image:
+    unit: image
+    per_image: "0.20"
+  video:
+    unit: second
+    per_second: "0.50"
+    default_seconds: 5
+  tts:
+    unit: char
+    per_thousand_chars: "2.00"
+
 models:
   deepseek-chat:
     input_per_million: "2"
@@ -39,3 +53,13 @@ models:
   mock-judge:
     input_per_million: "0"
     output_per_million: "0"
+  doubao-seedream-4-0-250828:
+    unit: image
+    per_image: "0.20"
+  doubao-seedance-1-0-pro-250528:
+    unit: second
+    per_second: "0.50"
+    default_seconds: 5
+  seed-tts-1.0:
+    unit: char
+    per_thousand_chars: "2.00"

@@ -1,4 +1,4 @@
-.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 install api
+.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 accept-t04 install api
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ENV_FILE := $(ROOT)/.env
@@ -45,6 +45,9 @@ accept-t02:
 
 accept-t03:
 	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t03.sh
+
+accept-t04:
+	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t04.sh
 
 api:
 	$(PYTHON) -m uvicorn app.main:app --app-dir $(ROOT)/apps/api --host 0.0.0.0 --port 8000

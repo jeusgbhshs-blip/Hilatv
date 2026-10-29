@@ -16,6 +16,7 @@ class Brief(BaseModel):
 
 class CountingMock(MockAdapter):
     def __init__(self) -> None:
+        super().__init__()
         self.calls = 0
 
     def invoke(self, call):  # type: ignore[no-untyped-def]

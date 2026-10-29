@@ -121,8 +121,17 @@ class Gateway:
     def generate_image(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
         return self.execute("image", prompt, **kwargs)
 
-    def generate_video(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
-        return self.execute("video", prompt, **kwargs)
+    def generate_video(
+        self,
+        prompt: str,
+        *,
+        duration_s: float | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        params = dict(kwargs.pop("params", None) or {})
+        if duration_s is not None:
+            params["duration_s"] = duration_s
+        return self.execute("video", prompt, params=params, **kwargs)
 
     def tts(self, text: str, *, voice: str | None = None, **kwargs: Any) -> dict[str, Any]:
         params = dict(kwargs.pop("params", None) or {})
@@ -250,6 +259,8 @@ class Gateway:
                 system=system_effective,
                 schema=json_schema,
                 max_output_tokens=max_output_tokens,
+                task=task,
+                params=clean_params,
             )
             decision = self.budget.evaluate(estimate)
             if not decision.allowed:
@@ -415,14 +426,22 @@ class Gateway:
         completion_tokens = int(usage.get("completion_tokens") or 0)
         if prompt_tokens or completion_tokens:
             return self.pricing.from_usage(result.model, usage)
-        if billable and not result.cost_cny:
+        if _media_usage(usage):
+            cost = self.pricing.from_usage(result.model, usage)
+            if cost:
+                return cost
+        if result.cost_cny:
+            return money(result.cost_cny)
+        if billable:
             return self.pricing.estimate(
                 call.model,
                 call.prompt,
                 system=call.system,
                 schema=call.json_schema,
+                task=call.task,
+                params=call.params,
             )
-        return money(result.cost_cny)
+        return money(0)
 
     def _log(
         self,
@@ -542,6 +561,14 @@ def _stored_params(call: Invocation) -> dict[str, Any]:
         }
     )
     return stored
+
+
+def _media_usage(usage: dict[str, Any]) -> bool:
+    for key in ("images", "video_seconds", "characters"):
+        value = usage.get(key)
+        if value not in (None, 0, 0.0, "0"):
+            return True
+    return False
 
 
 def _ms(started: float) -> int:
