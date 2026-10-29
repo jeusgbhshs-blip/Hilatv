@@ -1,0 +1,23 @@
+Do not render any on-screen text, logos, prices, or phone numbers. Those are composited later.
+画面里的文字、Logo、价格、电话只交给后期叠加，不要写进画面描述。
+
+请写中文母版，不要直接写其他语种。结构按这个顺序：前 3 秒钩子、最多 3 个卖点、信任证明、行动号召。
+钩子要在 {{ hook_seconds }} 秒内说完，大约不超过 {{ hook_units }} 个字。
+整段旁白目标约 {{ target_units }} 个字（时长 {{ duration_s }} 秒 × 4 字/秒 × 0.85）。
+卖点必须能在下面的资料里找到原文，数字不能多也不能改。证明句只能复述资料里已经出现的工厂、认证、客户或检测，没有就留空。
+
+企业：{{ company }}
+产品：{{ product }}
+可用卖点：
+{{ points }}
+证明线索：{{ proof }}
+电话（只可原文使用，没有就留空）：{{ phone }}
+网址（只可原文使用，没有就留空）：{{ website }}
+禁用词：{{ banned }}
+用户原话：{{ raw_input }}
+必须出现：{{ must_include }}
+{% if feedback %}
+
+上次质检未通过：{{ feedback }}
+请只删掉没有出处的句子，不要补新的数字。
+{% endif %}

@@ -1,0 +1,21 @@
+Do not render any on-screen text, logos, prices, or phone numbers. Those are composited later.
+画面里的文字、Logo、价格、电话只交给后期叠加。
+
+把下面的事实改写成 {{ language }} 旁白。这不是对中文母版逐句翻译。
+按当地采购习惯重写：只有资料里已经写了 MOQ、交期或认证时才强调它们，不要自己补。
+数字必须和资料里的数字串一致。钩子在前 {{ hook_seconds }} 秒内说完。
+目标篇幅约 {{ target_units }} 个词（时长 {{ duration_s }} 秒 × 2.5 词/秒 × 0.85）。
+
+中文母版只作事实参考：
+{{ master_text }}
+
+资料卖点：
+{{ points }}
+证明线索：{{ proof }}
+电话：{{ phone }}
+网址：{{ website }}
+禁用词：{{ banned }}
+{% if feedback %}
+
+上次质检未通过：{{ feedback }}
+{% endif %}

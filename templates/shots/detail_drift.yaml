@@ -1,0 +1,13 @@
+id: detail_drift
+label: 细节缓移
+shot_sizes:
+  - close_up
+purposes:
+  - selling_point
+  - spec
+prompt_fragment: >-
+  The camera drifts across a surface detail. Focus stays on the material, not on signs.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: kling
+motion_strength: low

@@ -1,0 +1,14 @@
+id: rise_reveal
+label: 升起展开
+shot_sizes:
+  - wide
+  - medium
+purposes:
+  - hook
+  - proof
+prompt_fragment: >-
+  The camera rises a little and reveals the space. The move is short and even.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: low

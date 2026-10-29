@@ -1,0 +1,14 @@
+id: gentle_arc
+label: 小幅环绕
+shot_sizes:
+  - medium
+  - close_up
+purposes:
+  - person
+  - selling_point
+prompt_fragment: >-
+  The camera makes a short arc around the subject and does not pass behind them.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: kling
+motion_strength: low

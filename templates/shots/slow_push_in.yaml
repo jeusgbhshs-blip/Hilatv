@@ -1,0 +1,15 @@
+id: slow_push_in
+label: 缓慢推近
+shot_sizes:
+  - close_up
+  - medium
+purposes:
+  - hook
+  - selling_point
+prompt_fragment: >-
+  The camera slowly pushes toward the subject. The horizon stays level and the
+  move stays small.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: low

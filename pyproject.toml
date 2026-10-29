@@ -39,6 +39,8 @@ include = ["gateway*", "workers*", "eval*"]
 
 [tool.setuptools.package-data]
 "workers.nodes.n01_brief" = ["prompts/*.j2"]
+"workers.nodes.n04_script" = ["prompts/*.j2"]
+"workers.nodes.n05_storyboard" = ["prompts/*.j2"]
 "workers.schemas" = ["json_schema/*.json"]
 gateway = ["routes.yaml", "pricing.yaml"]
 
@@ -48,6 +50,8 @@ testpaths = [
   "apps/api/tests",
   "gateway/tests",
   "workers/nodes/n01_brief/tests",
+  "workers/nodes/n04_script/tests",
+  "workers/nodes/n05_storyboard/tests",
   "workers/schemas/tests",
   "eval/tests",
 ]

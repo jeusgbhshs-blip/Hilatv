@@ -10,8 +10,8 @@
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
 | T04 | 图像/视频/TTS adapter | T03 | ✅ | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T05 | N1 需求理解 + 行业默认值表 | T02, T03 | 🔵 | [t05-n1-brief](https://github.com/jeusgbhshs-blip/Hilatv/pull/25) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T06 | N4 脚本 + N5 分镜 | T05 | ⬜ | – | |
+| T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ✅ | [t05-n1-brief](https://github.com/jeusgbhshs-blip/Hilatv/pull/25) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T06 | N4 脚本 + N5 分镜 | T05 | 🔵 | [t06-script-storyboard](https://github.com/jeusgbhshs-blip/Hilatv/pull/26) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ⬜ | – | |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ⬜ | – | |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ⬜ | – | |
@@ -57,9 +57,25 @@
 -->
 
 ### 2026-10-29
-- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）
-- 正在做什么：T05 N1 需求理解。行业模板在 `templates/industries/`。无 Key，`make accept-t05` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
+- 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）、T05（PR #25，无新迁移）
+- 正在做什么：T06 N4 脚本 + N5 分镜。镜头预设在 `templates/shots/`。无 Key，`make accept-t06` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+
+## T06 假设
+
+- N3 不在本任务。N4 只读 Brief 和可选 Brand Kit。输出是 `workers.schemas.Script`。N5 在同一份 Script 上写入 `shots`。
+- 无 Key 时草稿和自评都走 T03 mock。草稿 schema 用空默认值，mock 不会把 `"mock"` 写进文案。规则拼装器负责交出能过质检的稿。模型稿只有在不含禁用词、数字都能对上出处、钩子不超过 3 秒、卖点不超过 3 条且能在资料里找到时才采用。自评调用失败时不中断，规则质检仍然要过；自评明确给出 false 则重试。
+- 中文按汉字、数字和拉丁字母计字，4 字/秒。其他语种按词计，夹在英文里的汉字每个字算 1 个词，2.5 词/秒。目标字数 = 时长 × 速率 × 0.85，允许与目标相差 5%。钩子按未打折的速率，必须在 3 秒内说完。
+- 数字只认数字串（含小数），不把「三十」这类汉字数词当数字。出处是 Brief 的原话、must_include、goal、audience、style、video_type、平台、语种和时长，以及 Brand Kit 的企业名、产品名、卖点、禁改项、电话、网址、调性和已授权人物身份。不算 assumptions、色值、OSS 地址和内部 id。
+- 有 Brand Kit 时用它自己的 `banned_words`（T02 允许显式短表）；没有则用广告法默认表。卖点先用产品 selling_points，再补 must_include 里还没被覆盖的句子，最多 3 条。证明句只复述资料里已经出现的工厂、认证、检测或客户，没有就写「按资料说明」，不补认证。
+- 多语种先写中文母版。其他语种是另一套句式，不是逐句翻译。MOQ、交期、认证只有资料里写了才强调。无 Key 时英文句式把资料原句嵌进去，避免编出新数字。
+- 画面文字只放在 `on_screen_text`。视觉描述和提示词都带「无文字、无 Logo、无价格、无电话」。本任务不调用图像或视频模型。
+- 宣传片（`video_type` 为 product_showcase、factory_strength、brand_film、corporate，或原文里有「宣传片」）单镜 4–8 秒，其余 2–6 秒。镜头数落在这个区间里，并且不超过时长/2。时长按毫秒摊平，总和等于 Brief 时长。
+- `generation_mode` 的优先级：参数、流程、行动号召用 `motion_graphics`；已授权且有照片、并且至少两镜连续出镜的人物用 `reference_to_video`；卖点镜有抠图用 `product_composite`，只有原图用 `reference_to_video`，没有真实产品图用 `image_to_video`；钩子和证明这类空镜用 `text_to_video`。本任务没有场景静帧。N5 的四条规则没有 `first_last_frame`，所以不用它。单镜成片时人物不算连续出镜。
+- 产品首次出现看 `subject_refs` 里第一个 `product:`，景别只能是 `medium` 或 `close_up`。景别用 `wide` / `medium` / `close_up`。人物镜不挂产品引用。第二个及之后带数字的卖点改成参数镜，数字卡片由后期叠加。
+- 不新增数据库迁移。Alembic 仍是单一 head `t03_gateway_0002`。
+- 镜头语言库是自写 YAML，每个预设有提示词片段和推荐模型名。SPEC 第 9 章的「每预设 20 次测试」不在本任务。
+- `script_id` 用 `uuid5(project_id + brief_id + language)`，同一输入重跑结果稳定。验收把网关日志放到独立 SQLite。
 
 ## T05 假设
 
