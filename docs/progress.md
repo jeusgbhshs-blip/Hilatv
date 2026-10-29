@@ -6,7 +6,7 @@
 
 | 任务 | 名称 | 依赖 | 状态 | 分支 / PR | 备注 |
 |---|---|---|---|---|---|
-| T01 | monorepo + Docker Compose | – | 🔵 | t01-monorepo-compose | 验收中。假设见该 PR |
+| T01 | monorepo + Docker Compose | – | 🔵 | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 验收中。假设见 PR #21 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ⬜ | – | |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ⬜ | – | |
 | T04 | 图像/视频/TTS adapter | T03 | ⬜ | – | |
@@ -56,6 +56,6 @@
 
 ### 2026-10-29
 - 合并了哪些：无（T01 验收中，尚未合并）
-- 正在做什么：T01 monorepo 骨架、Docker Compose（Postgres 16 + pgvector、Redis、MinIO、Temporal + UI）、基础 CI
+- 正在做什么：T01 monorepo 骨架、Docker Compose（Postgres 16 + pgvector、Redis、MinIO、Temporal + UI）、基础 CI（PR #21）
 - 需要提供什么：无
 
