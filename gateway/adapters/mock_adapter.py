@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import math
+import os
 from decimal import Decimal
 from typing import Any
 
 from gateway.constants import TASKS
+from gateway.errors import AdapterError
 from gateway.media_bytes import (
     MOCK_HEIGHT,
     MOCK_WIDTH,
@@ -35,6 +38,8 @@ class MockAdapter:
         return True
 
     def invoke(self, call: Invocation) -> AdapterResult:
+        if call.task == "video" and video_fault(call.shot_id):
+            raise AdapterError(f"injected video failure for {call.shot_id or '*'}")
         if call.task in {"matte", "relight"}:
             from gateway.adapters.local_vision import invoke_local
 
@@ -65,7 +70,7 @@ def _unstructured(call: Invocation) -> dict[str, object]:
     if call.task == "llm":
         return {"text": call.prompt, "mock": True, "seed": call.seed}
     if call.task == "image":
-        return {
+        fields = {
             "mock": True,
             "task": "image",
             "uri": f"mock://image/{digest}",
@@ -73,8 +78,9 @@ def _unstructured(call: Invocation) -> dict[str, object]:
             "negative_prompt": call.negative_prompt,
             "seed": call.seed,
         }
+        return _attach_bytes(call, fields)
     if call.task == "video":
-        return {
+        fields = {
             "mock": True,
             "task": "video",
             "uri": f"mock://video/{digest}",
@@ -83,6 +89,7 @@ def _unstructured(call: Invocation) -> dict[str, object]:
             "seed": call.seed,
             "duration_s": _video_seconds(call),
         }
+        return _attach_bytes(call, fields)
     if call.task == "tts":
         speed, pause = _prosody(call)
         stamps, duration = prosody_timing(
@@ -145,33 +152,39 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
     if call.task == "image":
         data = render_png(call.seed)
         uri = store.put(f"gateway/image/{digest}.png", data, "image/png")
-        return {
-            "mock": True,
-            "task": "image",
-            "uri": uri,
-            "mime_type": "image/png",
-            "width": MOCK_WIDTH,
-            "height": MOCK_HEIGHT,
-            "prompt": call.prompt,
-            "negative_prompt": call.negative_prompt,
-            "seed": call.seed,
-        }
+        return _attach_bytes(
+            call,
+            {
+                "mock": True,
+                "task": "image",
+                "uri": uri,
+                "mime_type": "image/png",
+                "width": MOCK_WIDTH,
+                "height": MOCK_HEIGHT,
+                "prompt": call.prompt,
+                "negative_prompt": call.negative_prompt,
+                "seed": call.seed,
+            },
+        )
     if call.task == "video":
         seconds = _video_seconds(call)
         data = render_mp4(call.seed, duration_s=seconds)
         uri = store.put(f"gateway/video/{digest}.mp4", data, "video/mp4")
-        return {
-            "mock": True,
-            "task": "video",
-            "uri": uri,
-            "mime_type": "video/mp4",
-            "width": MOCK_WIDTH,
-            "height": MOCK_HEIGHT,
-            "duration_s": seconds,
-            "prompt": call.prompt,
-            "negative_prompt": call.negative_prompt,
-            "seed": call.seed,
-        }
+        return _attach_bytes(
+            call,
+            {
+                "mock": True,
+                "task": "video",
+                "uri": uri,
+                "mime_type": "video/mp4",
+                "width": MOCK_WIDTH,
+                "height": MOCK_HEIGHT,
+                "duration_s": seconds,
+                "prompt": call.prompt,
+                "negative_prompt": call.negative_prompt,
+                "seed": call.seed,
+            },
+        )
     if call.task == "music":
         fields = _music_fields(call)
         duration = _positive(call.params.get("duration_s"), 4.0)
@@ -264,6 +277,37 @@ def _nonneg(value: object, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return number if number >= 0 else default
+
+
+def video_fault(shot_id: str | None) -> bool:
+    """True when this process is injecting a failed video model for the shot.
+
+    ``HILATV_FAIL_VIDEO_SHOTS`` is empty in normal runs. ``*`` fails every shot.
+    """
+
+    raw = os.getenv("HILATV_FAIL_VIDEO_SHOTS", "").strip()
+    if not raw:
+        return False
+    wanted = {item.strip() for item in raw.split(",") if item.strip()}
+    if "*" in wanted:
+        return True
+    return bool(shot_id) and shot_id in wanted
+
+
+def _attach_bytes(call: Invocation, fields: dict[str, Any]) -> dict[str, Any]:
+    """Optional pixels so a caller can write the mock frame into the project."""
+
+    if not call.params.get("materialize"):
+        return fields
+    if call.task == "image":
+        data = render_png(call.seed)
+        fields["png_b64"] = base64.b64encode(data).decode("ascii")
+        fields["width"] = MOCK_WIDTH
+        fields["height"] = MOCK_HEIGHT
+    elif call.task == "video":
+        data = render_mp4(call.seed, duration_s=_video_seconds(call))
+        fields["mp4_b64"] = base64.b64encode(data).decode("ascii")
+    return fields
 
 
 def _digest(call: Invocation) -> str:

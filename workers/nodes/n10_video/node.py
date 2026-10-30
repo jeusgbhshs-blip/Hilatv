@@ -314,6 +314,11 @@ def _result(
     skipped = [
         shot.shot_id for shot in targets if shot.generation_mode is GenerationMode.motion_graphics
     ]
+    failed = [
+        shot.shot_id
+        for shot in targets
+        if shot.generation_mode is not GenerationMode.motion_graphics and shot.shot_id not in done
+    ]
     log_event(
         "node_finished",
         project_id=request.project_id,
@@ -333,6 +338,7 @@ def _result(
             "candidates": [row.model_dump(mode="json") for row in rows],
             "shot_ids": [shot.shot_id for shot in targets],
             "skipped": skipped,
+            "generation_failed": failed,
         },
         attempt=attempt,
     )

@@ -19,7 +19,7 @@
 | T11 | 前端：输入页、进度页、成片页 | T10 | ✅ | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 已合并（9c7e524）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ✅ | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 已合并（7a7725f）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ✅ | [cursor/t13-anchors-composite-f261](https://github.com/jeusgbhshs-blip/Hilatv/pull/47) | 已合并（d326c69）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
+| T14 | 降级方案 6.10 | T12, T13 | 🔵 | [cursor/t14-fallback-plan-bd74](https://github.com/jeusgbhshs-blip/Hilatv/pull/50) | 验收中。产品负责人把 SPEC 第 3、4 级换成继续用 AI 生成。假设见下方 |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ✅ | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 已合并（5e15a75）。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ✅ | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 已合并（70e1553）。改稿历史走 `/revisions`。假设见下方 |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。比例、语种、时长仍走 `/versions`。假设见下方 |
@@ -76,6 +76,11 @@
 -->
 
 ### 2026-10-30
+- 合并了哪些：T14 分支并入 main `32380c9`（T23 分镜预览 #51）。未合并 PR #50
+- 正在做什么：人工复核。分镜确认之后，未评审镜头仍停在 `needs_human_review`。放行记下 `human_review_released` 时间，放行人留给 #54
+- 需要提供什么：同下。无 Key，`HILATV_LIVE` 保持关闭
+
+### 2026-10-30
 - 合并了哪些：main 现为 `70e1553`（T16 PR #45）。同日已在 main：T13、T21。都无新迁移
 - 正在做什么：T23 分镜预览。关键帧质检之后可以停下看卡片、改一镜旁白；选了直接出片就不停。无 Key，`make accept-t23` 走 mock。mock 没有可看的关键帧，画面预览记未测。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权仍未批。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测
@@ -84,6 +89,23 @@
 - 合并了哪些：main 现为 `18cf1ff`（T21 PR #46）。更早同日已在 main：T09–T12、T15、T17、T18、T25、SEC-01。都无新迁移
 - 正在做什么：T16 对话改稿。改稿历史用 `/revisions`，比例语种时长仍用 T17 的 `/versions`。无 Key，改稿走 mock。方案卡若是模板兜底（`/v1/concepts` 可 200 且 ok=false），成片页会标明，版本不能标成质检通过。重生次数只记在 `regen_budget.json`。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权（Mureka/Suno 或正版曲库）要另批，未批之前保持 mock。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测。T18 的 60 条样例仍待换成真实企业需求
+- T14：降级方案。产品负责人决定不再使用企业实拍素材库，也不再交付「此镜头建议补拍」。四级都是 AI 生成。无 Key，`HILATV_LIVE` 保持关闭。
+
+## T14 假设
+
+- 产品负责人（2026-10-30）改了 SPEC §6.10 的第 3、4 级：不调用企业素材库里的真实视频，也不在交付信息里写「此镜头建议补拍」。新顺序是：① 换视频路由、改写提示词、换种子，经网关再生，花费只走 `open_project_budget`；② 只用已经通过质检（`visual_reviewed` 且达到 7.5）的 AI 关键帧做图生视频；③ 这张关键帧加本地程序化运镜（Ken Burns，有抠图时再加 2.5D 视差）；④ 动态图形（T13 抠图 + 渲染层文字动画 + 生成的背景运动）。第 ④ 级必须能做出来，所以片子一定能交。SPEC.md 正文没有改。
+- 第 1–3 级只接受 `visual_reviewed is True` 且 `hard_fail` 为空的片段。`not_reviewed`、`judge_unavailable` 和 mock 评审都落到下一级，不能当成通过。第 4 级在评审不可用时仍做出片段，但只要有一镜 `needs_review`，工作流在合成前停下，项目状态是 `needs_human_review`，不写 master，也不写 deliveries。只有 `POST /v1/projects/{id}/human-review/release`（或 `hilatv release`）才继续合成。`HILATV_LIVE=1` 不会自动放行。分镜确认（`POST /storyboard/continue`）也不是放行：确认之后若仍有 `needs_review`，同样停在 `needs_human_review`。N15 在 live 时没有镜头文件就拒绝画纯色底板；mock 可以保留底板，并在时间轴上标 `placeholder`。
+- 放行时 API 和 `hilatv release` 都从服务端项目记录读取 `enterprise_id` 与 `concept_selection`，并写入 `human_review_released` 事件（`events.jsonl`，带 `ts`）。放行人身份留给 #54，这次不写。
+- `make accept-t23` 在 mock 下会先停在 `needs_human_review`（直接出片和分镜确认之后都一样）。验收脚本在确认没有成片之后显式放行，再检查成片。没有放行时不写 master。
+- 再生的 seed 混入项目预算已用次数和本次尝试序号，同镜同级再跑不会重复同一个 seed。
+- Mock 评审不会把 `visual_reviewed` 设为 true。因此无 Key 时第 ② 级不会被选中。验收里的第 ② 级测试在进程内打开 `HILATV_LIVE=1`，用一个不联网的假评审返回完整分数。`make accept-t14` 的端到端流程保持 `HILATV_LIVE=0`。
+- 有内容硬伤的成片先走 T12 的 `run_shot_loop`（每镜最多 3 次，项目花费只走预算文件）。没有可审像素的镜头不再空转这 3 次，直接进入上面的阶梯，第 ① 级仍是一次计费的再生。
+- 动态图形镜头不调用视频模型，直接做第 ④ 级。画面上的字只来自渲染层的文字卡片，不画进镜头文件。没有抠图时主体是一块由模型颜色推导的图形，交付记录写 `subject=generated_shape`，不假装是产品照片。
+- 不使用纯色底板代替失败镜头。`HILATV_LIVE=1` 时 N15 没有镜头文件就拒绝画纯色底板。Mock 仍可保留底板，时间轴上 `placeholder` 为 true，结果里记在 `placeholder_shots`。T14 的成片每个镜头都有真实片段。片头片尾仍是包装用的短板。
+- 人物照片不读。抠图只来自产品的 `cutouts`，或对项目目录里的产品照片走网关 `matte`。`http` 链接经 SEC-01 的 `fetch_bytes`。解析后落在项目目录外的路径不读。
+- 故障注入是 `HILATV_FAIL_VIDEO_SHOTS`（`*` 或镜头 id）。只让 mock 视频适配器失败，图像和配音不受影响。没有新的重试计数器。
+- 端到端验收用 ffprobe / ffmpeg 解成片。Mock 关键帧是纯色，Ken Burns 的帧差在这条流程上记为未测。Live VLM 是否看过这些帧也记为未测。
+- 不新增数据库迁移。Alembic head 仍是 `t03_gateway_0002`。
 
 ## T21 假设
 
