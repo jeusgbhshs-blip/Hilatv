@@ -18,7 +18,7 @@
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ✅ | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ✅ | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 已合并（9c7e524）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ✅ | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 已合并（7a7725f）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
+| T13 | N7 锚点 + 产品合成模式 | T08, T12 | 🔵 | `cursor/t13-anchors-composite-f261` | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | 🔵 | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
@@ -67,6 +67,26 @@
 - 合并了哪些：T09（PR #29）、T10（PR #30）、T11（9c7e524）、T25（66306cc）、SEC-01（d845705）、T12（7a7725f）。都无新迁移
 - 正在做什么：T17 多比例、多语种导出和成片页版本切换。合并前补上：缺质检字段不算通过，deliveries.json 先 fsync，mock 听写不计入核对，并发上限按进程。无 Key，`make accept-t17` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络
+
+### 2026-10-30 T13
+- 合并了哪些：main 为 `5e15a75`（T15、T17、T12、SEC-01 已在 main）。本分支从这份 main 拉出，没有改 SPEC。
+- 正在做什么：N7 产品锚点、人物三视图、场景和风格锚点、`product_composite`。`make accept-t13` 走 mock。相似度 1.000（阈值 0.90），不透明产品像素 6405 个与原图一致，三视图人脸余弦 1.000（阈值 0.75），坏抠图会要求换图。
+- 需要提供什么：没有新的 Key。BiRefNet / RMBG / IC-Light 权重未接入。测试图是代码绘制的。
+
+## T13 假设
+
+- 抠图和重打光是网关任务 `matte`、`relight`。路由指向 `local_matting`（接口名 `birefnet-rmbg-2.0-local`）和 `local_relight`（接口名 `ic-light-local`）。没有下载 BiRefNet、RMBG-2.0 或 IC-Light 的权重。抠图仍调用 `workers.brand_kit.matting` 的纯色去底。重打光只在产品下方压暗并加一条浅反射，然后把 alpha 为 255 的产品像素按原图 RGB 抄回去。这两项 `billable` 为 false，费用记 0，不看 `HILATV_LIVE`。注册表里没有本地适配器时，mock 走同一段代码。
+- 产品区域相似度用 `HILATV_QA_DEFORM_MIN_SIMILARITY`，默认 0.90，和 N11 的 `product_deform` 是同一个函数。T12 没有 DINOv2 权重，用相对边框色的 32×32 占空网格余弦，低于 0.90 就否决。N7 用同一条线，合成结果过不了这里，也不会在 N11 被放过。`make accept-t13` 的相似度是 1.000。
+- 透视四边形记在候选参数里（上边内收最多 4 像素），不拿去重采样抠图。重采样会改掉 Logo 和包装。比对的是合成图里 alpha 为 255 的区域和原图 RGB，原图与合成图不是同一个文件。半透明边缘可以和背景混合。验收数到 6405 个不透明像素。
+- 人物三视图会先走图像网关。Mock 的纯色图没有人脸，余弦到不了 0.75，就改用已授权肖像；肖像上也没有可检测的人脸时，用代码画的对称脸，贴在三张位置不同的底图上，侧视再水平翻转。嵌入是 N11 那套 8×8 肤色亮度网格，阈值是 `HILATV_QA_FACE_MIN_SIMILARITY`（SPEC 的 0.75）。验收余弦是 1.000，三张图的字节不同。人物只从 `release_kit` / `people_for_use` 来。档案外的 inline kit 即使自报 `consent=true` 也没有人。未授权的人及其照片不会出现在结果里。
+- 场景图走图像网关，提示词带「无文字」。`garbled_text` 或 `extra_text` 会花掉项目重生次数再试，次数用完就停并说明是乱码。风格锚点是品牌色条，另外保存一张通过文字检查的氛围图。画面上的字、Logo、价格、电话不交给模型画。
+- `/v1/concepts` 的结果可以是降级的。`template_fallback`、`degraded=true` 或 `ok=false` 记成 `concept_status=degraded`、`concept_passed=false`，风格改用 Brief，不用方案卡上的风格词。节点 `ok` 只表示锚点做完了，不表示方案卡通过。
+- 重生预算在 `workers/qa/budget_store.py`。文件是 `{HILATV_PROJECT_DIR}/{project_id}/regen_budget.json`，一个项目一份，各镜头共用。上限仍是 `HILATV_QA_PROJECT_RETRIES`（默认 12）。N7、N9、N11 都读这一份，不再每次调用从 0 计。用完后再要重生就停。
+- 合成镜头的 `counts_as_reviewed` 等于 `review_shot` 返回的 `visual_reviewed`。只有该值为 true 且 `is_quality_pass` 时才 `selected`。Mock 评审看不到实帧，`visual_reviewed` 为 false，不把这张图当成已审通过。
+- 产品图地址只接受 `image_b64`、本企业的 `brand://`，或 http(s)。http(s) 走 SEC-01 的 `fetch_bytes`。调用方传来的文件路径直接拒绝。写出的文件由节点生成，`resolve` 之后必须在项目目录里。
+- N7 没有放进 T10 的 `PIPELINE`。那条链路仍是配音之后直接关键帧。产品合成候选的 `node` 是 `N7`，调用方单独跑 `n07_anchor`。
+- 侧面和背面仍用 `workers.brand_kit.complete_angles`，`on_screen` 为 false，复制进品牌库的 `anchors`，不写入 `photos` 或 `cutouts`。同一企业下一次再跑，若抠图和角度还在，就不再调用 `matte`。
+- 不新增表，也不新增依赖。Alembic head 仍是 `t03_gateway_0002`。测试用的产品和脸是代码画的，不是客户照片，也不是真实品牌。
 
 ## T17 假设
 

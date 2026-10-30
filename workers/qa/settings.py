@@ -72,7 +72,12 @@ def project_retry_cap() -> int:
 
 
 class RetryBudget:
-    """Shared counter. Each shot still stops after 3 reviews on its own."""
+    """Shared counter. Each shot still stops after 3 reviews on its own.
+
+    The in-memory object is what unit tests pass explicitly. A project run
+    uses ``workers.qa.budget_store.ProjectBudget``, which writes this same
+    counter to disk so every shot in the project shares it.
+    """
 
     def __init__(self, limit: int | None = None) -> None:
         self.limit = project_retry_cap() if limit is None else limit

@@ -28,6 +28,7 @@ class Invocation:
     shot_type: str | None = None
     language: str | None = None
     image_b64: str | None = None
+    cutout_b64: str | None = None
 
 
 @dataclass

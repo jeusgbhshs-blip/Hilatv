@@ -9,6 +9,7 @@ from workers.logging import log_event
 from workers.nodes.n09_keyframe_qa.qa import QAError, check
 from workers.nodes.n09_keyframe_qa.schema import N9Input, NodeRequest, NodeResult
 from workers.nodes.runtime import Deadline
+from workers.qa.budget_store import open_project_budget
 from workers.qa.director import decide, generator_node
 from workers.qa.scores import is_quality_pass
 from workers.qa.service import review_shot
@@ -31,7 +32,7 @@ def run(
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     gateway = gateway if gateway is not None else _default_gateway()
-    budget = RetryBudget()
+    budget = open_project_budget(request.project_id)
     last_error: QAError | None = None
     for try_index in range(1, max_attempts + 1):
         try:
