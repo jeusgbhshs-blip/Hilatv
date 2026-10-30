@@ -56,13 +56,25 @@ class ProjectBudget(RetryBudget):
     def try_take(self) -> bool:
         """Spend one regen if the project still has one. False when the cap is met."""
 
-        taken, used = _update(self.path, limit=project_retry_cap(), take=True)
+        return self.try_take_n(1)
+
+    def try_take_n(self, count: int) -> bool:
+        """Spend ``count`` regens in one update, or spend nothing.
+
+        The file lock makes the check and the add one step. A second caller
+        that arrives while this one holds the lock sees the new total, so two
+        reviews cannot both spend the same remaining slots.
+        """
+
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise SettingsError("regen budget count must be an integer >= 1")
+        taken, used = _update(self.path, limit=project_retry_cap(), take=count)
         self.used = used
         self.limit = project_retry_cap()
         return taken
 
     def _read_used(self) -> int:
-        taken, used = _update(self.path, limit=project_retry_cap(), take=False)
+        taken, used = _update(self.path, limit=project_retry_cap(), take=0)
         del taken
         return used
 
@@ -86,7 +98,9 @@ def _inside(path: Path, root: Path) -> None:
         raise SettingsError("regen budget path is outside the project directory") from exc
 
 
-def _update(path: Path, *, limit: int, take: bool) -> tuple[bool, int]:
+def _update(path: Path, *, limit: int, take: int) -> tuple[bool, int]:
+    """Add ``take`` only when the whole amount still fits. Zero reads the file."""
+
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
@@ -94,8 +108,8 @@ def _update(path: Path, *, limit: int, take: bool) -> tuple[bool, int]:
         previous = _parse(handle.read())
         used = previous
         taken = False
-        if take and used < limit:
-            used += 1
+        if take > 0 and used + take <= limit:
+            used += take
             taken = True
         if used < previous:
             raise SettingsError("regen budget cannot decrease")

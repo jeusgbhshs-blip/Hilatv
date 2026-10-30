@@ -122,7 +122,8 @@
 - 钩子和叙事的 VLM 分在 mock 下记未测。结构上：成片镜头都在脚本里且顺序一致；首镜有目的或旁白。对不上就不放行，也不当视频硬伤去重生。
 - mock ASR 回显 `reference_text`（缺省是脚本旁白）。听到的声音和旁白是否一致记未测。成片没有音轨时写一段静音再调用 gateway `asr`，仍然算调用过。`HILATV_LIVE=1` 且 ASR 结果仍是 mock，视为没听过，不放行。
 - 有内容硬伤才生成 `DirectorDecision`，`target.shot_id` 只有这一镜，节点是 `N10`。产品形变、人脸、闪烁走 `switch_model`，其他硬伤走 `regenerate`。敏感内容走 `ask_user`，不扣次数。满 3 次走 AI fallback。`changes.source` 固定 `ai_generated`，不写补拍、实拍或客户素材。每一次 `regenerate` / `switch_model` 调用一次 `open_project_budget.try_take`。额度不够就拒绝这一镜，不放行；项目已有快照时状态改为 `needs_human_review`。没有第二本账。
-- 只有每一镜 `visual_reviewed is True` 才把总分当成 VLM 分。否则 `vlm_total` 写「未测」，规则分仅供参考（干净画面约 8.6），`quality_pass` 不是 true。`HILATV_LIVE=1` 且评审没看过画面时不放行，写入和 T14 相同的 `needs_human_review`，`POST /v1/projects/{id}/deliveries` 返回 409。
+- 只有每一镜 `visual_reviewed is True` 才把总分当成 VLM 分。否则 `vlm_total` 写「未测」，规则分仅供参考（干净画面约 8.6），`quality_pass` 不是 true。`HILATV_LIVE=1` 时，ASR、整片 judge、单镜评审任一失败，或 judge 没看过画面，或仍有硬伤，都写入 `needs_human_review` 并清掉 `deliverable`。已有母版也不能交付，本企业的 deliveries 返回 409。硬伤决策仍然只指向受影响的镜头，但 live 下不会在暂停之外放行。
+- 一次终审要重生的镜头先在 `locked_project` 里数清，再调用 `open_project_budget.try_take_n`。额度不够整批就一次都不扣，并暂停。N10 自己不扣这本账，所以一镜只扣一次。Logo / CTA 的像素是否在画面上，mock 和未看过帧的 live 都记「未测」，live 不能靠 elements 当成已经看见。
 - `enterprise_id` 只从项目快照读。请求体里的同名字段在校验前丢掉。单独重跑的命令要求登录会话，并用 SEC-54 的 `project_for` 核对项目属于该企业；对不上时和接口一样当作项目不存在（HTTP 交付是 404，命令行退出码 2，文案「项目不存在」）。本任务没有新的 HTTP 路由。
 - N16 不进 T10 的 `PIPELINE`。调用方单独跑 `n16_final_review`。无硬伤且 mock 下结构、品牌、合规都通过时 `release` 为 true，不改写项目为 completed，也不扣重生次数。
 - 不新增表，也不新增 Python 依赖。Alembic head 仍是 `t03_gateway_0002`。

@@ -9,6 +9,7 @@ once per shot and nowhere else.
 from __future__ import annotations
 
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +36,7 @@ from workers.schemas.asset import QAReport, QAScores
 from workers.schemas.director import DecisionAction, DecisionTarget, DirectorDecision
 from workers.schemas.label_lock import LabelLocked, walk_label_edits
 from workers.schemas.script import Script, Shot
-from workers.workflow.store import project_path, read_snapshot, update_snapshot
+from workers.workflow.store import locked_project, project_path, read_snapshot, update_snapshot
 
 NODE = "n16_final_review"
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -98,8 +99,6 @@ def run(
             result = _execute(request, gateway=gateway, deadline=deadline)
             check(result)
         except QAError as exc:
-            if not exc.retryable:
-                raise
             last_error = exc
             log_event(
                 "node_qa_failed",
@@ -109,9 +108,14 @@ def run(
                 attempt=attempt,
                 error=str(exc),
             )
+            if not exc.retryable or attempt == max_attempts:
+                _hold_live_failure(request.project_id, exc)
+            if not exc.retryable:
+                raise
             continue
         return result
     message = f"n16_final_review failed after {max_attempts} attempts: {last_error}"
+    _hold_live_failure(request.project_id, last_error)
     raise QAError(message) from last_error
 
 
@@ -135,16 +139,17 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
     spans = [(shot.shot_id, shot.start_s, shot.end_s) for shot in payload.shots]
     try:
         grouped = frames_by_shot(film, spans)
-        wav, heard = write_wav(film, film.parent / "n16-audio.wav")
+        wav_name = f"n16-audio-{threading.get_ident()}.wav"
+        wav, heard = write_wav(film, film.parent / wav_name)
     except Exception as exc:
         raise QAError(f"could not read the film: {exc}", retryable=True) from exc
-    transcript, asr_mock = _transcribe(
+    transcript, asr_mock, asr_failed = _transcribe(
         gateway,
         wav,
         request=request,
         reference=_reference(payload),
     )
-    _judge_film(
+    film_judge = _judge_film(
         gateway,
         payload,
         transcript=transcript,
@@ -159,14 +164,15 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
         film=film,
     )
     deadline.check()
-    shot_rows, issues = _score_shots(
+    shot_rows, issues, shot_failed = _score_shots(
         request,
         payload,
         grouped,
         gateway=gateway,
     )
-    brand = _brand(payload.elements)
-    narrative, hook, story_issues = _story(payload.script, payload.shots)
+    issues.extend(_judge_flaws(film_judge, payload))
+    brand = _brand(payload.elements, film_judge)
+    narrative, hook, story_issues = _story(payload.script, payload.shots, film_judge)
     issues.extend(story_issues)
     issues.extend(_brand_issues(brand, payload.shots))
     issues.extend(_compliance_issues(compliance, payload.script))
@@ -183,31 +189,42 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
         request,
         payload,
         shot_rows,
+        issues,
         gateway=gateway,
     )
-    for shot_id in refused:
+    if refused:
+        needed = [item.shot_id for item in issues if item.kind == "hard_flaw" and item.shot_id]
         issues.append(
             FilmIssue(
-                shot_id=shot_id,
+                shot_id=needed[0] if len(needed) == 1 else None,
                 code="budget_exhausted",
                 kind="review",
-                detail="项目重生次数已用完，这一镜不再生成",
+                detail="重生额度不够覆盖全部硬伤镜头，一次都没有扣",
             )
         )
     live = _live()
     reviewed = bool(shot_rows) and all(row["visual_reviewed"] is True for row in shot_rows)
     sampled = all(row["frames"] > 0 for row in shot_rows)
-    asr_verified = heard and not asr_mock
+    asr_verified = heard and not asr_mock and not asr_failed
     content_ids = {item.shot_id for item in issues if item.kind == "hard_flaw"}
     compliance_ok = compliance.get("passed") is True and brand["ai_label"]
-    live_gap = live and (not reviewed or not asr_verified)
-    if live_gap and not content_ids:
+    pixels_ok = brand.get("logo_pixels") is True and brand.get("cta_pixels") is True
+    evidence_gap = (
+        not reviewed
+        or not asr_verified
+        or asr_failed
+        or shot_failed
+        or not film_judge.get("usable")
+        or not sampled
+    )
+    live_gap = live and evidence_gap
+    if live and (live_gap or content_ids or refused or not pixels_ok):
         issues.append(
             FilmIssue(
                 shot_id=None,
-                code="judge_unavailable",
+                code="judge_unavailable" if not content_ids else "live_hold",
                 kind="review",
-                detail="终审没有看过成片，不能放行",
+                detail="终审证据不足或仍有硬伤，成片暂停，不能交付",
             )
         )
     release = (
@@ -218,7 +235,10 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
         and hook["ok"]
         and compliance_ok
         and sampled
+        and not asr_failed
+        and not shot_failed
         and not live_gap
+        and (not live or (reviewed and pixels_ok and film_judge.get("usable") is True))
     )
     blocking = (
         not brand["complete"]
@@ -228,7 +248,9 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
         or not compliance_ok
         or not sampled
         or bool(refused)
-        or (live_gap and not content_ids)
+        or asr_failed
+        or shot_failed
+        or live
     )
     if release:
         disposition = "release"
@@ -237,7 +259,11 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
     else:
         disposition = "hold"
     report = _film_report(shot_rows, issues, reviewed=reviewed)
-    if disposition == "hold":
+    # Live mode never leaves an existing master deliverable while evidence is
+    # missing or a flaw is still open. Mock redo stays a decision only.
+    if live and not release:
+        _hold(request.project_id, issues)
+    elif disposition == "hold":
         _hold(request.project_id, issues)
     body = {
         "total": report.total,
@@ -260,7 +286,16 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
             "moderation": compliance.get("moderation"),
             "extreme_words": list(compliance.get("extreme_words") or []),
         },
-        "asr": {"mock": asr_mock, "verified": asr_verified, "heard_audio": heard},
+        "asr": {
+            "mock": asr_mock,
+            "verified": asr_verified,
+            "heard_audio": heard,
+            "failed": asr_failed,
+        },
+        "film_judge": {
+            "usable": film_judge.get("usable") is True,
+            "reason": film_judge.get("reason") or "",
+        },
         "enterprise_id": enterprise_id,
         "budget_taken": taken,
         "qa": report.model_dump(mode="json"),
@@ -290,13 +325,15 @@ def _score_shots(
     grouped: dict[str, list[Any]],
     *,
     gateway: Any,
-) -> tuple[list[dict[str, Any]], list[FilmIssue]]:
+) -> tuple[list[dict[str, Any]], list[FilmIssue], bool]:
     script = {shot.shot_id: shot for shot in payload.script.shots}
     rows: list[dict[str, Any]] = []
     issues: list[FilmIssue] = []
+    failed = False
     for window in payload.shots:
         frames = grouped.get(window.shot_id) or []
         shot = script.get(window.shot_id)
+        shot_error = False
         if not frames:
             report = QAReport(
                 scores=QAScores(
@@ -313,22 +350,50 @@ def _score_shots(
                 visual_reviewed=False,
             )
         else:
-            report = review_shot(
-                {
-                    "project_id": request.project_id,
-                    "shot_id": window.shot_id,
-                    "node": NODE,
-                    "purpose": shot.purpose if shot else "产品镜头",
-                    "visual": shot.visual if shot else "画面没有文字",
-                    "voiceover": shot.voiceover if shot else "",
-                    "shot_type": shot.camera if shot else "locked_off",
-                    "generation_mode": shot.generation_mode.value if shot else "image_to_video",
-                    "anchor_uri": window.anchor_uri or "",
-                    "expected_faces": window.expected_faces,
-                },
-                gateway=gateway,
-                frames=frames,
-            )
+            try:
+                report = review_shot(
+                    {
+                        "project_id": request.project_id,
+                        "shot_id": window.shot_id,
+                        "node": NODE,
+                        "purpose": shot.purpose if shot else "产品镜头",
+                        "visual": shot.visual if shot else "画面没有文字",
+                        "voiceover": shot.voiceover if shot else "",
+                        "shot_type": shot.camera if shot else "locked_off",
+                        "generation_mode": shot.generation_mode.value if shot else "image_to_video",
+                        "anchor_uri": window.anchor_uri or "",
+                        "expected_faces": window.expected_faces,
+                    },
+                    gateway=gateway,
+                    frames=frames,
+                )
+            except Exception as exc:
+                failed = True
+                shot_error = True
+                if not _live():
+                    raise QAError(f"shot review failed: {exc}", retryable=True) from exc
+                issues.append(
+                    FilmIssue(
+                        shot_id=window.shot_id,
+                        code="shot_review_failed",
+                        kind="review",
+                        detail=f"{window.shot_id} 评审失败，不能放行",
+                    )
+                )
+                report = QAReport(
+                    scores=QAScores(
+                        product_fidelity=0,
+                        motion_quality=0,
+                        aesthetics=0,
+                        prompt_match=0,
+                        artifact_free=0,
+                    ),
+                    hard_fail=["judge_unavailable"],
+                    total=0,
+                    evaluator="judge-unavailable",
+                    notes="judge_unavailable; vlm=未测; quality_pass=false",
+                    visual_reviewed=False,
+                )
         codes = [code for code in report.hard_fail if code in _CONTENT]
         for code in codes:
             issues.append(
@@ -348,62 +413,78 @@ def _score_shots(
                 "total": report.total,
                 "frames": len(frames),
                 "model": window.model,
+                "review_error": shot_error,
             }
         )
-    return rows, issues
+    return rows, issues, failed
 
 
 def _decisions(
     request: NodeRequest,
     payload: N16FinalInput,
     rows: list[dict[str, Any]],
+    issues: list[FilmIssue],
     *,
     gateway: Any,
-) -> tuple[list[DirectorDecision], int, list[str]]:
+) -> tuple[list[DirectorDecision], int, bool]:
+    """Plan one decision per flawed shot, then spend the whole set or nothing."""
+
+    by_shot: dict[str, list[str]] = {}
+    for item in issues:
+        if item.kind == "hard_flaw" and item.shot_id:
+            by_shot.setdefault(item.shot_id, [])
+            if item.code not in by_shot[item.shot_id]:
+                by_shot[item.shot_id].append(item.code)
+    models = {row["shot_id"]: str(row.get("model") or "") for row in rows}
     script = {shot.shot_id: shot for shot in payload.script.shots}
-    decisions: list[DirectorDecision] = []
-    taken = 0
-    refused: list[str] = []
-    for row in rows:
-        if not row["content"]:
-            continue
-        shot = script.get(row["shot_id"])
-        report = _shot_report(row)
-        # The model may only choose between the two redo actions. Shot id,
-        # attempt cap, and sensitive / fallback stay on the local policy.
+    planned: list[DirectorDecision] = []
+    for shot_id, codes in by_shot.items():
+        shot = script.get(shot_id)
+        report = _shot_report(
+            {"content": codes, "visual_reviewed": False, "total": 0, "hard_fail": codes}
+        )
         chosen = decide(
             report,
             node="N10",
-            shot_id=row["shot_id"],
+            shot_id=shot_id,
             attempt=request.attempt,
-            model=str(row.get("model") or ""),
+            model=models.get(shot_id, ""),
             prompt=shot.visual if shot else "",
             gateway=gateway,
             project_id=request.project_id,
             budget=None,
         )
-        action = _action_for(row["content"], attempt=request.attempt)
+        action = _action_for(codes, attempt=request.attempt)
         if action in {DecisionAction.regenerate, DecisionAction.switch_model} and chosen.action in {
             DecisionAction.regenerate,
             DecisionAction.switch_model,
         }:
             action = chosen.action
         left = max(0, MAX_REVIEWS - request.attempt)
-        decision = DirectorDecision(
-            action=action,
-            target=DecisionTarget(node="N10", shot_id=row["shot_id"]),
-            reason=_reason(action, row["content"]),
-            changes=_changes(action, str(row.get("model") or "")),
-            max_attempts_left=left if action is not DecisionAction.fallback else 0,
+        planned.append(
+            DirectorDecision.model_validate(
+                DirectorDecision(
+                    action=action,
+                    target=DecisionTarget(node="N10", shot_id=shot_id),
+                    reason=_reason(action, codes),
+                    changes=_changes(action, models.get(shot_id, "")),
+                    max_attempts_left=left if action is not DecisionAction.fallback else 0,
+                ).model_dump()
+            )
         )
-        decision = DirectorDecision.model_validate(decision.model_dump())
-        if decision.action in {DecisionAction.regenerate, DecisionAction.switch_model}:
-            if not open_project_budget(request.project_id).try_take():
-                refused.append(row["shot_id"])
-                continue
-            taken += 1
-        decisions.append(decision)
-    return decisions, taken, refused
+    chargeable = [
+        item
+        for item in planned
+        if item.action in {DecisionAction.regenerate, DecisionAction.switch_model}
+    ]
+    if not chargeable:
+        return planned, 0, False
+    # Project lock then one ledger update. A concurrent review blocks here
+    # and then sees the spent total, so it cannot take the same slots.
+    with locked_project(request.project_id):
+        if not open_project_budget(request.project_id).try_take_n(len(chargeable)):
+            return [], 0, True
+    return planned, len(chargeable), False
 
 
 def _action_for(codes: list[str], *, attempt: int) -> DecisionAction:
@@ -514,7 +595,7 @@ def _film_report(
     )
 
 
-def _brand(elements: list[dict[str, Any]]) -> dict[str, bool]:
+def _brand(elements: list[dict[str, Any]], film_judge: dict[str, Any]) -> dict[str, Any]:
     label = ai_label_text()
     logo = False
     cta = False
@@ -530,7 +611,27 @@ def _brand(elements: list[dict[str, Any]]) -> dict[str, bool]:
             cta = True
         if kind == "ai_label" or label in text:
             marked = True
-    return {"logo": logo, "cta": cta, "ai_label": marked, "complete": logo and cta}
+    # Overlay metadata is not a pixel check. Live release needs the judge to
+    # say it saw the logo and the CTA. Otherwise the pixels stay 未测.
+    logo_pixels: bool | str = "未测"
+    cta_pixels: bool | str = "未测"
+    if film_judge.get("usable") is True:
+        if film_judge.get("logo_present") is True:
+            logo_pixels = True
+        elif film_judge.get("logo_present") is False:
+            logo_pixels = False
+        if film_judge.get("cta_present") is True:
+            cta_pixels = True
+        elif film_judge.get("cta_present") is False:
+            cta_pixels = False
+    return {
+        "logo": logo,
+        "cta": cta,
+        "ai_label": marked,
+        "complete": logo and cta,
+        "logo_pixels": logo_pixels,
+        "cta_pixels": cta_pixels,
+    }
 
 
 def _brand_issues(brand: dict[str, bool], shots: list[ShotWindow]) -> list[FilmIssue]:
@@ -562,6 +663,7 @@ def _brand_issues(brand: dict[str, bool], shots: list[ShotWindow]) -> list[FilmI
 def _story(
     script: Script,
     shots: list[ShotWindow],
+    film_judge: dict[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any], list[FilmIssue]]:
     ordered = sorted(shots, key=lambda item: (item.start_s, item.shot_id))
     by_id = {shot.shot_id: shot for shot in script.shots}
@@ -591,8 +693,19 @@ def _story(
                 detail="开场镜头没有目的也没有旁白",
             )
         )
-    narrative = {"ok": narrative_ok, "source": "structural", "vlm": "未测"}
-    hook = {"ok": hook_ok, "source": "structural", "vlm": "未测"}
+    narrative_vlm: int | str = "未测"
+    hook_vlm: int | str = "未测"
+    if film_judge.get("usable") is True:
+        if isinstance(film_judge.get("narrative"), int):
+            narrative_vlm = film_judge["narrative"]
+            if film_judge["narrative"] < 6:
+                narrative_ok = False
+        if isinstance(film_judge.get("hook"), int):
+            hook_vlm = film_judge["hook"]
+            if film_judge["hook"] < 6:
+                hook_ok = False
+    narrative = {"ok": narrative_ok, "source": "structural", "vlm": narrative_vlm}
+    hook = {"ok": hook_ok, "source": "structural", "vlm": hook_vlm}
     return narrative, hook, issues
 
 
@@ -684,9 +797,13 @@ def _transcribe(
     *,
     request: NodeRequest,
     reference: str,
-) -> tuple[str, bool]:
+) -> tuple[str, bool, bool]:
+    """Return text, whether the adapter was mock, and whether the call failed."""
+
     asr = getattr(gateway, "asr", None)
     if not callable(asr):
+        if _live():
+            return "", True, True
         raise QAError("asr gateway is missing", retryable=True)
     try:
         raw = asr(
@@ -699,11 +816,49 @@ def _transcribe(
             params={"reference_text": reference},
         )
     except Exception as exc:
+        if _live():
+            log_event(
+                "qa_asr_failed",
+                project_id=request.project_id,
+                node=NODE,
+                shot_id=request.shot_id,
+                attempt=request.attempt,
+                error=str(exc)[:300],
+            )
+            return "", True, True
         raise QAError(f"asr failed: {exc}", retryable=True) from exc
     if not isinstance(raw, dict):
-        return "", True
+        return "", True, _live()
     text = raw.get("text")
-    return (text if isinstance(text, str) else ""), bool(raw.get("mock"))
+    spoken = text if isinstance(text, str) else ""
+    return spoken, bool(raw.get("mock")), False
+
+
+def _judge_flaws(film_judge: dict[str, Any], payload: N16FinalInput) -> list[FilmIssue]:
+    """Hard flaws named by a real film judge. A mock reply is not evidence."""
+
+    if film_judge.get("usable") is not True:
+        return []
+    known = {shot.shot_id for shot in payload.shots}
+    found: list[FilmIssue] = []
+    for item in film_judge.get("hard_flaws") or []:
+        if not isinstance(item, dict):
+            continue
+        shot_id = item.get("shot_id")
+        code = item.get("code")
+        if not isinstance(shot_id, str) or shot_id not in known:
+            continue
+        if not isinstance(code, str) or code not in _CONTENT:
+            continue
+        found.append(
+            FilmIssue(
+                shot_id=shot_id,
+                code=code,
+                kind="hard_flaw",
+                detail=f"{shot_id} {code}",
+            )
+        )
+    return found
 
 
 def _judge_film(
@@ -712,9 +867,11 @@ def _judge_film(
     *,
     transcript: str,
     request: NodeRequest,
-) -> None:
+) -> dict[str, Any]:
     judge = getattr(gateway, "judge", None)
     if not callable(judge):
+        if _live():
+            return {"usable": False, "reason": "judge_missing", "hard_flaws": []}
         raise QAError("judge gateway is missing", retryable=True)
     env = Environment(
         loader=FileSystemLoader(_PROMPTS),
@@ -742,7 +899,7 @@ def _judge_film(
         rule_notes="pixel rules run per shot; this call is the film-level review",
     )
     try:
-        judge(
+        raw = judge(
             prompt,
             project_id=request.project_id,
             node=NODE,
@@ -759,6 +916,46 @@ def _judge_film(
             attempt=request.attempt,
             error=str(exc)[:300],
         )
+        return {"usable": False, "reason": "judge_failed", "hard_flaws": []}
+    return _parse_film_judge(raw)
+
+
+def _flag(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    return None
+
+
+def _parse_film_judge(raw: object) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        return {"usable": False, "reason": "empty", "hard_flaws": []}
+    evaluator = str(raw.get("evaluator") or "")
+    if raw.get("mock") is True or evaluator.startswith("mock"):
+        return {"usable": False, "reason": "mock", "hard_flaws": []}
+    if not isinstance(raw.get("narrative"), int) or not isinstance(raw.get("hook"), int):
+        return {"usable": False, "reason": "missing", "hard_flaws": []}
+    flaws = raw.get("hard_flaws") if isinstance(raw.get("hard_flaws"), list) else []
+    return {
+        "usable": True,
+        "reason": "scored",
+        "narrative": raw["narrative"],
+        "hook": raw["hook"],
+        "logo_present": _flag(raw.get("logo_present")),
+        "cta_present": _flag(raw.get("cta_present")),
+        "hard_flaws": flaws,
+    }
+
+
+def _hold_live_failure(project_id: str, exc: BaseException | None) -> None:
+    """A live review that raises still stops delivery of the current master."""
+
+    if not _live():
+        return
+    detail = str(exc or "终审失败")[:180] or "终审失败"
+    _hold(
+        project_id,
+        [FilmIssue(shot_id=None, code="review_failed", kind="review", detail=detail)],
+    )
 
 
 def _reference(payload: N16FinalInput) -> str:

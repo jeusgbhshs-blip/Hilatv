@@ -54,18 +54,18 @@ def _project_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_DAILY_BUDGET_CNY", "0")
 
 
-@pytest.fixture
-def gateway(tmp_path: Path) -> Gateway:
-    routes = tmp_path / "routes.yaml"
+def build_gateway(folder: Path) -> Gateway:
+    folder.mkdir(parents=True, exist_ok=True)
+    routes = folder / "routes.yaml"
     routes.write_text(_ROUTES, encoding="utf-8")
-    progress = tmp_path / "progress.md"
+    progress = folder / "progress.md"
     progress.write_text(
         "## 告警（预算超限等，由网关自动追加）\n\n<!-- hilatv:alerts -->\n\n## 每日日志\n",
         encoding="utf-8",
     )
     return Gateway(
         routes=RouteTable(routes),
-        store=SqlStore.sqlite(tmp_path / "gateway.sqlite"),
+        store=SqlStore.sqlite(folder / "gateway.sqlite"),
         cache=MemoryCache(),
         pricing=Pricing.load(),
         limits_fn=lambda: (False, Decimal("0"), Decimal("0")),
@@ -73,3 +73,8 @@ def gateway(tmp_path: Path) -> Gateway:
         registry={"mock": MockAdapter()},
         model_overrides_fn=lambda: {},
     )
+
+
+@pytest.fixture
+def gateway(tmp_path: Path) -> Gateway:
+    return build_gateway(tmp_path / "gw")

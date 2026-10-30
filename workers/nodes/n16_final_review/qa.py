@@ -72,6 +72,11 @@ def check(result: NodeResult) -> dict:
             raise QAError("a release failed compliance")
         if payload.get("live") is True and report.visual_reviewed is not True:
             raise QAError("live mode cannot release an unreviewed film")
+        if payload.get("live") is True:
+            if brand.get("logo_pixels") is not True or brand.get("cta_pixels") is not True:
+                raise QAError("live release cannot treat an unmeasured logo or CTA as present")
+    elif payload.get("live") is True and disposition != "hold":
+        raise QAError("live mode must hold when it does not release")
     elif disposition == "redo":
         if not decisions:
             raise QAError("redo needs a decision")

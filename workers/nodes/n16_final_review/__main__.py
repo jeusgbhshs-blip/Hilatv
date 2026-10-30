@@ -10,7 +10,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from workers.identity.access import NotFound, project_for
+from workers.identity.access import AccessError, Conflict, NotFound, project_for
 from workers.identity.session import Identity, SessionError, verify_session
 from workers.nodes.n16_final_review.node import run
 from workers.nodes.n16_final_review.qa import QAError
@@ -64,6 +64,12 @@ def _owned(project_id: str, identity: Identity) -> dict | None:
         return project_for(identity, project_id)
     except NotFound:
         print("项目不存在", file=sys.stderr)
+        return None
+    except Conflict as exc:
+        print(exc.detail, file=sys.stderr)
+        return None
+    except AccessError as exc:
+        print(exc.detail, file=sys.stderr)
         return None
 
 

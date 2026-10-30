@@ -140,8 +140,8 @@ def test_live_unreviewed_film_holds_and_delivery_is_blocked(
     init_project(
         "t22live",
         sentence="一句",
-        status="running",
-        deliverable=None,
+        status="completed",
+        deliverable=str(tmp_path / "t22live" / "master.mp4"),
         enterprise_id=owner.enterprise_id,
     )
     film = write_film("t22live", [_plate("rect")])
@@ -151,6 +151,9 @@ def test_live_unreviewed_film_holds_and_delivery_is_blocked(
     assert result.payload["visual_reviewed"] is False
     assert result.payload["decisions"] == []
     assert result.payload["enterprise_id"] == owner.enterprise_id
+    assert result.payload["brand"]["logo_pixels"] == "未测"
+    assert result.payload["brand"]["cta_pixels"] == "未测"
+    assert result.payload["film_judge"]["usable"] is False
     snapshot = read_snapshot("t22live") or {}
     assert snapshot["status"] == "needs_human_review"
     assert not snapshot.get("deliverable")
@@ -212,3 +215,185 @@ def test_unsafe_text_is_not_released(gateway, tmp_path: Path) -> None:
     assert result.payload["release"] is False
     assert result.payload["compliance"]["blocked"] is True
     assert result.payload["decisions"] == []
+
+
+def _owned_master(tmp_path: Path, project_id: str, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("HILATV_SESSION_SECRET", f"t22-{project_id}")
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    from workers.identity.session import open_session
+
+    owner = open_session()
+    other = open_session()
+    master = tmp_path / project_id / "master.mp4"
+    init_project(
+        project_id,
+        sentence="一句",
+        status="completed",
+        deliverable=str(master),
+        enterprise_id=owner.enterprise_id,
+    )
+    return owner, other
+
+
+def _deliveries(project_id: str, owner_token: str, other_token: str) -> None:
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    with TestClient(app) as client:
+        denied = client.post(
+            f"/v1/projects/{project_id}/deliveries",
+            json={},
+            headers={"Authorization": f"Bearer {owner_token}"},
+        )
+        assert denied.status_code == 409
+        hidden = client.post(
+            f"/v1/projects/{project_id}/deliveries",
+            json={},
+            headers={"Authorization": f"Bearer {other_token}"},
+        )
+        assert hidden.status_code == 404
+
+
+def test_live_flaw_holds_an_existing_master(gateway, tmp_path: Path, monkeypatch) -> None:
+    owner, other = _owned_master(tmp_path, "t22held", monkeypatch)
+    anchor = _png(tmp_path / "t22held" / "anchor.png", _plate("rect"))
+    film = write_film("t22held", [_plate("rect"), _plate("shear"), _plate("rect")])
+    raw = request_for(
+        "t22held",
+        film,
+        ["S01", "S02", "S03"],
+        seconds_each=0.25,
+        anchors={"S02": anchor},
+    )
+    result = run(raw, gateway=gateway)
+    body = result.payload
+    assert body["release"] is False
+    assert body["disposition"] == "hold"
+    assert [item["target"]["shot_id"] for item in body["decisions"]] == ["S02"]
+    assert body["budget_taken"] == 1
+    assert body["brand"]["logo_pixels"] == "未测"
+    snapshot = read_snapshot("t22held") or {}
+    assert snapshot["status"] == "needs_human_review"
+    assert not snapshot.get("deliverable")
+    _deliveries("t22held", owner.token, other.token)
+    used = json.loads((project_folder("t22held") / "regen_budget.json").read_text(encoding="utf-8"))
+    assert used["used"] == 1
+
+
+def test_live_asr_failure_holds_the_master(gateway, tmp_path: Path, monkeypatch) -> None:
+    owner, other = _owned_master(tmp_path, "t22asr", monkeypatch)
+
+    def broken_asr(*_args, **_kwargs):
+        raise RuntimeError("asr down")
+
+    gateway.asr = broken_asr
+    film = write_film("t22asr", [_plate("rect")])
+    result = run(request_for("t22asr", film, ["S01"], seconds_each=1.0), gateway=gateway)
+    assert result.payload["release"] is False
+    assert result.payload["disposition"] == "hold"
+    assert result.payload["asr"]["failed"] is True
+    snapshot = read_snapshot("t22asr") or {}
+    assert snapshot["status"] == "needs_human_review"
+    assert not snapshot.get("deliverable")
+    _deliveries("t22asr", owner.token, other.token)
+
+
+def test_live_shot_review_error_holds_the_master(gateway, tmp_path: Path, monkeypatch) -> None:
+    owner, other = _owned_master(tmp_path, "t22shot", monkeypatch)
+
+    def explode(*_args, **_kwargs):
+        raise RuntimeError("shot review failed")
+
+    monkeypatch.setattr("workers.nodes.n16_final_review.node.review_shot", explode)
+    film = write_film("t22shot", [_plate("rect")])
+    result = run(request_for("t22shot", film, ["S01"], seconds_each=1.0), gateway=gateway)
+    assert result.payload["release"] is False
+    assert result.payload["disposition"] == "hold"
+    assert any(item["code"] == "shot_review_failed" for item in result.payload["issues"])
+    snapshot = read_snapshot("t22shot") or {}
+    assert snapshot["status"] == "needs_human_review"
+    assert not snapshot.get("deliverable")
+    _deliveries("t22shot", owner.token, other.token)
+
+
+def test_short_budget_takes_nothing(gateway, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "1")
+    anchor = _png(tmp_path / "t22pair" / "anchor.png", _plate("rect"))
+    film = write_film("t22pair", [_plate("shear"), _plate("shear")])
+    raw = request_for(
+        "t22pair",
+        film,
+        ["S01", "S02"],
+        seconds_each=0.25,
+        anchors={"S01": anchor, "S02": anchor},
+    )
+    init_project("t22pair", sentence="一句", status="completed", deliverable=str(film))
+    result = run(raw, gateway=gateway)
+    assert result.payload["budget_taken"] == 0
+    assert result.payload["decisions"] == []
+    assert result.payload["disposition"] == "hold"
+    assert any(item["code"] == "budget_exhausted" for item in result.payload["issues"])
+    used = json.loads((project_folder("t22pair") / "regen_budget.json").read_text(encoding="utf-8"))
+    assert used["used"] == 0
+
+
+def test_concurrent_reviews_charge_one_shot(tmp_path: Path, monkeypatch) -> None:
+    import threading
+
+    from workers.nodes.n16_final_review.tests.conftest import build_gateway
+
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "1")
+    anchor = _png(tmp_path / "t22race" / "anchor.png", _plate("rect"))
+    film = write_film("t22race", [_plate("rect"), _plate("shear"), _plate("rect")])
+    raw = request_for(
+        "t22race",
+        film,
+        ["S01", "S02", "S03"],
+        seconds_each=0.25,
+        anchors={"S02": anchor},
+    )
+    gateways = [build_gateway(tmp_path / "gw-a"), build_gateway(tmp_path / "gw-b")]
+    start = threading.Barrier(2)
+    taken: list[int] = []
+
+    def worker(index: int) -> None:
+        start.wait()
+        body = run(raw, gateway=gateways[index]).payload
+        taken.append(int(body["budget_taken"]))
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(taken) == [0, 1]
+    used = json.loads((project_folder("t22race") / "regen_budget.json").read_text(encoding="utf-8"))
+    assert used["used"] == 1
+
+
+def test_n10_does_not_charge_the_redo_again(gateway, tmp_path: Path) -> None:
+    result = run(_three(tmp_path), gateway=gateway)
+    assert result.payload["budget_taken"] == 1
+    from workers.nodes.media_gateway import build_media_gateway
+    from workers.nodes.n08_keyframe.node import run as run_keyframes
+    from workers.nodes.n08_keyframe.tests.shots import request, shot
+    from workers.nodes.n10_video.node import run as run_video
+
+    media_dir = tmp_path / "n10-gw"
+    media_dir.mkdir()
+    media = build_media_gateway(media_dir)
+    frames = run_keyframes(request(shot()), gateway=media)
+    before = open_project_budget("t22flaw").used
+    run_video(
+        {
+            "project_id": "t22flaw",
+            "payload": {
+                "script": frames.payload["script"],
+                "candidates": frames.payload["candidates"],
+                "video_candidates": 3,
+            },
+        },
+        gateway=media,
+    )
+    assert open_project_budget("t22flaw").used == before == 1
