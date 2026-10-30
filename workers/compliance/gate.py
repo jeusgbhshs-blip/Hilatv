@@ -6,15 +6,15 @@ from typing import Any
 
 from workers.brand_kit.people import ConsentError
 from workers.compliance.evidence import EvidenceError
+from workers.compliance.label_measure import assert_label_duration
 from workers.compliance.licences import assemble
-from workers.compliance.metadata import content_id, metadata_args
+from workers.compliance.metadata import metadata_args, new_produce_id
 from workers.compliance.note import render_note, write_note
 from workers.nodes.n16_review.node import run as review
 from workers.nodes.n16_review.qa import QAError as ReviewError
 from workers.nodes.n17_deliver.qa import QAError
 from workers.nodes.n17_deliver.schema import DeliveryVersion, N17Input
 from workers.schemas.label_lock import LabelLocked, walk_label_edits
-from workers.schemas.licensing import today_shanghai
 
 
 def open_delivery(
@@ -59,12 +59,11 @@ def close_delivery(
     from workers.media.ffmpeg import run_ffmpeg
 
     for version in versions:
-        ident = content_id(
-            request_project,
-            version.version_id,
-            version.aspect_ratio,
-            version.language,
-        )
+        try:
+            assert_label_duration(version.duration_s)
+        except ValueError as exc:
+            raise QAError(str(exc)) from exc
+        ident = new_produce_id()
         args = [
             "ffmpeg",
             "-y",
@@ -127,9 +126,9 @@ def _people(payload: N17Input) -> None:
                 assert_voice_allowed,
             )
 
-            assert_generation_allowed(shot, payload.brand_kit, archived=payload.brand_archived)
+            assert_generation_allowed(shot, payload.enterprise_id)
         voice = payload.brand_kit.voice.tts_voice if payload.brand_kit is not None else None
-        assert_voice_allowed(voice, payload.brand_kit, archived=payload.brand_archived)
+        assert_voice_allowed(voice, payload.enterprise_id, payload.brand_kit)
     except ConsentError as exc:
         raise QAError(str(exc)) from exc
 
@@ -141,12 +140,7 @@ def _licences(project_id: str, payload: N17Input, root: Any | None = None):
 
     base = Path(root) if root is not None else project_path(project_id, create=True)
     try:
-        return assemble(
-            project_id,
-            payload.licensing,
-            root=base,
-            today=today_shanghai(),
-        )
+        return assemble(project_id, payload.licensing, root=base)
     except EvidenceError as exc:
         raise QAError(str(exc)) from exc
 
@@ -174,7 +168,7 @@ def _review(
                     "brand_kit": (
                         payload.brand_kit.model_dump(mode="json") if payload.brand_kit else None
                     ),
-                    "brand_archived": payload.brand_archived,
+                    "enterprise_id": payload.enterprise_id,
                     "texts": texts,
                     "media_paths": media_paths,
                     "licensing": summary.model_dump(mode="json"),

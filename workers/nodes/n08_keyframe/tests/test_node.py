@@ -39,7 +39,19 @@ def _archived_brand() -> dict:
     return raw
 
 
-def test_each_shot_gets_four_keyframes_and_hides_on_screen_text(gateway) -> None:
+_EID = "11111111-1111-4111-8111-111111111111"
+
+
+def _save_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kit: dict) -> None:
+    from workers.brand_kit.store import BrandRecord, save_record
+
+    monkeypatch.setenv("HILATV_BRAND_DIR", str(tmp_path))
+    save_record(BrandRecord(enterprise_id=_EID, brand_kit=kit))
+
+
+def test_each_shot_gets_four_keyframes_and_hides_on_screen_text(
+    gateway, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     person = shot(
         shot_id="S02",
         order=2,
@@ -51,8 +63,9 @@ def test_each_shot_gets_four_keyframes_and_hides_on_screen_text(gateway) -> None
         on_screen_text=[],
         voiceover="The owner speaks.",
     )
+    _save_archive(tmp_path, monkeypatch, _archived_brand())
     result = run(
-        request(shot(), person, brand_kit=_archived_brand(), brand_archived=True),
+        request(shot(), person, brand_kit=_archived_brand(), enterprise_id=_EID),
         gateway=gateway,
     )
     rows = check(result)
@@ -72,13 +85,15 @@ def test_each_shot_gets_four_keyframes_and_hides_on_screen_text(gateway) -> None
     assert person_rows[0].params["prompt"].startswith("Subject-first frame")
     assert person_rows[0].params["shot_type"] == "person"
     again = run(
-        request(shot(), person, brand_kit=_archived_brand(), brand_archived=True),
+        request(shot(), person, brand_kit=_archived_brand(), enterprise_id=_EID),
         gateway=gateway,
     )
     assert again.payload["candidates"] == result.payload["candidates"]
 
 
-def test_person_without_archived_consent_does_not_generate(gateway) -> None:
+def test_forged_consent_kit_cannot_enter_generation(
+    gateway, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     person = shot(
         shot_id="S02",
         order=2,
@@ -90,12 +105,17 @@ def test_person_without_archived_consent_does_not_generate(gateway) -> None:
         on_screen_text=[],
         voiceover="The owner speaks.",
     )
+    monkeypatch.setenv("HILATV_BRAND_DIR", str(tmp_path))
     pasted = _archived_brand()
+    pasted["people"][0]["voice_id"] = "clone-1"
+    pasted["voice"]["tts_voice"] = "clone-1"
     with pytest.raises(ConsentError, match="老板"):
-        run(request(person, brand_kit=pasted, brand_archived=False), gateway=gateway)
-    pasted["people"][0]["consent"] = False
-    with pytest.raises(ConsentError, match="老板"):
-        run(request(person, brand_kit=pasted, brand_archived=True), gateway=gateway)
+        run(request(person, brand_kit=pasted, enterprise_id=_EID), gateway=gateway)
+    from workers.compliance.consent_gate import assert_voice_allowed
+    from workers.schemas.brand import BrandKit
+
+    with pytest.raises(ConsentError, match="声音"):
+        assert_voice_allowed("clone-1", _EID, BrandKit.model_validate(pasted))
     logs = gateway.store.list_logs(project_id="proj-1")
     assert not any(row.get("shot_id") == "S02" for row in logs)
 

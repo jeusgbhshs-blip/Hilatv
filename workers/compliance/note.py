@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from workers.compliance.moderation import FRAME_AUDIO_STATUS
+from workers.nodes.n12_music.schema import LicensingSummary
 from workers.schemas.label_lock import LABEL_TEXT
-from workers.schemas.licensing import LicensingSummary
 
 NOTE_NAME = "materials-and-licences.txt"
 
@@ -30,7 +31,9 @@ def render_note(
         f"导出版本: {variants}",
         "",
         "显式标识: 画面角标「" + LABEL_TEXT + "」，由渲染层叠加，不能通过改稿去掉。",
-        "隐式标识: MP4 文件元数据字段 AIGC（Label=1，服务提供者 HiLatv，内容编号见 ProduceID）。",
+        "隐式标识: MP4 文件元数据字段 AIGC（Label=1，服务提供者见 ContentProducer，"
+        "内容编号见 ProduceID）。",
+        f"画面与声音: {FRAME_AUDIO_STATUS}。未把画面或音轨送进内容安全，需人工复核。",
         "标识依据: 《人工智能生成合成内容标识办法》第四条、第五条"
         "（国信办通字〔2025〕2号，2025-03-14 公布，2025-09-01 施行）。",
         "推断: 角标字号、白字深底和 ffmpeg format tag 对照 GB 45438-2025，上线前由法务核对。",
@@ -38,7 +41,8 @@ def render_note(
         "类型\t来源\t许可\t证明\t到期\t使用范围",
     ]
     for record in summary.records:
-        expiry = record.expires_on.isoformat() if record.expires_on else "未设到期"
+        raw_expiry = record.expires_on.strip()
+        expiry = "未设到期" if raw_expiry.lower() == "none" else (raw_expiry or "（缺失）")
         lines.append(
             "\t".join(
                 [

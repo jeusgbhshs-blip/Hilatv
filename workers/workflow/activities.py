@@ -123,6 +123,20 @@ def _work(payload: dict[str, Any], name: str) -> str:
     return str(root)
 
 
+def _soundtrack(state: dict[str, Any]) -> dict[str, Any]:
+    """N12's mix, placed by N15 at the start of the shots. Absent until N12 has run."""
+
+    extra: dict[str, Any] = {}
+    track = state.get("audio_track")
+    if isinstance(track, dict):
+        extra["audio_track"] = track
+    summary = state.get("licensing_summary")
+    records = summary.get("records") if isinstance(summary, dict) else None
+    if isinstance(records, list):
+        extra["licenses"] = records
+    return extra
+
+
 def _count(payload: dict[str, Any], key: str) -> int:
     raw = _request(payload).get(key) or 3
     try:
@@ -302,6 +316,7 @@ def n06_voiceover(payload: dict[str, Any]) -> dict[str, Any]:
                 "script": _require_dict(state, "script"),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
+                "enterprise_id": _request(payload).get("enterprise_id"),
             },
             "attempt": attempt,
         },
@@ -331,6 +346,7 @@ def n08_keyframe(payload: dict[str, Any]) -> dict[str, Any]:
                 "script": _require_dict(state, "script"),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
+                "enterprise_id": _request(payload).get("enterprise_id"),
                 "keyframe_candidates": _count(payload, "keyframe_candidates"),
             },
             "attempt": attempt,
@@ -361,6 +377,7 @@ def n10_video(payload: dict[str, Any]) -> dict[str, Any]:
                 "candidates": state.get("keyframes") or [],
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
+                "enterprise_id": _request(payload).get("enterprise_id"),
                 "video_candidates": _count(payload, "video_candidates"),
             },
             "attempt": attempt,
@@ -368,6 +385,41 @@ def n10_video(payload: dict[str, Any]) -> dict[str, Any]:
         "n10_video",
     )
     return _finish(project_id, "n10_video", {"videos": result.payload["candidates"]}, attempt)
+
+
+@activity.defn(name="n12_music")
+def n12_music(payload: dict[str, Any]) -> dict[str, Any]:
+    attempt = _announce(payload, "n12_music")
+    project_id = _project(payload)
+    state = _state(payload)
+    from workers.nodes.n12_music.node import run
+
+    brief = state.get("brief") if isinstance(state.get("brief"), dict) else {}
+    result = _call(
+        run,
+        {
+            "project_id": project_id,
+            "payload": {
+                "script": _require_dict(state, "script"),
+                "voiceovers": state.get("voiceovers") or [],
+                "brief": state.get("brief"),
+                "mood": str(brief.get("style") or ""),
+                "work_dir": _work(payload, "n12"),
+            },
+            "attempt": attempt,
+        },
+        "n12_music",
+    )
+    summary = result.payload.get("licensing_summary") or {}
+    return _finish(
+        project_id,
+        "n12_music",
+        {
+            "audio_track": result.payload["audio_track"],
+            "licensing_summary": summary,
+        },
+        attempt,
+    )
 
 
 @activity.defn(name="n13_subtitle")
@@ -445,6 +497,7 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
                 "intro_s": float(state.get("intro_s") or 0),
                 "outro_s": float(state.get("outro_s") or 0),
                 "work_dir": _work(payload, "n15"),
+                **_soundtrack(state),
             },
             "attempt": attempt,
         },
@@ -483,6 +536,7 @@ ACTIVITIES = [
     n06_voiceover,
     n08_keyframe,
     n10_video,
+    n12_music,
     n13_subtitle,
     n14_packaging,
     n15_compose,

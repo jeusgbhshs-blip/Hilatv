@@ -1,22 +1,29 @@
-"""People and cloned voices enter generation only through the brand archive.
+"""People and cloned voices enter generation only from the brand archive.
 
-Callers must use ``people_for_use`` / ``release_kit``. A kit pasted into a
-project is not an archive, even when ``consent`` is true.
+The archive is the T15 brand record for ``enterprise_id``. Consent on a kit
+in the request is ignored. ``people_for_use`` / ``release_kit`` are the only
+way a person or a cloned voice is released.
 """
 
 from __future__ import annotations
 
-from workers.brand_kit.people import ConsentError, people_for_use, release_kit
+from workers.brand_kit.people import ConsentError, people_for_use
+from workers.brand_kit.store import export_record, load_record
 from workers.schemas.brand import BrandKit, Person
 from workers.schemas.script import Shot
 
 
-def archived_people(kit: BrandKit | None, *, archived: bool) -> list[Person]:
-    """People a generator is allowed to see. An unarchived kit yields nobody."""
+def archive_people(enterprise_id: str | None) -> list[Person]:
+    """People the brand store has already released for this enterprise."""
 
-    if kit is None or not archived:
+    if not enterprise_id:
         return []
-    return people_for_use(release_kit(kit, trust_consent=True))
+    record = load_record(enterprise_id)
+    if record is None:
+        return []
+    exported = export_record(record)
+    kit = BrandKit.model_validate(exported["brand_kit"])
+    return people_for_use(kit)
 
 
 def person_refs(shot: Shot) -> list[str]:
@@ -34,12 +41,12 @@ def is_person_shot(shot: Shot) -> bool:
     return bool(person_refs(shot)) or "人物" in shot.purpose
 
 
-def assert_generation_allowed(shot: Shot, kit: BrandKit | None, *, archived: bool) -> None:
-    """Block a person shot that is not backed by an archived consent checkbox."""
+def assert_generation_allowed(shot: Shot, enterprise_id: str | None) -> None:
+    """Block a person shot that is not in the archived release."""
 
     if not is_person_shot(shot):
         return
-    allowed = archived_people(kit, archived=archived)
+    allowed = archive_people(enterprise_id)
     roles = {person.role for person in allowed}
     ids = {person.person_id for person in allowed}
     refs = person_refs(shot)
@@ -52,15 +59,21 @@ def assert_generation_allowed(shot: Shot, kit: BrandKit | None, *, archived: boo
             raise ConsentError(f"未归档肖像授权，不能使用「{ref}」")
 
 
-def assert_voice_allowed(voice_id: str | None, kit: BrandKit | None, *, archived: bool) -> None:
-    """A stock TTS voice is not a clone. A person's ``voice_id`` needs the archive."""
+def assert_voice_allowed(
+    voice_id: str | None,
+    enterprise_id: str | None,
+    request_kit: BrandKit | None = None,
+) -> None:
+    """A stock TTS voice is not a clone. A voice claimed on a request person is."""
 
-    if not voice_id or kit is None:
+    if not voice_id:
         return
-    clones = [person for person in kit.people if person.voice_id and person.voice_id == voice_id]
-    if not clones:
+    archived = {person.voice_id for person in archive_people(enterprise_id) if person.voice_id}
+    if voice_id in archived:
         return
-    allowed = {person.voice_id for person in archived_people(kit, archived=archived)}
-    if voice_id not in allowed:
-        role = clones[0].role
+    claimed = []
+    if request_kit is not None:
+        claimed = [person.voice_id for person in request_kit.people if person.voice_id]
+    if voice_id in claimed:
+        role = next(person.role for person in request_kit.people if person.voice_id == voice_id)
         raise ConsentError(f"未归档声音授权，不能使用「{role}」的声音")

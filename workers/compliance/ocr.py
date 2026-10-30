@@ -21,6 +21,28 @@ class OcrError(RuntimeError):
     pass
 
 
+def decode_frame_index(video: Path, dest: Path, *, index: int) -> Path:
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-i",
+            str(video),
+            "-vf",
+            f"select=eq(n\\,{max(0, index)})",
+            "-frames:v",
+            "1",
+            str(dest),
+        ]
+    )
+    if not dest.is_file():
+        raise OcrError(f"decoded no frame {index} from {video.name}")
+    return dest
+
+
 def decode_frame(video: Path, dest: Path, *, at_s: float = 0.2) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(

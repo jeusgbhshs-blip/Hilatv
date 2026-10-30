@@ -160,7 +160,7 @@ def _shot(
         return []
     from workers.compliance.consent_gate import assert_generation_allowed
 
-    assert_generation_allowed(shot, payload.brand_kit, archived=payload.brand_archived)
+    assert_generation_allowed(shot, payload.enterprise_id)
     opening = _frame(payload.candidates, shot.shot_id, "first")
     if opening is None:
         raise RuntimeError(f"{shot.shot_id} has no selected opening frame")

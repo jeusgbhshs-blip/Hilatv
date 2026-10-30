@@ -1,4 +1,4 @@
-from workers.workflow.contract import PHASE, PIPELINE
+from workers.workflow.contract import PEERS, PHASE, PIPELINE
 from workers.workflow.messages import shot_message
 
 
@@ -11,5 +11,7 @@ def test_pipeline_covers_the_t10_chain() -> None:
     assert PIPELINE[-1] == "n15_compose"
     assert "n03_concept" in PIPELINE
     assert "n09_keyframe_qa" not in PIPELINE
+    assert PIPELINE.index("n12_music") < PIPELINE.index("n13_subtitle")
+    assert PEERS == ("n12_music", "n13_subtitle", "n14_packaging")
     assert PHASE["n08_keyframe"] == "生成中"
     assert PHASE["n03_concept"] == "选方案"

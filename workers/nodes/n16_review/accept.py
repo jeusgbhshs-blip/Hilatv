@@ -6,10 +6,14 @@ OCR reads decoded frames. ffprobe reads the AIGC tag. No API key.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
-from workers.compliance.metadata import read_aigc
-from workers.compliance.ocr import label_visible, read_label
+from PIL import Image
+
+from workers.compliance.label_measure import glyph_ink_height, minimum_glyph_px
+from workers.compliance.metadata import content_producer, read_aigc
+from workers.compliance.ocr import decode_frame_index, label_visible, recognize
 from workers.nodes.n17_deliver.node import run
 from workers.nodes.n17_deliver.qa import QAError
 from workers.nodes.n17_deliver.sample import acceptance_request
@@ -72,26 +76,26 @@ def _exports(work: Path, stats: dict[str, int]) -> None:
     if not note.is_file():
         raise AssertionError("materials note is missing")
     text = note.read_text(encoding="utf-8")
-    for token in ("来源", "许可", "证明", "到期", "使用范围", "AI生成", "AIGC"):
+    for token in ("来源", "许可", "证明", "到期", "使用范围", "AI生成", "AIGC", "画面/声音未审"):
         if token not in text:
             raise AssertionError(f"materials note is missing {token}")
     for item in versions:
         stats["variants"] += 1
         path = Path(item["path"])
         meta = read_aigc(path)
-        if meta.get("Label") != "1" or meta.get("ContentProducer") != "HiLatv":
+        if meta.get("Label") != "1" or meta.get("ContentProducer") != content_producer():
             raise AssertionError(f"{path.name} metadata {meta}")
+        if not meta.get("ProduceID") or not meta.get("ReservedCode1"):
+            raise AssertionError(f"{path.name} is missing ProduceID or ReservedCode1")
         stats["metadata"] += 1
+        if float(item["duration_s"]) + 1e-3 < 2:
+            raise AssertionError(f"{path.name} is shorter than 2s")
         box = next(row for row in item["overlays"] if row["kind"] == "ai_label")
-        found = read_label(
-            path,
-            box=(int(box["x"]), int(box["y"]), int(box["w"]), int(box["h"])),
-            at_s=0.2,
-        )
-        if not label_visible(found):
-            raise AssertionError(
-                f"OCR missed AI生成 on {item['aspect_ratio']} {item['language']}: {found!r}"
-            )
+        if float(box["start_s"]) > 0 or float(box["end_s"]) - float(box["start_s"]) + 1e-3 < 2:
+            raise AssertionError(f"{path.name} label is not on screen for 2s from the start")
+        _label_on_frame(path, box, item, index=0)
+        late = max(0, int(1.9 * 30))
+        _label_on_frame(path, box, item, index=late)
         stats["ocr"] += 1
     logs = gateway.store.list_logs(project_id="accept-t20")
     for row in logs:
@@ -104,6 +108,35 @@ def _exports(work: Path, stats: dict[str, int]) -> None:
             stats["output_reviews"] += 1
     if stats["input_reviews"] < 1 or stats["output_reviews"] < 1:
         raise AssertionError(f"content safety stages {stats}")
+
+
+def _label_on_frame(
+    path: Path,
+    box: dict[str, object],
+    item: dict[str, object],
+    *,
+    index: int,
+) -> None:
+    with tempfile.TemporaryDirectory(prefix="hilatv-t20-frame-") as folder:
+        frame_path = decode_frame_index(path, Path(folder) / "frame.png", index=index)
+        image = Image.open(frame_path).convert("RGB")
+        x, y, w, h = int(box["x"]), int(box["y"]), int(box["w"]), int(box["h"])
+        crop = image.crop((x, y, min(image.width, x + w), min(image.height, y + h)))
+        text = recognize(crop, psm="8")
+        if not label_visible(text):
+            text = recognize(crop, psm="13")
+        if not label_visible(text):
+            raise AssertionError(
+                f"OCR missed AI生成 on {item['aspect_ratio']} {item['language']} "
+                f"frame {index}: {text!r}"
+            )
+        if index == 0:
+            ink = glyph_ink_height(crop)
+            need = minimum_glyph_px(min(int(item["width"]), int(item["height"])))
+            if ink < need:
+                raise AssertionError(
+                    f"{item['aspect_ratio']} glyph height {ink}px is under {need}px"
+                )
 
 
 def _blocked(work: Path, stats: dict[str, int]) -> None:

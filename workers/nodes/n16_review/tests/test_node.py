@@ -7,9 +7,9 @@ from pathlib import Path
 
 import pytest
 
+from workers.nodes.n12_music.schema import LicenseRecord
 from workers.nodes.n16_review.node import run
 from workers.nodes.n16_review.qa import QAError
-from workers.schemas.licensing import LicenseRecord
 
 _ROOT = Path(__file__).resolve().parents[4]
 _BRIEF = json.loads(
@@ -122,6 +122,31 @@ def test_expired_licence_blocks(gateway) -> None:
 def test_remove_label_instruction_is_rejected(gateway) -> None:
     with pytest.raises(QAError, match="固定层"):
         run(_request("input", instruction="去掉 AI 标识"), gateway=gateway)
+
+
+def test_live_mock_result_is_not_a_pass(gateway, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+
+    def fake(text: str, **kwargs: object) -> dict[str, object]:
+        return {"mock": True, "passed": True, "moderation": "mock", "reviewed": False}
+
+    monkeypatch.setattr(gateway, "content_safety", fake)
+    result = run(_request("input"), gateway=gateway)
+    assert result.payload["blocked"] is True
+    assert result.payload["live_cleared"] is False
+    assert result.payload["needs_human"] is True
+
+
+def test_live_adapter_error_blocks(gateway, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+
+    def fake(text: str, **kwargs: object) -> dict[str, object]:
+        raise RuntimeError("moderator down")
+
+    monkeypatch.setattr(gateway, "content_safety", fake)
+    result = run(_request("input"), gateway=gateway)
+    assert result.payload["blocked"] is True
+    assert "人工复核" in " ".join(result.payload["block_reasons"])
 
 
 def test_media_path_outside_the_project_is_rejected(gateway, tmp_path: Path, monkeypatch) -> None:

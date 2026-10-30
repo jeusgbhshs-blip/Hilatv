@@ -111,7 +111,7 @@ def _execute(
     from workers.compliance.consent_gate import assert_voice_allowed
 
     try:
-        assert_voice_allowed(voice, brand, archived=payload.brand_archived)
+        assert_voice_allowed(voice, payload.enterprise_id, brand)
     except ConsentError as exc:
         raise QAError(str(exc), retryable=False) from exc
     plans = plan_prosody(script, base)

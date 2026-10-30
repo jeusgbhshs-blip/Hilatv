@@ -1,14 +1,22 @@
-"""T21's licence JSON loads, and gaps or expiry block delivery."""
+"""N12's licence row is the only one. Delivery adds the expiry and live checks."""
 
 from __future__ import annotations
 
 from datetime import date
 
 import pytest
-from pydantic import ValidationError
 
-from workers.schemas.director import RevisionDirective
-from workers.schemas.licensing import LicenseRecord, LicensingSummary, block_reason, summarize
+from workers.compliance.licences import (
+    LicenseRecord as DeliveryRecord,
+)
+from workers.compliance.licences import (
+    delivery_block_reason,
+)
+from workers.nodes.n12_music.schema import LicenseRecord, LicensingSummary, incomplete_reason
+
+
+def test_delivery_uses_the_n12_class() -> None:
+    assert DeliveryRecord is LicenseRecord
 
 
 def test_t21_music_record_loads() -> None:
@@ -17,6 +25,9 @@ def test_t21_music_record_loads() -> None:
         "kind": "music",
         "source": "hilatv-test-library",
         "license": "commercial-library",
+        "evidence_ref": "contract-1",
+        "expires_on": "none",
+        "usage_scope": "本片背景音乐",
         "title": "workshop bed",
         "uri": "library://bed",
         "start_s": 0,
@@ -30,74 +41,63 @@ def test_t21_music_record_loads() -> None:
     )
     assert record.kind == "music"
     assert record.license == "commercial-library"
-    assert summary.records[0].source == "hilatv-test-library"
-    assert block_reason(summary.records, today=date(2026, 10, 30)) == ""
+    assert summary.records[0].evidence_ref == "contract-1"
+    assert incomplete_reason(summary.records) == ""
+    assert delivery_block_reason(summary.records, today=date(2026, 10, 30)) == ""
 
 
-def test_type_and_licence_aliases() -> None:
-    record = LicenseRecord.model_validate(
-        {
-            "record_id": "font-1",
-            "type": "font",
-            "source": "vendor",
-            "licence": "OFL-1.1",
-            "evidence": "docs/licenses.md#noto",
-            "scope": "本片字幕",
-            "expires_on": "2026-12-31",
-        }
-    )
-    assert record.kind == "font"
-    assert record.license == "OFL-1.1"
-    assert record.evidence_ref == "docs/licenses.md#noto"
-    assert record.usage_scope == "本片字幕"
-    assert record.expires_on == date(2026, 12, 31)
+def test_missing_source_or_evidence_blocks() -> None:
+    bare = [
+        LicenseRecord(
+            record_id="m1",
+            kind="music",
+            source="",
+            license="commercial",
+        )
+    ]
+    assert "missing a source or a license" in incomplete_reason(bare)
+    thin = [
+        LicenseRecord(
+            record_id="m2",
+            kind="sfx",
+            source="lib",
+            license="commercial",
+            evidence_ref="",
+            expires_on="none",
+            usage_scope="本片",
+        )
+    ]
+    assert "evidence" in incomplete_reason(thin)
 
 
-def test_missing_source_or_licence_blocks() -> None:
-    reason = block_reason(
-        [
-            LicenseRecord(
-                record_id="m1",
-                kind="music",
-                source="",
-                license="commercial",
-            )
-        ],
-        today=date(2026, 10, 30),
-    )
-    assert "missing a source or a license" in reason
-    summary = summarize(
-        "p1",
-        [LicenseRecord(record_id="m2", kind="sfx", source="lib", license="")],
-        today=date(2026, 10, 30),
-    )
-    assert summary.blocked is True
-
-
-def test_expired_licence_blocks_and_today_is_still_valid() -> None:
-    expired = LicenseRecord(
+def test_expired_licence_blocks_and_today_and_none_stay_valid() -> None:
+    today = date(2026, 10, 30)
+    base = dict(
         record_id="m1",
         kind="music",
         source="lib",
         license="commercial",
-        expires_on=date(2026, 10, 1),
+        evidence_ref="contract-1",
+        usage_scope="本片",
     )
-    assert "expired" in block_reason([expired], today=date(2026, 10, 30))
-    current = expired.model_copy(update={"expires_on": date(2026, 10, 30)})
-    assert block_reason([current], today=date(2026, 10, 30)) == ""
-    open_ended = expired.model_copy(update={"expires_on": None})
-    assert block_reason([open_ended], today=date(2026, 10, 30)) == ""
+    expired = LicenseRecord(**base, expires_on="2026-10-01")
+    assert "expired" in delivery_block_reason([expired], today=today)
+    current = LicenseRecord(**base, expires_on="2026-10-30")
+    assert delivery_block_reason([current], today=today) == ""
+    open_ended = LicenseRecord(**base, expires_on="none")
+    assert delivery_block_reason([open_ended], today=today) == ""
 
 
-def test_revision_cannot_remove_the_ai_label() -> None:
-    with pytest.raises(ValidationError, match="AI生成"):
-        RevisionDirective.model_validate(
-            {"targets": ["S01"], "change": {"instruction": "去掉 AI 标识"}, "keep": ["composition"]}
-        )
-
-
-def test_ordinary_revision_still_loads() -> None:
-    directive = RevisionDirective.model_validate(
-        {"targets": ["S02"], "change": {"lighting": "brighter"}, "keep": ["composition"]}
+def test_live_mode_rejects_the_test_library(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    record = LicenseRecord(
+        record_id="bed",
+        kind="music",
+        source="hilatv-test-library/steady",
+        license="CC0-1.0",
+        evidence_ref="workers/nodes/n12_music/library.py",
+        expires_on="none",
+        usage_scope="internal-test-mock-only",
     )
-    assert directive.change["lighting"] == "brighter"
+    reason = delivery_block_reason([record], today=date(2026, 10, 30))
+    assert reason == "live mode cannot deliver the mock test-library licence"

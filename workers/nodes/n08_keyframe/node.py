@@ -156,7 +156,7 @@ def _shot(
         return []
     from workers.compliance.consent_gate import assert_generation_allowed
 
-    assert_generation_allowed(shot, payload.brand_kit, archived=payload.brand_archived)
+    assert_generation_allowed(shot, payload.enterprise_id)
     family = shot_family(shot)
     language = payload.script.language
     intended = intended_model(gateway, "image", family, language)

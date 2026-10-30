@@ -6,9 +6,9 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from workers.nodes.n12_music.schema import LicensingSummary
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
-from workers.schemas.licensing import LicensingSummary
 from workers.schemas.script import Script
 
 
@@ -70,8 +70,9 @@ class N17Input(BaseModel):
     regenerate_vertical: bool | None = None
     verify_pixels: bool = False
     work_dir: str | None = None
+    audio_track: str | None = None
     licensing: LicensingSummary | None = None
-    brand_archived: bool = False
+    enterprise_id: str | None = None
     instruction: str | None = None
 
 

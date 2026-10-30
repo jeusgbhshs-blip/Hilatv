@@ -44,4 +44,3 @@ class N8Input(BaseModel):
     style_anchor: AnchorHint | None = None
     keyframe_candidates: int = Field(default=4, ge=3, le=8)
     enterprise_id: str | None = None
-    brand_archived: bool = False

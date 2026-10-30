@@ -13,6 +13,14 @@ from typing import Any
 
 from workers.compliance.consent_gate import assert_generation_allowed, assert_voice_allowed
 from workers.compliance.copy import bundle_text, extreme_hits
+from workers.compliance.licences import delivery_block_reason
+from workers.compliance.moderation import (
+    FRAME_AUDIO_STATUS,
+    blocks_delivery,
+    classify,
+    live_mode,
+    reason_for,
+)
 from workers.compliance.sectors import manual_sectors
 from workers.logging import log_event
 from workers.nodes.n16_review.qa import QAError, check
@@ -20,7 +28,6 @@ from workers.nodes.n16_review.schema import N16Input, NodeRequest, NodeResult
 from workers.nodes.runtime import Deadline
 from workers.schemas.asset import QAReport, QAScores
 from workers.schemas.label_lock import LabelLocked, walk_label_edits
-from workers.schemas.licensing import block_reason, today_shanghai
 from workers.workflow.store import project_path
 
 NODE = "n16_review"
@@ -82,12 +89,12 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any) -> NodeResult:
     if payload.script is not None:
         for shot in payload.script.shots:
             try:
-                assert_generation_allowed(shot, payload.brand_kit, archived=payload.brand_archived)
+                assert_generation_allowed(shot, payload.enterprise_id)
             except ValueError as exc:
                 raise QAError(str(exc)) from exc
     voice = payload.brand_kit.voice.tts_voice if payload.brand_kit is not None else None
     try:
-        assert_voice_allowed(voice, payload.brand_kit, archived=payload.brand_archived)
+        assert_voice_allowed(voice, payload.enterprise_id, payload.brand_kit)
     except ValueError as exc:
         raise QAError(str(exc)) from exc
     root = project_path(request.project_id, create=True).resolve()
@@ -96,24 +103,36 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any) -> NodeResult:
     text = bundle_text(payload.brief, payload.script, list(payload.texts))
     extremes = extreme_hits(text, payload.brand_kit)
     sectors = manual_sectors(text, payload.brand_kit)
-    safety = gateway.content_safety(
-        text,
-        project_id=request.project_id,
-        node=NODE,
-        shot_id=request.shot_id,
-        attempt=attempt,
-        params={"stage": payload.stage},
-    )
-    if not isinstance(safety, dict) or "passed" not in safety:
-        raise QAError("content safety returned no decision", retryable=True)
+    try:
+        safety = gateway.content_safety(
+            text,
+            project_id=request.project_id,
+            node=NODE,
+            shot_id=request.shot_id,
+            attempt=attempt,
+            params={"stage": payload.stage},
+        )
+    except Exception as exc:
+        safety = {
+            "mock": False,
+            "reviewed": False,
+            "unreviewed": True,
+            "passed": False,
+            "reason": str(exc),
+            "stage": payload.stage,
+        }
+        if not live_mode():
+            raise QAError(f"content safety failed: {exc}", retryable=True) from exc
+    if not isinstance(safety, dict):
+        safety = {"reviewed": False, "passed": False, "reason": "content safety returned nothing"}
+    kind = classify(safety)
     reasons: list[str] = []
-    if safety.get("passed") is not True:
-        detail = str(safety.get("reason") or "content safety rejected the text")
-        reasons.append(detail)
+    if blocks_delivery(kind):
+        reasons.append(reason_for(kind, safety))
     if extremes:
         reasons.append("extreme words: " + "、".join(extremes))
     if payload.licensing is not None:
-        licence = block_reason(list(payload.licensing.records), today=today_shanghai())
+        licence = delivery_block_reason(list(payload.licensing.records))
         if licence:
             reasons.append(licence)
     passed = not reasons
@@ -141,6 +160,10 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any) -> NodeResult:
             "manual_review": bool(sectors),
             "manual_review_sectors": sectors,
             "extreme_words": extremes,
+            "moderation": kind,
+            "live_cleared": kind == "live_pass",
+            "needs_human": True,
+            "frame_audio_review": FRAME_AUDIO_STATUS,
             "content_safety": safety,
             "licensing": (payload.licensing.model_dump(mode="json") if payload.licensing else None),
             "qa": report.model_dump(mode="json"),

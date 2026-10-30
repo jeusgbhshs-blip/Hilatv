@@ -135,15 +135,9 @@ def command(timeline: Timeline, dest: str, variant: str) -> list[str]:
 
 
 def _aigc_args(timeline: Timeline, variant: str) -> list[str]:
-    from workers.compliance.metadata import content_id, metadata_args
+    from workers.compliance.metadata import metadata_args, new_produce_id
 
-    ident = content_id(
-        "n15",
-        variant,
-        str(timeline.width),
-        str(timeline.height),
-        f"{timeline.duration_s:.3f}",
-    )
+    ident = timeline.produce_ids.get(variant) or new_produce_id()
     return metadata_args(content_id=ident)
 
 

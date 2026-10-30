@@ -6,9 +6,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from workers.nodes.n12_music.schema import LicensingSummary
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
-from workers.schemas.licensing import LicensingSummary
 from workers.schemas.script import Script
 
 
@@ -34,7 +34,7 @@ class N16Input(BaseModel):
     brief: Brief | None = None
     script: Script | None = None
     brand_kit: BrandKit | None = None
-    brand_archived: bool = False
+    enterprise_id: str | None = None
     texts: list[str] = Field(default_factory=list)
     media_paths: list[str] = Field(default_factory=list)
     licensing: LicensingSummary | None = None

@@ -61,6 +61,9 @@ class ContentSafetyAdapter:
             raise AdapterError("content safety response has no passed flag")
         labels = payload.get("labels") if isinstance(payload.get("labels"), list) else []
         output: dict[str, Any] = {
+            "mock": False,
+            "moderation": "live",
+            "reviewed": True,
             "passed": payload["passed"],
             "labels": [str(item) for item in labels],
             "reason": str(payload.get("reason") or ""),

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from workers.compliance.metadata import metadata_args, read_aigc
+from workers.compliance.metadata import metadata_args, new_produce_id, read_aigc
 from workers.compliance.ocr import label_visible, read_label
 from workers.media.ffmpeg import encode_plate, run_ffmpeg
 from workers.media.raster import render_overlay, save_png
@@ -52,5 +52,7 @@ def test_decoded_frame_shows_the_label_and_ffprobe_reads_metadata(tmp_path: Path
     assert label_visible(text), text
     meta = read_aigc(dest)
     assert meta["Label"] == "1"
-    assert meta["ContentProducer"] == "HiLatv"
+    assert meta["ContentProducer"] == "PENDING-SONG-CONFIRM"
     assert meta["ProduceID"]
+    assert meta["ReservedCode1"]
+    assert new_produce_id() != new_produce_id()

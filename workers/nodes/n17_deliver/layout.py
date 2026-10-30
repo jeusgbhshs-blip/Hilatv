@@ -143,9 +143,7 @@ def burn_overlays(
             )
         offset += geo.duration_s
     label = _ai_mark(width, height, safe)
-    occupied = _occupied(list(subjects.values()))
-    x = int(round((1 - safe.right) * width)) - label.width
-    x, y, label = _fit(label, x, int(round(safe.top * height)), width, height, safe, occupied)
+    x, y = _place_label(label, width, height, safe)
     path = work / "overlays" / "ai.png"
     save_png(label, path)
     _remember(
@@ -165,28 +163,16 @@ def burn_overlays(
 
 
 def _ai_mark(width: int, height: int, safe: Insets) -> Image.Image:
-    """Corner mark. Glyph box stays at least 5% of the short side when it fits.
+    """Corner mark whose ink is at least 5% of the short side and still fits."""
 
-    推断: GB 45438-2025 §5.4 sets that floor. We start at 28px so the mark still
-    reads after H.264, then shrink only to stay inside the platform safe area.
-    """
+    from workers.compliance.label_measure import glyph_ink_height, minimum_glyph_px
 
     short = min(width, height)
-    floor = max(8, int(short * 0.05) + 1)
-    room_w = max(8, int((1 - safe.left - safe.right) * width) - 4)
-    room_h = max(8, int((1 - safe.top - safe.bottom) * height) - 4)
-    size = max(floor, 28)
-    image = render_overlay(
-        ai_label_text(),
-        weight="bold",
-        font_size=size,
-        fill="#FFFFFF",
-        background="#111111",
-        padding=4,
-        radius=4,
-    )
-    while (image.width > room_w or image.height > room_h) and size > floor:
-        size -= 2
+    need = minimum_glyph_px(short)
+    room_w = max(8, int((1 - safe.left - safe.right) * width) - 2)
+    room_h = max(8, int((1 - safe.top - safe.bottom) * height) - 2)
+    chosen: Image.Image | None = None
+    for size in range(max(need, 36), need - 1, -1):
         image = render_overlay(
             ai_label_text(),
             weight="bold",
@@ -196,7 +182,22 @@ def _ai_mark(width: int, height: int, safe: Insets) -> Image.Image:
             padding=4,
             radius=4,
         )
-    return image
+        if glyph_ink_height(image) < need:
+            continue
+        if image.width <= room_w and image.height <= room_h:
+            chosen = image
+            break
+    if chosen is None:
+        raise QAError("AI生成 的字高达不到画面短边的 5%，或放不进安全区")
+    return chosen
+
+
+def _place_label(image: Image.Image, width: int, height: int, safe: Insets) -> tuple[int, int]:
+    """Top-left corner of the safe area. That corner is still a frame corner."""
+
+    x = int(round(safe.left * width))
+    y = int(round(safe.top * height))
+    return x, y
 
 
 def _cues(
