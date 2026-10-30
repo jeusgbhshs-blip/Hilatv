@@ -16,7 +16,7 @@ from temporalio.client import WorkflowFailureError
 from workers.schemas.brand import BrandKit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.service import run_and_wait, serve_worker
-from workers.workflow.store import load_checkpoint, read_snapshot
+from workers.workflow.store import load_checkpoint, read_snapshot, record_human_release
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -83,8 +83,6 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
 
 
 def _cmd_release(args: argparse.Namespace) -> int:
-    from workers.workflow.store import load_checkpoint, read_snapshot
-
     snapshot = read_snapshot(args.project_id)
     if snapshot is None:
         print("项目不存在", file=sys.stderr)
@@ -92,11 +90,14 @@ def _cmd_release(args: argparse.Namespace) -> int:
     if snapshot.get("status") != "needs_human_review":
         print("项目不在人工复核", file=sys.stderr)
         return 2
+    record_human_release(args.project_id)
     return _execute(
         project_id=args.project_id,
         sentence=str(snapshot.get("sentence") or ""),
         brand_kit=snapshot.get("brand_kit"),
         brand_id=snapshot.get("brand_id"),
+        enterprise_id=snapshot.get("enterprise_id"),
+        concept_selection=snapshot.get("concept_selection"),
         attachments=snapshot.get("attachments") or [],
         keyframe_candidates=snapshot.get("keyframe_candidates"),
         video_candidates=snapshot.get("video_candidates"),

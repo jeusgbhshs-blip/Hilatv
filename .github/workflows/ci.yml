@@ -101,6 +101,9 @@ jobs:
       - name: Accept T11
         run: make accept-t11
 
+      - name: Accept T23
+        run: make accept-t23
+
   compose:
     runs-on: ubuntu-latest
     timeout-minutes: 20

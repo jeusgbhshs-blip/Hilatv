@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { StoryboardStrip } from "@/components/storyboard-strip";
 import { Button } from "@/components/ui/button";
 import { apiUrl, wsUrl } from "@/lib/api";
+import { readCards, type StoryboardCard } from "@/lib/storyboard";
 import {
   attachmentLabel,
   latestMessage,
@@ -27,7 +29,9 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
   const [events, setEvents] = useState<ProgressEvent[]>([]);
   const [shots, setShots] = useState<ShotSummary[]>([]);
   const [attachments, setAttachments] = useState<AttachmentView[]>([]);
+  const [cards, setCards] = useState<StoryboardCard[]>([]);
   const [missing, setMissing] = useState(false);
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let closed = false;
@@ -50,6 +54,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         setSnapshot(body);
         setShots(readShots(body.shots));
         setAttachments(readAttachments(body.attachments));
+        setCards(readCards(body.storyboard));
         setEvents((current) => mergeEvents(current, readEvents(body.events)));
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
@@ -82,7 +87,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
       window.clearInterval(timer);
       socket.close();
     };
-  }, [projectId]);
+  }, [projectId, tick]);
 
   if (missing) {
     return (
@@ -138,6 +143,10 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
       </p>
       {typeof snapshot?.elapsed_s === "number" ? (
         <p className="text-sm text-muted-foreground">已用时 {Math.max(0, Math.round(snapshot.elapsed_s))} 秒</p>
+      ) : null}
+
+      {snapshot?.status === "paused" && cards.length > 0 ? (
+        <StoryboardStrip projectId={projectId} cards={cards} onSaved={() => setTick((value) => value + 1)} />
       ) : null}
 
       {rows.length > 0 ? (

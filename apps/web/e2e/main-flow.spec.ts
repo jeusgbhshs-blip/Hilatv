@@ -42,13 +42,16 @@ test("one sentence becomes a playable download", async ({ page }) => {
     predicate: (socket) => socket.url().includes("/v1/projects/") && socket.url().includes("/progress"),
     timeout: 240_000,
   });
+  await page.getByRole("radio", { name: "直接出片" }).check();
   await page.getByRole("button", { name: "开始生成" }).click();
   const request = await created;
   const body = request.postDataJSON() as {
     sentence: string;
     attachments: { kind: string; filename?: string; uri?: string; upload_id?: string }[];
+    skip_storyboard?: boolean;
   };
   expect(body.sentence).toBe(SENTENCE);
+  expect(body.skip_storyboard).toBe(true);
   expect(body.attachments).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "image", filename: "product.png" }),

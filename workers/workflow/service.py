@@ -19,6 +19,20 @@ from workers.workflow.runtime import (
 from workers.workflow.store import init_project, project_path, update_snapshot
 
 
+def _storyboard_wait(value: int | None) -> int:
+    """How long the cards stay open. ``0`` waits until the user continues."""
+
+    if value is not None:
+        return value
+    raw = os.getenv("HILATV_STORYBOARD_WAIT_S", "").strip()
+    if not raw:
+        return 86400
+    try:
+        return int(raw)
+    except ValueError:
+        return 86400
+
+
 def candidate_count(env_name: str) -> int:
     raw = os.getenv(env_name, "3").strip() or "3"
     try:
@@ -44,6 +58,8 @@ def make_request(
     enterprise_id: str | None = None,
     concept_selection: str | None = None,
     human_release: bool = False,
+    skip_storyboard: bool | None = None,
+    storyboard_wait_s: int | None = None,
 ) -> dict[str, Any]:
     return {
         "project_id": project_id,
@@ -69,6 +85,9 @@ def make_request(
         "enterprise_id": enterprise_id,
         "concept_selection": concept_selection,
         "human_release": human_release is True,
+        # Omitted means 直接出片. The product page sends false when it wants the cards.
+        "skip_storyboard": True if skip_storyboard is None else bool(skip_storyboard),
+        "storyboard_wait_s": _storyboard_wait(storyboard_wait_s),
     }
 
 
@@ -88,6 +107,7 @@ def prepare(
     enterprise_id: str | None = None,
     concept_selection: str | None = None,
     human_release: bool = False,
+    skip_storyboard: bool | None = None,
     workflow_id: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     request = make_request(
@@ -105,6 +125,7 @@ def prepare(
         enterprise_id=enterprise_id,
         concept_selection=concept_selection,
         human_release=human_release,
+        skip_storyboard=skip_storyboard,
     )
     if workflow_id is None:
         if start_from:
@@ -135,6 +156,7 @@ def prepare(
             workflow_id=workflow_id,
             enterprise_id=enterprise_id,
             concept_selection=concept_selection,
+            skip_storyboard=request["skip_storyboard"],
         )
     log_event(
         "workflow_started",
@@ -210,6 +232,14 @@ async def run_and_wait(**kwargs: Any) -> dict[str, Any]:
         _stamp(project_id, started, {})
         raise
     return _stamp(project_id, started, result)
+
+
+async def release_film(workflow_id: str) -> None:
+    """Release the storyboard wait. The signal is ignored once the run has moved on."""
+
+    runtime = await get_runtime()
+    handle = runtime.client.get_workflow_handle(workflow_id)
+    await handle.signal("release")
 
 
 async def serve_worker() -> None:

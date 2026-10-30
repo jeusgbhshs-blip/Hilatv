@@ -361,6 +361,47 @@ def n08_keyframe(payload: dict[str, Any]) -> dict[str, Any]:
     )
 
 
+@activity.defn(name="n09_keyframe_qa")
+def n09_keyframe_qa(payload: dict[str, Any]) -> dict[str, Any]:
+    """Record whether each selected frame was really reviewed, then the workflow may wait."""
+
+    attempt = _announce(payload, "n09_keyframe_qa")
+    project_id = _project(payload)
+    state = _state(payload)
+    from gateway import get_gateway
+    from workers.workflow.storyboard import StoryboardError, prepare_gate
+
+    try:
+        patch = prepare_gate(
+            project_id,
+            state,
+            skip=bool(_request(payload).get("skip_storyboard")),
+            gateway=get_gateway(),
+        )
+    except StoryboardError as exc:
+        raise ApplicationError(str(exc), non_retryable=True) from exc
+    return _finish(project_id, "n09_keyframe_qa", patch, attempt)
+
+
+@activity.defn(name="storyboard_sync")
+def storyboard_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    """Reload narration edits made while the storyboard cards were open."""
+
+    from workers.workflow.storyboard import sync_patch
+
+    return {"patch": sync_patch(_project(payload))}
+
+
+@activity.defn(name="storyboard_expire")
+def storyboard_expire(payload: dict[str, Any]) -> dict[str, Any]:
+    """The card wait timed out. Leave the film unproduced and cancellable."""
+
+    from workers.workflow.storyboard import mark_expired
+
+    mark_expired(_project(payload))
+    return {"patch": {}}
+
+
 @activity.defn(name="n10_video")
 def n10_video(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n10_video")
@@ -631,6 +672,9 @@ ACTIVITIES = [
     n05_storyboard,
     n06_voiceover,
     n08_keyframe,
+    n09_keyframe_qa,
+    storyboard_sync,
+    storyboard_expire,
     n10_video,
     shot_director,
     n12_music,

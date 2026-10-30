@@ -11,6 +11,7 @@ PIPELINE: tuple[str, ...] = (
     "n05_storyboard",
     "n06_voiceover",
     "n08_keyframe",
+    "n09_keyframe_qa",
     "n10_video",
     "shot_director",
     "n12_music",
@@ -21,6 +22,8 @@ PIPELINE: tuple[str, ...] = (
 
 PEERS: tuple[str, ...] = ("n12_music", "n13_subtitle", "n14_packaging")
 FINAL_NODE = "n15_compose"
+# Pause for the storyboard cards sits after this activity, before video.
+STORYBOARD_GATE = "n09_keyframe_qa"
 
 # Activity start-to-close. The node itself is stopped a few seconds earlier.
 TIMEOUT_S: dict[str, int] = {
@@ -31,6 +34,7 @@ TIMEOUT_S: dict[str, int] = {
     "n05_storyboard": 90,
     "n06_voiceover": 180,
     "n08_keyframe": 300,
+    "n09_keyframe_qa": 180,
     "n10_video": 600,
     "shot_director": 600,
     "n12_music": 180,
@@ -48,6 +52,7 @@ PHASE: dict[str, str] = {
     "n05_storyboard": "看分镜",
     "n06_voiceover": "生成中",
     "n08_keyframe": "生成中",
+    "n09_keyframe_qa": "看分镜",
     "n10_video": "生成中",
     "shot_director": "生成中",
     "n12_music": "生成中",
@@ -64,6 +69,7 @@ NODE_MESSAGE: dict[str, str] = {
     "n05_storyboard": "正在编排分镜",
     "n06_voiceover": "正在配音",
     "n08_keyframe": "正在生成画面",
+    "n09_keyframe_qa": "正在核对分镜画面",
     "n10_video": "正在生成视频",
     "shot_director": "正在检查镜头",
     "n12_music": "正在配乐",

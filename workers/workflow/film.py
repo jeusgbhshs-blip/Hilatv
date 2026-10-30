@@ -16,7 +16,14 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from workers.workflow.contract import FINAL_NODE, PEERS, PHASE, PIPELINE, TIMEOUT_S
+    from workers.workflow.contract import (
+        FINAL_NODE,
+        PEERS,
+        PHASE,
+        PIPELINE,
+        STORYBOARD_GATE,
+        TIMEOUT_S,
+    )
 
 _PUBLIC = (
     "sentence",
@@ -30,6 +37,7 @@ _PUBLIC = (
     "enterprise_id",
     "concept_selection",
     "human_release",
+    "skip_storyboard",
 )
 
 
@@ -38,6 +46,7 @@ def needs_human_review(state: dict[str, Any], request: dict[str, Any]) -> bool:
 
     Live mode does not bypass this. Only ``human_release`` on the request,
     set by the explicit release action, continues into compose and delivery.
+    Storyboard continue is a different signal and does not set this flag.
     """
 
     if request.get("human_release") is True:
@@ -46,6 +55,15 @@ def needs_human_review(state: dict[str, Any], request: dict[str, Any]) -> bool:
     if not isinstance(notes, list):
         return False
     return any(isinstance(item, dict) and item.get("needs_review") is True for item in notes)
+
+
+def _storyboard_timeout(request: dict[str, Any]) -> timedelta | None:
+    """Positive seconds wait for the cards. Zero or missing means no timer."""
+
+    raw = request.get("storyboard_wait_s")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return timedelta(seconds=raw)
 
 
 def _retry(attempts: int) -> RetryPolicy:
@@ -98,6 +116,7 @@ def _view(
 class ProduceFilm:
     def __init__(self) -> None:
         self._release = False
+        self._storyboard_expired = False
         self._status: dict[str, Any] = {}
 
     @workflow.run
@@ -127,6 +146,15 @@ class ProduceFilm:
                 "completed": list(state.get("completed") or []),
                 "shot_quality": state.get("shot_quality"),
                 "status": "needs_human_review",
+            }
+        if self._storyboard_expired:
+            self._status = _view(request, STORYBOARD_GATE, state, status="timed_out", paused=False)
+            return {
+                "project_id": request["project_id"],
+                "deliverable": None,
+                "status": "timed_out",
+                "cancellable": True,
+                "completed": list(state.get("completed") or []),
             }
         self._status = _view(request, FINAL_NODE, state, status="completed", paused=False)
         return {
@@ -158,6 +186,10 @@ class ProduceFilm:
                 continue
             patch = await self._call(node, request, state)
             state = _merge(state, patch, node)
+            if node == STORYBOARD_GATE and request.get("skip_storyboard") is not True:
+                state = await self._confirm_storyboard(request, state)
+                if self._storyboard_expired:
+                    return state
         if needs_human_review(state, request):
             patch = await self._call("hold_for_review", request, state)
             state = _merge(state, patch, "shot_director")
@@ -200,6 +232,54 @@ class ProduceFilm:
         if not isinstance(patch, dict):
             raise ApplicationError(f"{node} returned no patch", non_retryable=True)
         return patch
+
+    async def _confirm_storyboard(
+        self,
+        request: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Wait until the user leaves the storyboard cards, then reload edits.
+
+        ``skip_storyboard`` never reaches this. Signals that arrived early still
+        release the wait, because the signal flips ``_release`` before the check.
+        """
+
+        self._status = _view(request, STORYBOARD_GATE, state, status="paused", paused=True)
+        timeout = _storyboard_timeout(request)
+        try:
+            await workflow.wait_condition(lambda: self._release, timeout=timeout)
+        except TimeoutError:
+            self._storyboard_expired = True
+            await workflow.execute_activity(
+                "storyboard_expire",
+                {
+                    "project_id": request["project_id"],
+                    "request": _public(request),
+                    "state": state,
+                },
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_retry(1),
+            )
+            self._status = _view(request, STORYBOARD_GATE, state, status="timed_out", paused=False)
+            return state
+        self._release = False
+        result = await workflow.execute_activity(
+            "storyboard_sync",
+            {
+                "project_id": request["project_id"],
+                "request": _public(request),
+                "state": state,
+            },
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_retry(3),
+        )
+        patch = result.get("patch") if isinstance(result, dict) else None
+        if not isinstance(patch, dict):
+            raise ApplicationError("storyboard_sync returned no patch", non_retryable=True)
+        merged = dict(state)
+        merged.update(patch)
+        self._status = _view(request, STORYBOARD_GATE, merged, status="running", paused=False)
+        return merged
 
     async def _fail(self, request: dict[str, Any], exc: ActivityError) -> None:
         node = str(getattr(exc, "activity_type", None) or self._status.get("node") or "workflow")
