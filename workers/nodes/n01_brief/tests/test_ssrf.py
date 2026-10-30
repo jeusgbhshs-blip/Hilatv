@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import gzip
 import ipaddress
 import socket
+import time
 
 import httpx
 import pytest
@@ -388,3 +390,143 @@ def test_loopback_image_on_a_public_page_is_not_downloaded(gateway) -> None:
     assert page["images"][0]["uri"] == "http://127.0.0.1/secret.png"
     assert page["images"][0]["bytes"] == 0
     assert page["images"][0]["image_class"] == "logo"
+
+
+def test_dns_rebinding_public_then_private() -> None:
+    answers = [[PUBLIC_IP], ["10.9.8.7"]]
+    resolved: list[str] = []
+
+    def resolver(host: str, port: int) -> list[str]:
+        resolved.append(host)
+        return answers.pop(0)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == PUBLIC_IP
+        return httpx.Response(302, headers={"location": "http://cdn.example/next"})
+
+    with (
+        fetch_hooks(resolver=resolver, transport=httpx.MockTransport(handler)),
+        pytest.raises(UnsafeURL, match="not allowed"),
+    ):
+        fetch_bytes("http://cdn.example/start", timeout=2.0, max_bytes=1000)
+    assert resolved == ["cdn.example", "cdn.example"]
+    assert answers == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://2130706433/",
+        "http://0x7f000001/",
+        "http://0x7f.0.0.1/",
+        "http://0x7f.0x0.0x0.0x1/",
+        "http://127.1/",
+        "http://127.0.1/",
+        "http://017700000001/",
+        "http://0177.0.0.1/",
+        "http://10.1/",
+        "http://0300.0250.0.1/",
+    ],
+)
+def test_decimal_octal_hex_and_short_ip_forms_are_rejected(url: str) -> None:
+    requests, resolved = _reject(url)
+    assert requests == []
+    assert resolved == []
+
+
+def test_proxy_environment_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+    proxy_names = (
+        "HTTP_PROXY",
+        "HTTPS_PROXY",
+        "ALL_PROXY",
+        "http_proxy",
+        "https_proxy",
+        "all_proxy",
+    )
+    for name in proxy_names:
+        monkeypatch.setenv(name, "http://127.0.0.1:9")
+    created: dict[str, object] = {}
+    real_client = httpx.Client
+
+    def spy(*args: object, **kwargs: object) -> httpx.Client:
+        created["trust_env"] = kwargs.get("trust_env", "missing")
+        created["proxy"] = kwargs.get("proxy")
+        return real_client(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr("workers.nodes.n01_brief.ssrf.httpx.Client", spy)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == PUBLIC_IP
+        return httpx.Response(200, content=b"direct", headers={"content-type": "text/plain"})
+
+    body, _content_type, requests, _resolved = _fetch(
+        "http://cdn.example/direct",
+        resolver=lambda host, port: [PUBLIC_IP],
+        handler=handler,
+    )
+    assert body == b"direct"
+    assert requests[0].url.host == PUBLIC_IP
+    assert created["trust_env"] is False
+    assert created["proxy"] is None
+
+
+@pytest.mark.parametrize(
+    "location",
+    ["file:///etc/passwd", "ftp://cdn.example/secret", "ftp://127.0.0.1/secret"],
+)
+def test_redirect_to_file_or_ftp_is_rejected(location: str) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == PUBLIC_IP
+        return httpx.Response(302, headers={"location": location})
+
+    with pytest.raises(UnsafeURL, match="not allowed"):
+        _fetch(
+            "https://cdn.example/start",
+            resolver=lambda host, port: [PUBLIC_IP],
+            handler=handler,
+        )
+
+
+def test_gzip_bomb_is_capped_on_decompressed_bytes() -> None:
+    bomb = gzip.compress(b"A" * 200_000)
+
+    class _Once(httpx.SyncByteStream):
+        def __init__(self, payload: bytes) -> None:
+            self._payload = payload
+            self.reads = 0
+
+        def __iter__(self):
+            self.reads += 1
+            yield self._payload
+
+    stream = _Once(bomb)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["accept-encoding"] == "identity"
+        return httpx.Response(
+            200,
+            stream=stream,
+            headers={"content-type": "text/plain", "content-encoding": "gzip"},
+        )
+
+    body, content_type, _requests, _resolved = _fetch(
+        "http://cdn.example/bomb",
+        resolver=lambda host, port: [PUBLIC_IP],
+        handler=handler,
+        max_bytes=64,
+    )
+    assert body == b"A" * 64
+    assert content_type == "text/plain"
+    assert len(bomb) < 200_000
+
+
+def test_dns_lookup_stops_at_the_chain_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    def slow(*_args: object, **_kwargs: object) -> list[object]:
+        time.sleep(2)
+        return []
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow)
+    started = time.monotonic()
+    with pytest.raises(ValueError, match="timed out"):
+        fetch_bytes("http://cdn.example/slow-dns", timeout=0.3, max_bytes=100)
+    assert time.monotonic() - started < 1.2

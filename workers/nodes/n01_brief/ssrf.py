@@ -9,10 +9,13 @@ from __future__ import annotations
 import contextvars
 import ipaddress
 import socket
+import threading
 import time
+import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Any
 from urllib.parse import urljoin
 
 import httpx
@@ -105,9 +108,17 @@ def fetch_bytes(url: str, *, timeout: float, max_bytes: int) -> tuple[bytes, str
     if timeout <= 0:
         raise ValueError("url fetch timed out")
     hooks = _hooks.get()
-    resolver = hooks.resolver if hooks is not None else _system_resolver
     transport = hooks.transport if hooks is not None else httpx.HTTPTransport(retries=0)
     deadline = time.monotonic() + timeout
+
+    def resolver(host: str, port: int) -> list[str]:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            raise ValueError("url fetch timed out")
+        if hooks is None:
+            return _system_resolver(host, port, left)
+        return hooks.resolver(host, port)
+
     current = _logical_url(url)
     redirects = 0
     with httpx.Client(
@@ -164,6 +175,8 @@ def _redirect_target(current: httpx.URL, location: str | None) -> httpx.URL:
 def _validated_target(url: httpx.URL, resolver: Resolver) -> str:
     host = url.host
     literal = _parse_ip(host)
+    if literal is None:
+        literal = _parse_obfuscated_ipv4(host)
     if literal is not None:
         addresses = [literal]
     else:
@@ -178,7 +191,7 @@ def _resolve(
 ) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     try:
         raw = resolver(host, port)
-    except UnsafeURL:
+    except (UnsafeURL, ValueError):
         raise
     except Exception as exc:
         raise UnsafeURL(f"url host did not resolve: {host}") from exc
@@ -198,9 +211,9 @@ def _resolve(
     return found
 
 
-def _system_resolver(host: str, port: int) -> list[str]:
+def _system_resolver(host: str, port: int, timeout: float) -> list[str]:
     try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        infos = _getaddrinfo(host, port, timeout)
     except socket.gaierror as exc:
         raise UnsafeURL(f"url host did not resolve: {host}") from exc
     addresses: list[str] = []
@@ -211,12 +224,98 @@ def _system_resolver(host: str, port: int) -> list[str]:
     return addresses
 
 
+def _getaddrinfo(host: str, port: int, timeout: float) -> list[tuple[object, ...]]:
+    """Resolve ``host`` without letting DNS run past the fetch deadline."""
+
+    if timeout <= 0:
+        raise ValueError("url fetch timed out")
+    outcome: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            outcome["infos"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except BaseException as exc:
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=run, name="hilatv-n1-dns", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        raise ValueError("url fetch timed out")
+    error = outcome.get("error")
+    if error is not None:
+        if isinstance(error, BaseException):
+            raise error
+        raise UnsafeURL(f"url host did not resolve: {host}")
+    infos = outcome.get("infos")
+    if not isinstance(infos, list):
+        raise UnsafeURL(f"url host did not resolve: {host}")
+    return infos
+
+
 def _parse_ip(value: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     text = value.strip().strip("[]")
     if "%" in text:
         text = text.split("%", 1)[0]
     try:
         return ipaddress.ip_address(text)
+    except ValueError:
+        return None
+
+
+def _parse_obfuscated_ipv4(host: str) -> ipaddress.IPv4Address | None:
+    """Decode decimal, octal, hex, and short IPv4 forms such as ``127.1``.
+
+    Browsers treat these as addresses. ``httpx`` leaves most of them as
+    hostnames, so they must be classified before DNS.
+    """
+
+    if not host or any(char in host for char in "[]%:/"):
+        return None
+    parts = host.split(".")
+    if not 1 <= len(parts) <= 4:
+        return None
+    numbers: list[int] = []
+    for part in parts:
+        number = _ipv4_component(part)
+        if number is None:
+            return None
+        numbers.append(number)
+    if len(numbers) == 1:
+        packed = numbers[0]
+    elif len(numbers) == 2:
+        if numbers[0] > 0xFF or numbers[1] > 0xFFFFFF:
+            return None
+        packed = (numbers[0] << 24) | numbers[1]
+    elif len(numbers) == 3:
+        if numbers[0] > 0xFF or numbers[1] > 0xFF or numbers[2] > 0xFFFF:
+            return None
+        packed = (numbers[0] << 24) | (numbers[1] << 16) | numbers[2]
+    else:
+        if any(number > 0xFF for number in numbers):
+            return None
+        packed = (numbers[0] << 24) | (numbers[1] << 16) | (numbers[2] << 8) | numbers[3]
+    if packed > 0xFFFFFFFF:
+        return None
+    return ipaddress.IPv4Address(packed)
+
+
+def _ipv4_component(part: str) -> int | None:
+    if not part:
+        return None
+    lowered = part.lower()
+    try:
+        if lowered.startswith("0x"):
+            if len(part) == 2 or any(char not in "0123456789abcdef" for char in lowered[2:]):
+                return None
+            return int(lowered, 16)
+        if part[0] == "0" and len(part) > 1:
+            if any(char not in "01234567" for char in part):
+                return None
+            return int(part, 8)
+        if not part.isdigit():
+            return None
+        return int(part, 10)
     except ValueError:
         return None
 
@@ -249,6 +348,7 @@ def _send(client: httpx.Client, logical: httpx.URL, ip: str, timeout: float) -> 
         headers={
             "User-Agent": USER_AGENT,
             "Host": logical.netloc.decode("ascii"),
+            "Accept-Encoding": "identity",
         },
         extensions={"sni_hostname": logical.raw_host.decode("ascii")},
         timeout=timeout,
@@ -257,9 +357,36 @@ def _send(client: httpx.Client, logical: httpx.URL, ip: str, timeout: float) -> 
 
 
 def _read_limited(response: httpx.Response, max_bytes: int, deadline: float) -> bytes:
+    # ``Response(content=...)`` has already buffered the body. Slice it.
+    # Live responses stay streamed so a gzip body is capped while it expands.
+    loaded = getattr(response, "_content", None)
+    if isinstance(loaded, bytes):
+        return loaded[:max_bytes]
+    encoding = _content_encoding(response)
+    if encoding == "gzip":
+        return _read_decoded(response, max_bytes, deadline, zlib.decompressobj(16 + zlib.MAX_WBITS))
+    if encoding == "deflate":
+        return _read_decoded(response, max_bytes, deadline, zlib.decompressobj(zlib.MAX_WBITS))
+    return _read_raw(response, max_bytes, deadline)
+
+
+def _content_encoding(response: httpx.Response) -> str:
+    parts = [
+        part.strip().lower()
+        for part in (response.headers.get("content-encoding") or "").split(",")
+        if part.strip()
+    ]
+    if parts == ["gzip"] or parts == ["x-gzip"]:
+        return "gzip"
+    if parts == ["deflate"]:
+        return "deflate"
+    return ""
+
+
+def _read_raw(response: httpx.Response, max_bytes: int, deadline: float) -> bytes:
     chunks: list[bytes] = []
     size = 0
-    for chunk in response.iter_bytes():
+    for chunk in response.iter_raw():
         if time.monotonic() >= deadline:
             raise ValueError("url fetch timed out")
         if not chunk:
@@ -275,3 +402,41 @@ def _read_limited(response: httpx.Response, max_bytes: int, deadline: float) -> 
         if size >= max_bytes:
             break
     return b"".join(chunks)
+
+
+def _read_decoded(
+    response: httpx.Response,
+    max_bytes: int,
+    deadline: float,
+    decoder: Any,
+) -> bytes:
+    """Cap decompressed bytes so a small gzip body cannot expand without limit."""
+
+    out = bytearray()
+    try:
+        for raw in response.iter_raw():
+            if time.monotonic() >= deadline:
+                raise ValueError("url fetch timed out")
+            pending = raw
+            while pending:
+                room = max_bytes - len(out)
+                if room <= 0:
+                    return bytes(out[:max_bytes])
+                piece = decoder.decompress(pending, room)
+                leftover = decoder.unconsumed_tail
+                if piece:
+                    out.extend(piece)
+                if len(out) >= max_bytes:
+                    return bytes(out[:max_bytes])
+                if leftover == pending:
+                    break
+                pending = leftover
+        room = max_bytes - len(out)
+        if room <= 0:
+            return bytes(out[:max_bytes])
+        tail = decoder.flush()
+        if tail:
+            out.extend(tail[:room])
+    except zlib.error as exc:
+        raise ValueError("url body could not be decoded") from exc
+    return bytes(out[:max_bytes])
