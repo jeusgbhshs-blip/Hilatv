@@ -25,7 +25,7 @@
 | T17 | 多比例、多语种导出 | T06, T09, T10 | 🔵 | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 重构图、中英配音字幕、版本 API，成片页可切换比例、语种、时长。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | 🔵 | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 验收中。已合并 main `7a7725f`。只有 `visual_reviewed is True` 算已评审。假设见下方 |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
-| T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | cursor/t20-compliance-49e6 | 验收中。显式角标、AIGC 元数据、内容安全 mock、授权与素材说明。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标、AIGC 元数据、内容安全 mock、授权与素材说明。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
 
