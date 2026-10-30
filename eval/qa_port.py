@@ -10,11 +10,13 @@ Storyboard text alone is not a score.
 from __future__ import annotations
 
 import importlib
+import io
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from PIL import Image, UnidentifiedImageError
 from pydantic import ValidationError
 
 from workers.schemas.asset import QAReport
@@ -41,6 +43,8 @@ _ALIASES = {
 
 TEXT_ONLY_LABEL = "只评了文字，不计入质量结论"
 UNREVIEWED_LABEL = "未评审"
+_NOT_REVIEWED_FAILS = frozenset({"not_reviewed", "judge_unavailable", "unreviewed"})
+_VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".webm", ".mkv", ".m4v"})
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _ENV = Environment(
@@ -82,16 +86,33 @@ def review_port() -> str:
 
 
 def review_shot(payload: dict[str, Any], *, gateway: Any) -> ShotReview:
-    """Score one shot. ``payload`` is the T12 request, not free text."""
+    """Score one shot. ``payload`` is the T12 request, not free text.
 
-    media_uri = str(payload.get("candidate_uri") or "").strip()
+    A score is kept only after a keyframe or video file exists and opens.
+    T12 is not called otherwise: a storyboard-only 8.4 is not a review.
+    """
+
+    media_uri = readable_media(payload, gateway)
+    if not media_uri:
+        return ShotReview(
+            status="not_reviewed",
+            source="unreviewed",
+            basis="text",
+            report=None,
+            media_uri="",
+            note=TEXT_ONLY_LABEL,
+        )
     fn = t12_review_shot()
     if fn is not None:
-        raw = fn(dict(payload))
-        if hasattr(raw, "model_dump"):
-            raw = raw.model_dump(mode="json")
-        if not isinstance(raw, dict):
+        try:
+            raw_obj = fn(dict(payload))
+        except Exception as exc:
+            return _review_error("t12", media_uri, exc)
+        raw = _as_dict(raw_obj)
+        if raw is None:
             return _invalid("t12", media_uri, "review_shot did not return an object")
+        if _not_a_review(raw):
+            return _not_reviewed("t12", media_uri, _refusal_note(raw))
         try:
             report = coerce_judge(raw)
         except JudgeInvalid as exc:
@@ -99,19 +120,10 @@ def review_shot(payload: dict[str, Any], *, gateway: Any) -> ShotReview:
         return ShotReview(
             status="reviewed",
             source="t12",
-            basis="t12",
+            basis="media",
             report=report,
             media_uri=media_uri,
             note=report.notes,
-        )
-    if not media_uri:
-        return ShotReview(
-            status="text_only",
-            source="unreviewed",
-            basis="text",
-            report=None,
-            media_uri="",
-            note=TEXT_ONLY_LABEL,
         )
     kind = "video" if str(payload.get("node") or "") == "n11_video" else "keyframe"
     prompt = _ENV.get_template("judge.j2").render(
@@ -125,24 +137,24 @@ def review_shot(payload: dict[str, Any], *, gateway: Any) -> ShotReview:
         media_kind=kind,
         media_uri=media_uri,
     )
-    raw = gateway.judge(
-        prompt,
-        schema=QAReport,
-        project_id=payload.get("project_id"),
-        node=str(payload.get("node") or "n09_keyframe"),
-        shot_id=payload.get("shot_id"),
-        shot_type=payload.get("shot_type") or None,
-        attempt=1,
-        params={"media_uri": media_uri, "media_kind": kind},
-    )
-    if not isinstance(raw, dict) or _is_schema_fill(raw):
-        return ShotReview(
-            status="unreviewed",
-            source="unreviewed",
-            basis="media",
-            report=None,
-            media_uri=media_uri,
-            note=f"{UNREVIEWED_LABEL}：网关返回的是 mock 填表，没有真实视觉评审",
+    try:
+        raw = gateway.judge(
+            prompt,
+            schema=QAReport,
+            project_id=payload.get("project_id"),
+            node=str(payload.get("node") or "n09_keyframe"),
+            shot_id=payload.get("shot_id"),
+            shot_type=payload.get("shot_type") or None,
+            attempt=1,
+            params={"media_uri": media_uri, "media_kind": kind},
+        )
+    except Exception as exc:
+        return _review_error("gateway-judge", media_uri, exc)
+    if not isinstance(raw, dict) or _not_a_review(raw):
+        return _not_reviewed(
+            "unreviewed",
+            media_uri,
+            f"{UNREVIEWED_LABEL}：网关返回的是 mock 填表，没有真实视觉评审",
         )
     try:
         report = coerce_judge(raw)
@@ -199,6 +211,167 @@ def coerce_judge(raw: dict[str, Any]) -> QAReport:
         )
     except ValidationError as exc:
         raise JudgeInvalid("judge payload is invalid") from exc
+
+
+def readable_media(payload: dict[str, Any], gateway: Any) -> str:
+    """First keyframe or video reference that exists and opens, else ``""``."""
+
+    for uri in _media_uris(payload):
+        if _opens(uri, gateway):
+            return uri
+    return ""
+
+
+def _media_uris(payload: dict[str, Any]) -> list[str]:
+    found: list[str] = []
+    for key in ("candidate_uri", "uri"):
+        text = str(payload.get(key) or "").strip()
+        if text:
+            found.append(text)
+    frames = payload.get("frame_uris")
+    if isinstance(frames, list):
+        for item in frames:
+            text = str(item or "").strip()
+            if text:
+                found.append(text)
+    return found
+
+
+def _opens(uri: str, gateway: Any) -> bool:
+    if not uri or uri.startswith("mock://"):
+        return False
+    if uri.startswith("data:image"):
+        return _image_opens(_data_image_bytes(uri))
+    if uri.startswith(("oss://", "s3://")):
+        return _bytes_open(uri, _store_bytes(gateway, uri))
+    path = Path(uri[7:] if uri.startswith("file://") else uri)
+    if not path.is_file():
+        return False
+    try:
+        if path.suffix.lower() in _VIDEO_SUFFIXES:
+            with path.open("rb") as handle:
+                return bool(handle.read(12))
+        data = path.read_bytes()
+    except OSError:
+        return False
+    return _image_opens(data)
+
+
+def _store_bytes(gateway: Any, uri: str) -> bytes | None:
+    store = getattr(gateway, "store", None)
+    getter = getattr(store, "get", None)
+    if not callable(getter):
+        return None
+    try:
+        data = getter(uri)
+    except Exception:
+        return None
+    if isinstance(data, bytes) and data:
+        return data
+    return None
+
+
+def _data_image_bytes(uri: str) -> bytes | None:
+    import base64
+    import binascii
+
+    raw = uri.split(",", 1)[-1]
+    try:
+        return base64.b64decode(raw)
+    except (binascii.Error, ValueError):
+        return None
+
+
+def _bytes_open(uri: str, data: bytes | None) -> bool:
+    if not data:
+        return False
+    suffix = Path(uri.split("?", 1)[0]).suffix.lower()
+    if suffix in _VIDEO_SUFFIXES or b"ftyp" in data[:32]:
+        return True
+    return _image_opens(data)
+
+
+def _image_opens(data: bytes | None) -> bool:
+    if not data:
+        return False
+    try:
+        with Image.open(io.BytesIO(data)) as image:
+            image.load()
+    except (UnidentifiedImageError, OSError, ValueError):
+        return False
+    return True
+
+
+def _as_dict(raw: Any) -> dict[str, Any] | None:
+    if hasattr(raw, "model_dump"):
+        dumped = raw.model_dump(mode="json")
+        if not isinstance(dumped, dict):
+            return None
+        for flag in ("degraded", "mock"):
+            if hasattr(raw, flag):
+                dumped[flag] = getattr(raw, flag)
+        return dumped
+    if isinstance(raw, dict):
+        return raw
+    return None
+
+
+def _not_a_review(raw: dict[str, Any]) -> bool:
+    if _is_schema_fill(raw):
+        return True
+    if raw.get("degraded") is True or raw.get("mock") is True:
+        return True
+    status = str(raw.get("status") or raw.get("review_status") or "").strip().lower()
+    if status in {"not_reviewed", "unreviewed", "degraded", "mock", "judge_unavailable"}:
+        return True
+    evaluator = str(raw.get("evaluator") or "").strip().lower()
+    if not evaluator or evaluator == "mock" or evaluator.startswith("mock"):
+        return True
+    return bool(_refusal_tokens(raw))
+
+
+def _refusal_tokens(raw: dict[str, Any]) -> set[str]:
+    hard = raw.get("hard_fail") or []
+    if not isinstance(hard, list):
+        return set()
+    found: set[str] = set()
+    for item in hard:
+        token = str(item).strip().lower().replace("-", "_").replace(" ", "_")
+        if token in _NOT_REVIEWED_FAILS:
+            found.add(token)
+    return found
+
+
+def _refusal_note(raw: dict[str, Any]) -> str:
+    tokens = sorted(_refusal_tokens(raw))
+    if tokens:
+        return f"{UNREVIEWED_LABEL}：{', '.join(tokens)}"
+    if raw.get("degraded") is True or str(raw.get("evaluator") or "").lower().startswith("mock"):
+        return f"{UNREVIEWED_LABEL}：评审模型是 mock 或已降级"
+    return f"{UNREVIEWED_LABEL}：没有真实视觉评审"
+
+
+def _not_reviewed(source: str, media_uri: str, note: str) -> ShotReview:
+    return ShotReview(
+        status="not_reviewed",
+        source=source,
+        basis="media" if media_uri else "text",
+        report=None,
+        media_uri=media_uri,
+        note=note,
+    )
+
+
+def _review_error(source: str, media_uri: str, exc: Exception) -> ShotReview:
+    detail = f"{type(exc).__name__}: {exc}"[:300]
+    return ShotReview(
+        status="review_error",
+        source=source,
+        basis="media" if media_uri else "none",
+        report=None,
+        media_uri=media_uri,
+        note=f"review_error: {detail}",
+    )
 
 
 def _invalid(source: str, media_uri: str, note: str) -> ShotReview:

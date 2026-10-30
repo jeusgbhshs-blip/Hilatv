@@ -67,12 +67,12 @@
 
 - 60 条是自写的企业口吻样例，按 6 个行业各 10 条放在 `eval/briefs/*.yaml`。团队收集的真实需求还没到。替换这些句子后，同一条命令会改跑新句子。
 - `make accept-t18` 是 mock：按 T10 的顺序调用 N1、N2 读取、N3 自动选定、N4、N5。不启动 Temporal，也不编码 MP4，因此没有关键帧或视频。`--mode live` 才调用 `workers.workflow.service.run_and_wait`，走出片工作流。
-- T12 还没有 `workers.qa.service.review_shot`。没有这个函数、网关又只返回 mock 填表（五项 0 分、`evaluator=mock`）时，镜头标为未评审，不改写成固定分数。`coerce_judge` 缺维度直接报错，标为无效，不再补 8 分。
+- T12 的 `workers.qa.service.review_shot` 还没合并。调用前先确认关键帧或视频文件存在并且能打开；打不开就不调用。T12 若对无画面返回 8.4，或 `hard_fail` 含 `not_reviewed` / `judge_unavailable`，或带 mock / degraded 标记，该镜仍是未评审。调用抛错记 `review_error`，不算通过。`coerce_judge` 缺维度报错，标为无效。
 - 有选中视频候选时，评审节点记 `n11_video`，模型名用候选上的 `model`。mock 只有分镜，节点记 `n09_keyframe`，模型记 `not-rendered`。镜头类型用分镜里的运镜预设 id。
-- 硬伤按已评审镜头计：`QAReport.hard_fail` 非空算 1 个硬伤镜头。没有真实评审时不把硬伤率写成 0。阈值 5% 只在全部镜头都评过时才能让质量结论达标。
+- 硬伤按已评审镜头计：`QAReport.hard_fail` 非空算 1 个硬伤镜头。质量达标要同时满足：60 条都在、失败 0 条、未评审和评审异常都是 0、已评审镜头数大于 0，并且硬伤率不超过 5%。分母为 0 不能算通过。失败或超时的样例即使镜头数记成 0，也不能让其余样例单独达标。
 - 报告和 `summary.json` 写评审来源、未评审镜头数，以及两个结论：管线和报告结构是否完整、质量是否达标。`--strict` 的退出码只看结构和「未评审被当成质量通过」这种假通过。mock 没有画面，质量结论是未达标，验收命令仍然可以在 CI 里跑完。
 - 备用评审有关键帧或视频 `uri` 时，把引用放进 `gateway.judge` 的提示词和 `params.media_uri`，仍然只走网关。没有引用时不把分镜文字送去打分，报告写「只评了文字，不计入质量结论」。
-- 状态接口读 `project.json` 时，写入改为先写临时文件再替换，避免进度轮询读到被截断的空文件。这是 CI 里 `test_create_progress_and_rerun` 读到空 JSON 的原因。
+- 状态接口读 `project.json` 时，写入改为先写临时文件、`fsync`，再替换。`Path.write_text` 会先把目标截成空文件，CI 里 `test_create_progress_and_rerun` 的进度轮询因此读到空 JSON。替换之后读者看到的是上一份完整文件或新文件。
 - 盲评包只给匿名 pair id 和成片路径。对照组成片不在本任务里，key 里标 `withheld`。
 - 费用是该项目在网关 `call_logs.cost_cny` 的合计。mock 为 0。调用仍经过网关预算守卫。
 - 耗时是单条样例的墙钟秒。mock 不拿它去卡 SPEC §1.4 的 15 分钟。

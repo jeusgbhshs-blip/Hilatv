@@ -41,6 +41,7 @@ class CaseScore:
     unreviewed_shots: int = 0
     text_only_shots: int = 0
     invalid_shots: int = 0
+    review_error_shots: int = 0
     shots: list[ShotScore] = field(default_factory=list)
 
 
@@ -147,9 +148,10 @@ def _case_score(scored: list[ShotScore]) -> CaseScore:
     reviewed = [
         item for item in scored if item.review_status == "reviewed" and item.report is not None
     ]
-    text_only = sum(1 for item in scored if item.review_status == "text_only")
+    text_only = sum(1 for item in scored if _is_text_only(item))
     invalid = sum(1 for item in scored if item.review_status == "invalid")
-    bare = sum(1 for item in scored if item.review_status == "unreviewed")
+    review_errors = sum(1 for item in scored if item.review_status == "review_error")
+    unreviewed = sum(1 for item in scored if _is_not_reviewed(item))
     fully = len(reviewed) == len(scored) and bool(scored)
     if fully:
         totals = [Decimal(str(item.report.total)) for item in reviewed if item.report is not None]
@@ -162,11 +164,22 @@ def _case_score(scored: list[ShotScore]) -> CaseScore:
         hard_shots=hard,
         shot_count=len(scored),
         reviewed_shots=len(reviewed),
-        unreviewed_shots=bare + text_only,
+        unreviewed_shots=unreviewed,
         text_only_shots=text_only,
         invalid_shots=invalid,
+        review_error_shots=review_errors,
         shots=scored,
     )
+
+
+def _is_not_reviewed(shot: ShotScore) -> bool:
+    return shot.review_status in {"unreviewed", "not_reviewed", "text_only"}
+
+
+def _is_text_only(shot: ShotScore) -> bool:
+    if shot.review_status == "text_only":
+        return True
+    return shot.review_status in {"unreviewed", "not_reviewed"} and shot.review_basis == "text"
 
 
 def _candidate_uri(state: dict[str, Any], shot_id: str, node: str) -> str:

@@ -79,8 +79,9 @@ def _atomic_text(path: Path, text: str) -> None:
     """Replace ``path`` with a complete document.
 
     ``Path.write_text`` truncates the destination first. A status read in
-    another thread can then observe an empty file. Write a sibling temp file
-    and ``os.replace`` it so readers see the previous document or the new one.
+    another thread can then observe an empty file. Write a sibling temp file,
+    fsync it, and ``os.replace`` it so readers see the previous document or
+    the new one.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -89,6 +90,8 @@ def _atomic_text(path: Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(tmp, path)
     except Exception:
         tmp.unlink(missing_ok=True)

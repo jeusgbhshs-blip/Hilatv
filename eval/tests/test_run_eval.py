@@ -98,9 +98,38 @@ def test_hard_injury_rate_is_per_shot() -> None:
     assert within_hard_injury_limit(0, 0)
 
 
-def test_review_shot_delegates_to_t12(monkeypatch: pytest.MonkeyPatch) -> None:
+def _png(directory: Path) -> str:
+    from PIL import Image
+
+    path = directory / "frame.png"
+    Image.new("RGB", (8, 8), (20, 40, 60)).save(path)
+    return str(path)
+
+
+def _eight_four(**extra: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "scores": {
+            "product_fidelity": 8,
+            "motion_quality": 8,
+            "aesthetics": 8,
+            "prompt_match": 8,
+            "artifact_free": 10,
+        },
+        "hard_fail": [],
+        "total": 8.4,
+        "evaluator": "vlm-judge-v1",
+        "notes": "no pixels; storyboard-only review",
+    }
+    payload.update(extra)
+    return payload
+
+
+def test_review_shot_delegates_to_t12(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    uri = _png(tmp_path)
+
     def fake(payload: dict[str, object]) -> dict[str, object]:
         assert payload["shot_id"] == "S01"
+        assert payload["candidate_uri"] == uri
         return {
             "scores": {
                 "product_fidelity": 9,
@@ -116,7 +145,10 @@ def test_review_shot_delegates_to_t12(monkeypatch: pytest.MonkeyPatch) -> None:
         }
 
     monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
-    review = review_shot({"shot_id": "S01", "node": "n09_keyframe"}, gateway=object())
+    review = review_shot(
+        {"shot_id": "S01", "node": "n09_keyframe", "candidate_uri": uri},
+        gateway=object(),
+    )
     assert review.status == "reviewed"
     assert review.source == "t12"
     assert review.report is not None
@@ -226,7 +258,7 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     reset_gateway()
 
 
-def test_t12_missing_dimension_is_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_t12_missing_dimension_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake(_payload: dict[str, object]) -> dict[str, object]:
         return {
             "scores": {"aesthetics": 8},
@@ -237,9 +269,93 @@ def test_t12_missing_dimension_is_invalid(monkeypatch: pytest.MonkeyPatch) -> No
         }
 
     monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
-    review = review_shot({"shot_id": "S01"}, gateway=object())
+    review = review_shot(
+        {"shot_id": "S01", "candidate_uri": _png(tmp_path)},
+        gateway=object(),
+    )
     assert review.status == "invalid"
     assert review.report is None
+
+
+def test_t12_eight_four_without_media_is_not_reviewed(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def fake(_payload: dict[str, object]) -> dict[str, object]:
+        calls["n"] += 1
+        return _eight_four()
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    review = review_shot(
+        {"shot_id": "S01", "visual": "只有分镜文字", "candidate_uri": ""},
+        gateway=object(),
+    )
+    assert calls["n"] == 0
+    assert review.status == "not_reviewed"
+    assert review.report is None
+    assert review.note == TEXT_ONLY_LABEL
+    state = {"script": {"shots": [{"shot_id": "S01", "camera": "slow_push_in", "purpose": "产品"}]}}
+    scored = score_state(state, project_id="e18-noreview", gateway=object())
+    assert calls["n"] == 0
+    assert scored.score is None
+    assert scored.reviewed_shots == 0
+    assert scored.unreviewed_shots == 1
+    assert scored.shots[0].review_status == "not_reviewed"
+
+
+def test_missing_file_does_not_call_t12(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = {"n": 0}
+
+    def fake(_payload: dict[str, object]) -> dict[str, object]:
+        calls["n"] += 1
+        return _eight_four()
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    review = review_shot(
+        {"shot_id": "S01", "candidate_uri": str(tmp_path / "missing.png")},
+        gateway=object(),
+    )
+    assert calls["n"] == 0
+    assert review.status == "not_reviewed"
+    assert review.report is None
+
+
+def test_t12_refusal_flags_are_not_reviewed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    uri = _png(tmp_path)
+    seen: list[dict[str, object]] = []
+
+    def fake(payload: dict[str, object]) -> dict[str, object]:
+        seen.append(payload)
+        if payload.get("mark") == "unavailable":
+            return _eight_four(hard_fail=["judge_unavailable"])
+        if payload.get("mark") == "degraded":
+            return _eight_four(degraded=True, evaluator="mock-judge", notes="degraded")
+        return _eight_four(hard_fail=["not_reviewed"])
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    for mark in ("not_reviewed", "unavailable", "degraded"):
+        review = review_shot(
+            {"shot_id": "S01", "candidate_uri": uri, "mark": mark},
+            gateway=object(),
+        )
+        assert review.status == "not_reviewed", mark
+        assert review.report is None
+    assert len(seen) == 3
+
+
+def test_t12_exception_is_review_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake(_payload: dict[str, object]) -> dict[str, object]:
+        raise TimeoutError("judge down")
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    review = review_shot(
+        {"shot_id": "S01", "candidate_uri": _png(tmp_path)},
+        gateway=object(),
+    )
+    assert review.status == "review_error"
+    assert review.report is None
+    assert "TimeoutError" in review.note
 
 
 def test_storyboard_text_is_not_scored() -> None:
@@ -259,13 +375,13 @@ def test_storyboard_text_is_not_scored() -> None:
         },
         gateway=Boom(),
     )
-    assert review.status == "text_only"
+    assert review.status == "not_reviewed"
     assert review.report is None
     assert review.note == TEXT_ONLY_LABEL
 
 
-def test_media_reference_is_sent_and_mock_fill_stays_unreviewed(gateway) -> None:
-    uri = "oss://hilatv/gateway/image/frame.png"
+def test_media_reference_is_sent_and_mock_fill_stays_unreviewed(gateway, tmp_path: Path) -> None:
+    uri = _png(tmp_path)
     review = review_shot(
         {
             "project_id": "e18-judge",
@@ -282,7 +398,7 @@ def test_media_reference_is_sent_and_mock_fill_stays_unreviewed(gateway) -> None
         },
         gateway=gateway,
     )
-    assert review.status == "unreviewed"
+    assert review.status == "not_reviewed"
     assert review.report is None
     assert review.media_uri == uri
     logs = gateway.store.list_logs(project_id="e18-judge")
@@ -294,11 +410,15 @@ def test_media_reference_is_sent_and_mock_fill_stays_unreviewed(gateway) -> None
     ).startswith("0")
 
 
-def test_real_judge_with_media_counts() -> None:
+def test_real_judge_with_media_counts(tmp_path: Path) -> None:
+    uri = _png(tmp_path)
+
     class Live:
         def judge(self, prompt: str, **kwargs: object) -> dict[str, object]:
-            assert kwargs["params"]["media_uri"] == "oss://hilatv/frame.png"  # type: ignore[index]
-            assert "oss://hilatv/frame.png" in prompt
+            params = kwargs["params"]
+            assert isinstance(params, dict)
+            assert params["media_uri"] == uri
+            assert uri in prompt
             return {
                 "scores": {name: 9 for name in QAScores.model_fields},
                 "hard_fail": [],
@@ -322,7 +442,7 @@ def test_real_judge_with_media_counts() -> None:
         "keyframes": [
             {
                 "shot_id": "S01",
-                "uri": "oss://hilatv/frame.png",
+                "uri": uri,
                 "selected": True,
                 "model": "mock-image",
             }
@@ -333,7 +453,7 @@ def test_real_judge_with_media_counts() -> None:
     assert scored.reviewed_shots == 1
     assert scored.unreviewed_shots == 0
     assert scored.shots[0].review_source == "gateway-judge"
-    assert scored.shots[0].media_uri == "oss://hilatv/frame.png"
+    assert scored.shots[0].media_uri == uri
 
 
 def test_one_mock_case_is_unreviewed(gateway) -> None:
@@ -351,6 +471,7 @@ def test_one_mock_case_is_unreviewed(gateway) -> None:
     assert all(shot.node == "n09_keyframe" for shot in outcome.shots)
     assert all(shot.model == "not-rendered" for shot in outcome.shots)
     assert all(shot.report is None for shot in outcome.shots)
+    assert all(shot.review_status == "not_reviewed" for shot in outcome.shots)
     assert all(shot.note == TEXT_ONLY_LABEL for shot in outcome.shots)
 
 
@@ -433,3 +554,104 @@ def test_strict_rejects_a_fake_quality_pass(tmp_path: Path) -> None:
     write_report(tmp_path, outcomes, summary)
     with pytest.raises(ValueError, match="未评审不能算通过"):
         assert_benchmark(summary, tmp_path)
+
+
+def _clean_report() -> QAReport:
+    return QAReport(
+        scores=QAScores(
+            product_fidelity=9,
+            motion_quality=9,
+            aesthetics=9,
+            prompt_match=9,
+            artifact_free=9,
+        ),
+        hard_fail=[],
+        total=9,
+        evaluator="qwen-vl",
+        notes="看过画面",
+    )
+
+
+def _sixty(
+    *, fail_last: bool = False, empty: bool = False, review_error: bool = False
+) -> list[CaseOutcome]:
+    outcomes: list[CaseOutcome] = []
+    report = _clean_report()
+    last = (INDUSTRY_ORDER[-1], PER_INDUSTRY - 1)
+    for industry in INDUSTRY_ORDER:
+        for index in range(PER_INDUSTRY):
+            broken = (industry, index) == last and (fail_last or review_error)
+            if empty or (fail_last and broken):
+                outcomes.append(
+                    CaseOutcome(
+                        case_id=f"{industry}-{index:02d}",
+                        industry=industry,
+                        status="error" if fail_last and broken else "ok",
+                        score=None,
+                        hard_shots=0,
+                        shot_count=0,
+                        elapsed_s=0.01,
+                        cost_cny="0",
+                        error="TimeoutError: timed out" if fail_last and broken else "",
+                    )
+                )
+                continue
+            status = "review_error" if review_error and broken else "reviewed"
+            shot = ShotScore(
+                "S01",
+                "slow_push_in",
+                "n09_keyframe",
+                "mock-image",
+                "产品",
+                None if status == "review_error" else report,
+                review_status=status,
+                review_source="t12",
+                review_basis="media",
+                media_uri="frame.png",
+                note="review_error: TimeoutError" if status == "review_error" else "ok",
+            )
+            outcomes.append(
+                CaseOutcome(
+                    case_id=f"{industry}-{index:02d}",
+                    industry=industry,
+                    status="ok",
+                    score=None if status == "review_error" else 9,
+                    hard_shots=0,
+                    shot_count=1,
+                    elapsed_s=0.01,
+                    cost_cny="0",
+                    reviewed_shots=0 if status == "review_error" else 1,
+                    review_error_shots=1 if status == "review_error" else 0,
+                    shots=[shot],
+                )
+            )
+    return outcomes
+
+
+def test_quality_pass_needs_every_case_and_a_denominator() -> None:
+    clean = build_summary(_sixty(), mode="live")
+    assert clean["cases"] == CASE_COUNT
+    assert clean["failed"] == 0
+    assert clean["reviewed_shots"] == CASE_COUNT
+    assert clean["shots"] == CASE_COUNT
+    assert clean["quality_met"] is True
+
+    missed = build_summary(_sixty(fail_last=True), mode="live")
+    assert missed["failed"] == 1
+    assert missed["shots"] == CASE_COUNT - 1
+    assert missed["reviewed_shots"] == missed["shots"]
+    assert missed["quality_met"] is False
+    assert any("失败" in item for item in missed["conclusions"]["quality"]["reasons"])
+
+    blank = build_summary(_sixty(empty=True), mode="mock")
+    assert blank["shots"] == 0
+    assert blank["reviewed_shots"] == 0
+    assert blank["failed"] == 0
+    assert blank["quality_met"] is False
+    assert any("分母为 0" in item for item in blank["conclusions"]["quality"]["reasons"])
+
+    errored = build_summary(_sixty(review_error=True), mode="live")
+    assert errored["failed"] == 0
+    assert errored["review_error_shots"] == 1
+    assert errored["quality_met"] is False
+    assert any("评审异常" in item for item in errored["conclusions"]["quality"]["reasons"])

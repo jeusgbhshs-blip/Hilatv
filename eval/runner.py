@@ -33,6 +33,7 @@ class CaseOutcome:
     unreviewed_shots: int = 0
     text_only_shots: int = 0
     invalid_shots: int = 0
+    review_error_shots: int = 0
     shots: list[ShotScore] = field(default_factory=list)
 
 
@@ -74,6 +75,7 @@ def _ok(
         unreviewed_shots=scored.unreviewed_shots,
         text_only_shots=scored.text_only_shots,
         invalid_shots=scored.invalid_shots,
+        review_error_shots=scored.review_error_shots,
         shots=scored.shots,
     )
 

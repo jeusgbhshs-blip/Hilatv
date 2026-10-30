@@ -76,6 +76,7 @@ def main(argv: list[str] | None = None) -> int:
         "unreviewed_shots": summary["unreviewed_shots"],
         "text_only_shots": summary["text_only_shots"],
         "invalid_shots": summary["invalid_shots"],
+        "review_error_shots": summary["review_error_shots"],
         "reviewer": summary["reviewer"],
         "hard_shots": summary["hard_shots"],
         "hard_injury_rate": summary["hard_injury_rate"],

@@ -25,6 +25,7 @@ _SCORE_FIELDS = (
     "unreviewed_shots",
     "text_only_shots",
     "invalid_shots",
+    "review_error_shots",
     "elapsed_s",
     "cost_cny",
     "status",
@@ -43,6 +44,8 @@ def build_summary(outcomes: list[CaseOutcome], *, mode: str) -> dict[str, Any]:
     unreviewed = sum(item[1] for item in tallies)
     text_only = sum(item[2] for item in tallies)
     invalid = sum(item[3] for item in tallies)
+    review_errors = sum(item[5] for item in tallies)
+    failed = sum(1 for item in outcomes if item.status != "ok")
     elapsed = sum((Decimal(str(item.elapsed_s)) for item in outcomes), Decimal("0"))
     cost = sum((Decimal(item.cost_cny or "0") for item in outcomes), Decimal("0"))
     if counted:
@@ -55,10 +58,13 @@ def build_summary(outcomes: list[CaseOutcome], *, mode: str) -> dict[str, Any]:
         rate: float | None = float(hard_injury_rate(hard, reviewed))
     else:
         rate = None
-    fully = shots > 0 and reviewed == shots and unreviewed == 0 and text_only == 0 and invalid == 0
+    every_case = len(outcomes) == CASE_COUNT and failed == 0
+    every_case = every_case and all(item.shot_count > 0 for item in outcomes)
+    # A zero reviewed-shot denominator is never a pass, including an all-failure run.
+    denominator_ok = reviewed > 0 and reviewed == shots
+    clean = unreviewed == 0 and text_only == 0 and invalid == 0 and review_errors == 0
     hard_over = reviewed > 0 and not within_hard_injury_limit(hard, reviewed)
-    injury_ok = fully and not hard_over
-    quality_met = injury_ok
+    quality_met = every_case and denominator_ok and clean and not hard_over
     pipeline_complete = _pipeline_complete(outcomes)
     conclusions = {
         "pipeline": {
@@ -70,10 +76,13 @@ def build_summary(outcomes: list[CaseOutcome], *, mode: str) -> dict[str, Any]:
             unreviewed=unreviewed,
             text_only=text_only,
             invalid=invalid,
+            review_errors=review_errors,
             reviewed=reviewed,
             rate=rate,
             hard_over=hard_over,
             shots=shots,
+            failed=failed,
+            cases=len(outcomes),
         ),
     }
     return {
@@ -84,17 +93,18 @@ def build_summary(outcomes: list[CaseOutcome], *, mode: str) -> dict[str, Any]:
         "reviewer": _reviewer(reviewed, shots),
         "review_note": _review_note(reviewed, shots, text_only, unreviewed),
         "cases": len(outcomes),
-        "failed": sum(1 for item in outcomes if item.status != "ok"),
+        "failed": failed,
         "shots": shots,
         "reviewed_shots": reviewed,
         "unreviewed_shots": unreviewed,
         "text_only_shots": text_only,
         "invalid_shots": invalid,
+        "review_error_shots": review_errors,
         "hard_shots": hard,
         "hard_injury_rate": rate,
         "hard_injury_basis": "reviewed" if reviewed else "none",
         "hard_injury_limit": float(HARD_INJURY_LIMIT),
-        "within_hard_injury_limit": injury_ok,
+        "within_hard_injury_limit": denominator_ok and not hard_over,
         "mean_score": mean_score,
         "pipeline_complete": pipeline_complete,
         "quality_met": quality_met,
@@ -164,8 +174,15 @@ def assert_benchmark(summary: dict[str, Any], out: Path) -> None:
     unreviewed = int(summary.get("unreviewed_shots") or 0)
     text_only = int(summary.get("text_only_shots") or 0)
     invalid = int(summary.get("invalid_shots") or 0)
-    if (unreviewed or text_only or invalid) and summary.get("quality_met"):
+    review_errors = int(summary.get("review_error_shots") or 0)
+    if (unreviewed or text_only or invalid or review_errors) and summary.get("quality_met"):
         errors.append("未评审不能算通过")
+    if summary.get("failed") and summary.get("quality_met"):
+        errors.append("失败样例不能算质量通过")
+    if int(summary.get("reviewed_shots") or 0) == 0 and summary.get("quality_met"):
+        errors.append("零分母不能算通过")
+    if summary.get("cases") != CASE_COUNT and summary.get("quality_met"):
+        errors.append("不足 60 条不能算质量通过")
     if text_only and TEXT_ONLY_LABEL not in json.dumps(summary, ensure_ascii=False):
         errors.append("text-only review is not labeled")
     if int(summary.get("reviewed_shots") or 0) == 0 and summary.get("mean_score") is not None:
@@ -207,7 +224,7 @@ def assert_benchmark(summary: dict[str, Any], out: Path) -> None:
 
 
 def _row(outcome: CaseOutcome) -> dict[str, Any]:
-    reviewed, unreviewed, text_only, invalid, hard = _tally(outcome)
+    reviewed, unreviewed, text_only, invalid, hard, review_errors = _tally(outcome)
     score = outcome.score if _fully_reviewed(outcome) else None
     return {
         "case_id": outcome.case_id,
@@ -219,6 +236,7 @@ def _row(outcome: CaseOutcome) -> dict[str, Any]:
         "unreviewed_shots": unreviewed,
         "text_only_shots": text_only,
         "invalid_shots": invalid,
+        "review_error_shots": review_errors,
         "elapsed_s": outcome.elapsed_s,
         "cost_cny": outcome.cost_cny,
         "status": outcome.status,
@@ -280,7 +298,7 @@ def _markdown(summary: dict[str, Any]) -> str:
             (
                 f"- 镜头：{summary['shots']}，已评审：{summary['reviewed_shots']}，"
                 f"未评审：{summary['unreviewed_shots']}，只评文字：{summary['text_only_shots']}，"
-                f"无效：{summary['invalid_shots']}"
+                f"无效：{summary['invalid_shots']}，评审异常：{summary['review_error_shots']}"
             ),
             f"- 硬伤镜头：{summary['hard_shots']}（只统计已评审镜头）",
             (
@@ -320,24 +338,31 @@ def _quality_conclusion(
     unreviewed: int,
     text_only: int,
     invalid: int,
+    review_errors: int,
     reviewed: int,
     rate: float | None,
     hard_over: bool,
     shots: int,
+    failed: int,
+    cases: int,
 ) -> dict[str, Any]:
     reasons: list[str] = []
+    if cases != CASE_COUNT:
+        reasons.append(f"样例 {cases} 条，不是 {CASE_COUNT} 条")
+    if failed:
+        reasons.append(f"失败 {failed} 条，不能算通过")
     if unreviewed:
         reasons.append(f"未评审 {unreviewed} 镜，不能算通过")
     if text_only:
         reasons.append(TEXT_ONLY_LABEL)
     if invalid:
         reasons.append(f"无效评分 {invalid} 镜")
+    if review_errors:
+        reasons.append(f"评审异常 {review_errors} 镜，不能算通过")
     if hard_over:
         reasons.append(f"已评审镜头硬伤率 {rate} 超过 {HARD_INJURY_LIMIT}")
-    if shots == 0:
-        reasons.append("没有镜头")
-    elif reviewed == 0 and not reasons:
-        reasons.append("没有可计入质量结论的评审")
+    if shots == 0 or reviewed == 0:
+        reasons.append("分母为 0，不能算通过")
     return {
         "met": met,
         "label": "质量达标" if met else "质量未达标",
@@ -384,24 +409,37 @@ def _fully_reviewed(outcome: CaseOutcome) -> bool:
         and outcome.unreviewed_shots == 0
         and outcome.text_only_shots == 0
         and outcome.invalid_shots == 0
+        and outcome.review_error_shots == 0
     )
 
 
-def _tally(outcome: CaseOutcome) -> tuple[int, int, int, int, int]:
+def _tally(outcome: CaseOutcome) -> tuple[int, int, int, int, int, int]:
     if outcome.shots:
         reviewed = sum(1 for shot in outcome.shots if _is_reviewed(shot))
-        text_only = sum(1 for shot in outcome.shots if shot.review_status == "text_only")
+        text_only = sum(1 for shot in outcome.shots if _is_text_only(shot))
         invalid = sum(1 for shot in outcome.shots if shot.review_status == "invalid")
-        bare = sum(1 for shot in outcome.shots if shot.review_status == "unreviewed")
+        review_errors = sum(1 for shot in outcome.shots if shot.review_status == "review_error")
+        unreviewed = sum(1 for shot in outcome.shots if _is_not_reviewed(shot))
         hard = sum(1 for shot in outcome.shots if _injured(shot))
-        return reviewed, bare + text_only, text_only, invalid, hard
+        return reviewed, unreviewed, text_only, invalid, hard, review_errors
     return (
         outcome.reviewed_shots,
         outcome.unreviewed_shots,
         outcome.text_only_shots,
         outcome.invalid_shots,
         outcome.hard_shots,
+        outcome.review_error_shots,
     )
+
+
+def _is_not_reviewed(shot: ShotScore) -> bool:
+    return shot.review_status in {"unreviewed", "not_reviewed", "text_only"}
+
+
+def _is_text_only(shot: ShotScore) -> bool:
+    if shot.review_status == "text_only":
+        return True
+    return shot.review_status in {"unreviewed", "not_reviewed"} and shot.review_basis == "text"
 
 
 def _is_reviewed(shot: ShotScore) -> bool:
