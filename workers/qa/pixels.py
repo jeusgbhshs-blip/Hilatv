@@ -14,6 +14,8 @@ from pathlib import Path
 
 from PIL import Image, UnidentifiedImageError
 
+from workers.qa.settings import project_dir
+
 GRID = 32
 
 
@@ -53,16 +55,40 @@ def load_image(uri: str | None) -> MediaLoad:
             return MediaLoad(None, "unreadable", "data uri is not valid base64")
         return _decode(payload, "data uri")
     path = text[7:] if text.startswith("file://") else text
-    file = Path(path)
-    if not file.exists():
-        return MediaLoad(None, "missing", f"file not found: {file}")
-    if not file.is_file():
-        return MediaLoad(None, "broken", f"path is not a file: {file}")
+    located = resolve_project_file(Path(path))
+    if isinstance(located, MediaLoad):
+        return located
+    if not located.is_file():
+        return MediaLoad(None, "broken", f"path is not a file: {located}")
     try:
-        payload = file.read_bytes()
+        payload = located.read_bytes()
     except OSError as exc:
-        return MediaLoad(None, "unreadable", f"cannot read {file}: {exc}")
-    return _decode(payload, str(file))
+        return MediaLoad(None, "unreadable", f"cannot read {located}: {exc}")
+    return _decode(payload, str(located))
+
+
+def resolve_project_file(path: Path) -> Path | MediaLoad:
+    """Absolute path inside the project directory, or a not_reviewed failure.
+
+    ``resolve`` follows symlinks, so a link that steps outside is refused.
+    """
+
+    root = project_dir()
+    try:
+        resolved = path.expanduser().resolve()
+    except OSError as exc:
+        return MediaLoad(None, "unreadable", f"cannot resolve {path}: {exc}")
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return MediaLoad(
+            None,
+            "outside",
+            f"path is outside the project directory: {resolved}",
+        )
+    if not resolved.exists():
+        return MediaLoad(None, "missing", f"file not found: {resolved}")
+    return resolved
 
 
 def _decode(payload: bytes, label: str) -> MediaLoad:

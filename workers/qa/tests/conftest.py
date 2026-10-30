@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from workers.schemas.asset import Candidate, QAReport, QAScores
+
+
+@pytest.fixture(autouse=True)
+def _media_stays_in_the_project(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
 
 
 class MockGateway:

@@ -16,9 +16,10 @@ from PIL import Image
 
 from workers.logging import log_event
 from workers.qa.frames import sample_frames
-from workers.qa.pixels import MediaLoad, load_image
+from workers.qa.pixels import MediaLoad, load_image, resolve_project_file
 from workers.qa.rules import inspect_frames, inspect_image
 from workers.qa.scores import apply_findings, not_reviewed
+from workers.qa.settings import validate_settings
 from workers.qa.vlm import cross_review
 from workers.schemas.asset import QAReport
 
@@ -36,6 +37,7 @@ def review_shot(
 ) -> QAReport:
     if not isinstance(payload, dict):
         raise TypeError("review_shot payload must be an object")
+    validate_settings()
     data = dict(payload)
     gateway = gateway if gateway is not None else _default_gateway()
     media = _media(data, image=image, frames=frames)
@@ -115,17 +117,17 @@ def _video(uri: str) -> tuple[Image.Image | None, list[Image.Image]] | MediaLoad
     if loaded is not None:
         return loaded
     path_text = uri[7:] if uri.startswith("file://") else uri
-    file = Path(path_text)
-    if not file.exists():
-        return MediaLoad(None, "missing", f"file not found: {file}")
-    if not file.is_file():
-        return MediaLoad(None, "broken", f"path is not a file: {file}")
+    located = resolve_project_file(Path(path_text))
+    if isinstance(located, MediaLoad):
+        return located
+    if not located.is_file():
+        return MediaLoad(None, "broken", f"path is not a file: {located}")
     try:
-        frames = sample_frames(file)
+        frames = sample_frames(located)
     except Exception as exc:
-        return MediaLoad(None, "unreadable", f"cannot decode video {file}: {exc}")
+        return MediaLoad(None, "unreadable", f"cannot decode video {located}: {exc}")
     if not frames:
-        return MediaLoad(None, "unreadable", f"video has no frames: {file}")
+        return MediaLoad(None, "unreadable", f"video has no frames: {located}")
     return None, frames
 
 

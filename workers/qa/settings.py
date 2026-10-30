@@ -2,11 +2,15 @@
 
 The 7.5 pass line and the 3 reviews per shot stay fixed. They are SPEC
 numbers. Everything here is an implementation knob T13 can share.
+Values are checked when a review starts. A bad value raises; it is not
+replaced with the default.
 """
 
 from __future__ import annotations
 
 import os
+import tempfile
+from pathlib import Path
 
 DEFORM_MIN_SIMILARITY = 0.90
 FACE_MIN_SIMILARITY = 0.75
@@ -16,30 +20,54 @@ FLICKER_NEIGHBOR = 0.08
 PROJECT_RETRIES = 12
 
 
+class SettingsError(ValueError):
+    """A QA threshold is missing a usable number or sits outside its range."""
+
+
+def validate_settings() -> None:
+    """Read every QA threshold. Call this when a review starts."""
+
+    deform_min_similarity()
+    face_min_similarity()
+    min_edge()
+    flicker_delta()
+    flicker_neighbor()
+    project_retry_cap()
+
+
+def project_dir() -> Path:
+    """Same root as the workflow store. Media must resolve inside it."""
+
+    raw = os.getenv("HILATV_PROJECT_DIR", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (Path(tempfile.gettempdir()) / "hilatv-projects").resolve()
+
+
 def deform_min_similarity() -> float:
-    return _float("HILATV_QA_DEFORM_MIN_SIMILARITY", DEFORM_MIN_SIMILARITY)
+    return _similarity("HILATV_QA_DEFORM_MIN_SIMILARITY", DEFORM_MIN_SIMILARITY)
 
 
 def face_min_similarity() -> float:
-    return _float("HILATV_QA_FACE_MIN_SIMILARITY", FACE_MIN_SIMILARITY)
+    return _similarity("HILATV_QA_FACE_MIN_SIMILARITY", FACE_MIN_SIMILARITY)
 
 
 def min_edge() -> int:
-    return _int("HILATV_QA_MIN_EDGE", MIN_EDGE)
+    return _cap("HILATV_QA_MIN_EDGE", MIN_EDGE)
 
 
 def flicker_delta() -> float:
-    return _float("HILATV_QA_FLICKER_DELTA", FLICKER_DELTA)
+    return _similarity("HILATV_QA_FLICKER_DELTA", FLICKER_DELTA)
 
 
 def flicker_neighbor() -> float:
-    return _float("HILATV_QA_FLICKER_NEIGHBOR", FLICKER_NEIGHBOR)
+    return _similarity("HILATV_QA_FLICKER_NEIGHBOR", FLICKER_NEIGHBOR)
 
 
 def project_retry_cap() -> int:
     """Regenerate and switch-model decisions allowed for one project, all shots."""
 
-    return _int("HILATV_QA_PROJECT_RETRIES", PROJECT_RETRIES)
+    return _cap("HILATV_QA_PROJECT_RETRIES", PROJECT_RETRIES)
 
 
 class RetryBudget:
@@ -56,21 +84,25 @@ class RetryBudget:
         self.used += 1
 
 
-def _float(name: str, default: float) -> float:
+def _similarity(name: str, default: float) -> float:
+    value = _number(name, default)
+    if not 0 < value <= 1:
+        raise SettingsError(f"{name} must be in (0, 1], got {value}")
+    return value
+
+
+def _cap(name: str, default: int) -> int:
+    value = _number(name, float(default))
+    if value < 1 or value != int(value):
+        raise SettingsError(f"{name} must be an integer >= 1, got {value}")
+    return int(value)
+
+
+def _number(name: str, default: float) -> float:
     raw = os.getenv(name, "").strip()
     if not raw:
         return default
     try:
         return float(raw)
-    except ValueError:
-        return default
-
-
-def _int(name: str, default: int) -> int:
-    raw = os.getenv(name, "").strip()
-    if not raw:
-        return default
-    try:
-        return int(raw)
-    except ValueError:
-        return default
+    except ValueError as exc:
+        raise SettingsError(f"{name} must be a number, got {raw!r}") from exc

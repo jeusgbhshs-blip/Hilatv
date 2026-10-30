@@ -88,6 +88,8 @@ def test_disagreement_keeps_the_stricter_judge(monkeypatch) -> None:
         image=_plate("rect"),
     )
     assert report.visual_reviewed is True
+    assert report.judges_used == 2
+    assert report.degraded is False
     assert "sensitive" in report.hard_fail
     assert report.total <= 6
     assert report.scores.product_fidelity <= 3

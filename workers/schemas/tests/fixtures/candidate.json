@@ -17,7 +17,9 @@
     "total": 8.8,
     "evaluator": "vlm-judge-v1",
     "notes": "第 2 秒光效略强",
-    "visual_reviewed": false
+    "visual_reviewed": false,
+    "judges_used": 0,
+    "degraded": false
   },
   "selected": true
 }

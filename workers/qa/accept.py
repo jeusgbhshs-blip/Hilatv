@@ -9,6 +9,7 @@ from pathlib import Path
 from workers.qa.calibrate import calibration_status
 from workers.qa.samples import build_catalog
 from workers.qa.service import review_shot
+from workers.qa.settings import project_dir
 
 # Planted defects. not_reviewed / judge_unavailable mean the frame was not a visual pass.
 _CONTENT = frozenset(
@@ -30,7 +31,9 @@ _CONTENT = frozenset(
 
 
 def build_report(directory: Path | None = None) -> dict[str, object]:
-    folder = directory or Path(tempfile.mkdtemp(prefix="hilatv-t12-"))
+    root = project_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    folder = directory or Path(tempfile.mkdtemp(prefix="hilatv-t12-", dir=root))
     rows = build_catalog(folder)
     bad = hit = 0
     clean = clean_ok = 0

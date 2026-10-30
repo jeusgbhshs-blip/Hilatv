@@ -32,6 +32,18 @@
           "default": false,
           "title": "Visual Reviewed",
           "type": "boolean"
+        },
+        "judges_used": {
+          "default": 0,
+          "maximum": 2,
+          "minimum": 0,
+          "title": "Judges Used",
+          "type": "integer"
+        },
+        "degraded": {
+          "default": false,
+          "title": "Degraded",
+          "type": "boolean"
         }
       },
       "required": [

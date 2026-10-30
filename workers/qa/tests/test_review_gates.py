@@ -92,6 +92,25 @@ def test_missing_broken_and_unreadable_are_errors(tmp_path, monkeypatch) -> None
     assert load_image(str(garbage)).status == "unreadable"
 
 
+def test_media_outside_the_project_directory_is_not_reviewed(tmp_path, monkeypatch) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(project))
+    still = tmp_path / "outside.png"
+    _plate("rect").save(still)
+    image = review_shot(_payload(str(still)), gateway=MockGateway())
+    assert image.visual_reviewed is False
+    assert image.hard_fail == ["not_reviewed"]
+    assert "outside the project directory" in image.notes
+
+    clip = tmp_path / "outside.mp4"
+    clip.write_bytes(b"not-a-video")
+    video = review_shot(_payload(str(clip)), gateway=MockGateway())
+    assert video.hard_fail == ["not_reviewed"]
+    assert video.visual_reviewed is False
+    assert "outside the project directory" in video.notes
+
+
 def test_text_only_is_not_a_media_error_and_does_not_pass() -> None:
     explicit = review_shot(
         {
@@ -185,6 +204,8 @@ def test_one_live_judge_is_marked_degraded(tmp_path, monkeypatch) -> None:
 
     report = review_shot(_payload(str(path)), gateway=_Half())
     assert report.visual_reviewed is True
+    assert report.judges_used == 1
+    assert report.degraded is True
     assert "judges_used=1" in report.notes
     assert "degraded=true" in report.notes
     assert "cross=timeout" in report.notes

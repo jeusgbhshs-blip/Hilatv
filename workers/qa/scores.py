@@ -190,7 +190,13 @@ def apply_findings(
     if report.notes:
         notes = f"{notes}; {report.notes}"
     return report.model_copy(
-        update={"evaluator": "vlm-judge-v1", "notes": notes, "visual_reviewed": True}
+        update={
+            "evaluator": "vlm-judge-v1",
+            "notes": notes,
+            "visual_reviewed": True,
+            "judges_used": review.judges_used,
+            "degraded": review.degraded,
+        }
     )
 
 
@@ -244,6 +250,8 @@ def _zeros(hard: list[str], *, evaluator: str, notes: str) -> QAReport:
         evaluator=evaluator,
         notes=notes,
         visual_reviewed=False,
+        judges_used=0,
+        degraded=False,
     )
 
 
