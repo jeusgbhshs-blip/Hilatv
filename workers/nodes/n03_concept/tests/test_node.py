@@ -53,13 +53,17 @@ def test_auto_selection_is_you_pick_and_covers_exist(gateway) -> None:
     assert concept["auto"] is True
     assert concept["direction"] == "product_showcase"
     assert concept["aspect_ratio"] == "9:16"
+    assert result.ok is False
+    assert concept["degraded"] is True
+    assert concept["text_source"] == "template_fallback"
     assert len(concept["directions"]) == 3
-    assert all(item["cover_uri"] for item in concept["directions"])
-    previews = [item["cover_preview"] for item in concept["directions"]]
-    assert all(item.startswith("data:image/png;base64,") for item in previews)
+    assert all(item["source"] == "template_fallback" for item in concept["directions"])
+    assert all(item["cover_status"] == "not_ready" for item in concept["directions"])
+    assert all(item["cover_uri"] == "" for item in concept["directions"])
+    assert all(item["cover_preview"] == "" for item in concept["directions"])
     logs = gateway.store.list_logs(project_id="concept")
     prompts = [row["params"]["prompt"] for row in logs if row["task"] == "image"]
-    assert len(prompts) == 3
+    assert len(prompts) == 6
     assert all("no text" in prompt.lower() or "不要出现任何文字" in prompt for prompt in prompts)
 
 

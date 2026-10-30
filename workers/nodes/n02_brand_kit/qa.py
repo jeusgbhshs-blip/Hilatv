@@ -24,6 +24,9 @@ def check(result: NodeResult) -> BrandKit | None:
         kit = BrandKit.model_validate(raw)
     except Exception as exc:
         raise QAError(f"brand kit failed validation: {exc}", retryable=False) from exc
+    for person in kit.people:
+        if person.consent is not True:
+            raise QAError("未勾选肖像授权的人物不可被使用", retryable=False)
     for person_id in result.payload.get("usable_people") or []:
         match = next((person for person in kit.people if person.person_id == person_id), None)
         if match is None or match.consent is not True:

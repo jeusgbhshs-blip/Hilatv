@@ -51,11 +51,8 @@ def test_two_projects_reuse_the_same_kit(gateway, brand_dir) -> None:
     built = _build(gateway)
     kit = built.payload["brand_kit"]
     assert kit["cta"]["phone"] == "0532-00001111"
-    anchors = built.payload["anchors"]
-    assert len(anchors) == 2
-    assert all(item["on_screen"] is False for item in anchors)
-    screen = set(kit["products"][0]["photos"] + kit["products"][0]["cutouts"])
-    assert {item["uri"] for item in anchors}.isdisjoint(screen)
+    assert built.payload["anchors"] == []
+    assert built.payload["anchor_status"] == "not_ready"
     first = resolve_brand_kit(
         inline=None,
         brand_id=None,
@@ -101,7 +98,11 @@ def test_voice_without_consent_is_rejected(gateway, brand_dir) -> None:
         raise AssertionError("voice clone without consent should fail")
 
 
-def test_unconsented_person_is_stored_but_not_usable(gateway, brand_dir) -> None:
+def test_unconsented_person_is_not_released(gateway, brand_dir) -> None:
+    from workers.brand_kit import people_for_use
+    from workers.brand_kit.store import load_record
+    from workers.schemas.brand import BrandKit
+
     result = _build(
         gateway,
         people=[
@@ -109,15 +110,16 @@ def test_unconsented_person_is_stored_but_not_usable(gateway, brand_dir) -> None
             {"role": "工程师", "consent": True, "voice_id": None},
         ],
     )
-    people = result.payload["brand_kit"]["people"]
-    assert [person["consent"] for person in people] == [False, True]
-    usable = set(result.payload["usable_people"])
-    assert people[0]["person_id"] not in usable
-    assert people[1]["person_id"] in usable
+    released = result.payload["brand_kit"]["people"]
+    assert [person["role"] for person in released] == ["工程师"]
+    assert result.payload["usable_people"] == [released[0]["person_id"]]
+    stored = BrandKit.model_validate(load_record(ENTERPRISE).brand_kit)
+    withheld = next(person for person in stored.people if person.role == "老板")
+    assert withheld.photos == []
+    assert withheld.consent is False
+    assert [person.role for person in people_for_use(stored)] == ["工程师"]
     with pytest.raises(ConsentError):
-        from workers.schemas.brand import Person
-
-        require_consent(Person.model_validate(people[0]))
+        require_consent(withheld)
 
 
 def test_preference_writeback_is_what_the_next_project_reads(gateway, brand_dir) -> None:

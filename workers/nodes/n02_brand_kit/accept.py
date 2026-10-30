@@ -64,16 +64,14 @@ def main() -> int:
         max_attempts=1,
     )
     kit = built.payload["brand_kit"]
-    if "老板" not in {person["role"] for person in kit["people"] if person["consent"] is False}:
-        print("unconsented person was dropped", file=sys.stderr)
+    if any(person["role"] == "老板" or person["consent"] is not True for person in kit["people"]):
+        print("unconsented person was released downstream", file=sys.stderr)
         return 1
-    leaked = [
-        person
-        for person in kit["people"]
-        if not person["consent"] and person["person_id"] in built.payload["usable_people"]
-    ]
-    if leaked:
-        print("unconsented person is usable", file=sys.stderr)
+    from workers.brand_kit import people_for_use
+    from workers.schemas.brand import BrandKit
+
+    if people_for_use(BrandKit.model_validate(kit)):
+        print("t13 consumer saw a person from a kit with no consented portrait", file=sys.stderr)
         return 1
     loaded = []
     for project_id in ("film-a", "film-b"):
@@ -115,8 +113,18 @@ def main() -> int:
         {"project_id": "accept-t15-concept", "payload": {"brief": _BRIEF, "brand_kit": kit}},
         max_attempts=1,
     ).payload["concept"]
-    if concept["selection"] != "你帮我选" or len(concept["directions"]) != 3:
+    directions = concept["directions"]
+    if concept["selection"] != "你帮我选" or len(directions) != 3:
         print("N3 did not offer three cards and 你帮我选", file=sys.stderr)
+        return 1
+    if concept.get("degraded") is not True or concept.get("text_source") != "template_fallback":
+        print("mock draft was treated as a real pass", file=sys.stderr)
+        return 1
+    if any(item.get("source") != "template_fallback" for item in directions):
+        print("template fallback was not marked", file=sys.stderr)
+        return 1
+    if any(item.get("cover_status") != "not_ready" or item.get("cover_uri") for item in directions):
+        print("mock cover was treated as ready", file=sys.stderr)
         return 1
     print("accept-t15 ok")
     return 0

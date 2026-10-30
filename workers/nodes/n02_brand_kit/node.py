@@ -13,11 +13,13 @@ from typing import Any
 
 from workers.brand_kit.assemble import BuildInput, PersonIn, ProductIn, build_brand_kit
 from workers.brand_kit.matting import ReplaceImageError
-from workers.brand_kit.people import ConsentError
+from workers.brand_kit.people import ConsentError, people_for_use, persist_people, release_kit
 from workers.brand_kit.points import PreferenceError, apply_preference
 from workers.brand_kit.store import (
     BrandReadError,
     BrandRecord,
+    export_record,
+    load_by_brand_id,
     load_record,
     resolve_kit,
     save_record,
@@ -121,20 +123,27 @@ def _execute(
 
 def _resolve(payload: N2Input, project_id: str, attempt: int) -> dict[str, Any]:
     enterprise_id = _enterprise(payload.enterprise_id) if payload.enterprise_id else None
-    kit = resolve_kit(
-        inline=payload.inline,
-        brand_id=payload.brand_id,
-        enterprise_id=enterprise_id,
-        project_id=project_id,
-        attempt=attempt,
-    )
-    record = load_record(enterprise_id) if enterprise_id and kit else None
-    return {
-        "brand_kit": kit,
-        "mono_black": record.mono_black if record else "",
-        "anchors": record.anchors if record else [],
-        "usable_people": record.usable_people if record else [],
-    }
+    if payload.inline is not None or not enterprise_id:
+        kit = resolve_kit(
+            inline=payload.inline,
+            brand_id=payload.brand_id,
+            enterprise_id=enterprise_id,
+            project_id=project_id,
+            attempt=attempt,
+        )
+        people = (kit or {}).get("people") or []
+        return {
+            "brand_kit": kit,
+            "mono_black": "",
+            "anchors": [],
+            "usable_people": [item["person_id"] for item in people if isinstance(item, dict)],
+        }
+    record = load_record(enterprise_id)
+    if payload.brand_id:
+        record = load_by_brand_id(payload.brand_id, enterprise_id)
+    if record is None:
+        return {"brand_kit": None, "mono_black": "", "anchors": [], "usable_people": []}
+    return export_record(record)
 
 
 def _build(
@@ -186,6 +195,7 @@ def _build(
         "mono_black": built.mono_black,
         "anchors": [item.model_dump(mode="json") for item in built.anchors],
         "usable_people": built.usable_people,
+        "anchor_status": built.anchor_status,
     }
 
 
@@ -198,12 +208,14 @@ def _prefer(payload: N2Input) -> dict[str, Any]:
         raise QAError("还没有品牌资料，无法回写偏好", retryable=False)
     kit = BrandKit.model_validate(record.brand_kit)
     updated, change = apply_preference(kit, payload.preference)
+    stored = persist_people(updated)
+    released = release_kit(stored, trust_consent=True)
     preferences = [*record.preferences, change]
-    usable = [person.person_id for person in updated.people if person.consent]
+    usable = [person.person_id for person in people_for_use(released)]
     save_record(
         BrandRecord(
             enterprise_id=enterprise_id,
-            brand_kit=updated.model_dump(mode="json"),
+            brand_kit=stored.model_dump(mode="json"),
             mono_black=record.mono_black,
             anchors=record.anchors,
             preferences=preferences,
@@ -211,7 +223,7 @@ def _prefer(payload: N2Input) -> dict[str, Any]:
         )
     )
     return {
-        "brand_kit": updated.model_dump(mode="json"),
+        "brand_kit": released.model_dump(mode="json"),
         "mono_black": record.mono_black,
         "anchors": record.anchors,
         "usable_people": usable,
@@ -227,6 +239,8 @@ def _enterprise(value: str) -> str:
 
 
 def _decode(value: str, *, target: str) -> bytes:
+    if len(value) > 8_000_000:
+        raise QAError(f"{target} 图片过大。请更换图片", retryable=False)
     try:
         raw = base64.b64decode(value, validate=True)
     except Exception as exc:

@@ -9,6 +9,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pydantic import BaseModel, Field
 
 from gateway.constants import NO_RENDERED_TEXT
+from workers.brand_kit.media_ready import ready_image_bytes
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _ENV = Environment(
@@ -58,7 +59,7 @@ def complete_angles(
             attempt=attempt,
         )
         uri = str(result.get("uri") or "")
-        if not uri:
-            raise RuntimeError("image gateway returned no uri")
+        if ready_image_bytes(gateway, uri) is None:
+            continue
         refs.append(AnchorRef(view=view, uri=uri, on_screen=False, product_name=product_name))
     return refs

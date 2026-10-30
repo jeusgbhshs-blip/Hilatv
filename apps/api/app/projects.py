@@ -57,7 +57,10 @@ class RerunProject(BaseModel):
 
 
 def brand_for_request(body: CreateProject, *, project_id: str) -> dict[str, Any] | None:
-    """Inline kit wins. Otherwise load the enterprise kit saved by N2."""
+    """Inline kit is for this project only and is never written into the archive.
+
+    TODO(auth): enterprise_id is client-supplied and unauthenticated until the auth task.
+    """
 
     try:
         if body.enterprise_id:
@@ -274,7 +277,8 @@ async def upload_asset(file: UploadFile = File()) -> dict[str, str]:
 async def create_project(body: CreateProject) -> JSONResponse:
     attachments = _checked(body)
     project_id = str(uuid.uuid4())
-    kit = brand_for_request(body, project_id=project_id)
+    loaded = brand_for_request(body, project_id=project_id)
+    kit = loaded if body.brand_kit is not None else None
     workflow_id = await start_film(
         project_id=project_id,
         sentence=body.sentence,

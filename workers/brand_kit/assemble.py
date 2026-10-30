@@ -13,8 +13,20 @@ from pydantic import BaseModel, Field
 
 from workers.brand_kit.angles import AnchorRef, complete_angles
 from workers.brand_kit.colors import extract_colors
-from workers.brand_kit.matting import ReplaceImageError, matte, mono_plate, with_safe_margin
-from workers.brand_kit.people import ConsentError, check_voice, usable_people
+from workers.brand_kit.matting import (
+    ReplaceImageError,
+    matte,
+    mono_plate,
+    reencode_image,
+    with_safe_margin,
+)
+from workers.brand_kit.people import (
+    ConsentError,
+    check_voice,
+    people_for_use,
+    persist_people,
+    release_kit,
+)
 from workers.brand_kit.points import extract_selling_points
 from workers.brand_kit.store import BrandRecord, save_record, write_asset
 from workers.schemas.brand import (
@@ -70,6 +82,7 @@ class BuildOutput(BaseModel):
     mono_black: str
     anchors: list[AnchorRef]
     usable_people: list[str]
+    anchor_status: str = "not_ready"
     model_config = {"arbitrary_types_allowed": True}
 
 
@@ -97,7 +110,11 @@ def build_brand_kit(spec: BuildInput, gateway: Any) -> BuildOutput:
     for item in spec.products:
         product_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"hilatv:product:{brand_id}:{item.name}"))
         cut = _cut(item.photo, target=item.name)
-        photo_uri = write_asset(spec.enterprise_id, f"{product_id}-photo.png", item.photo)
+        photo_uri = write_asset(
+            spec.enterprise_id,
+            f"{product_id}-photo.png",
+            reencode_image(item.photo),
+        )
         cut_uri = write_asset(spec.enterprise_id, f"{product_id}-cutout.png", cut.png)
         points = extract_selling_points(
             manual=item.selling_points,
@@ -141,22 +158,31 @@ def build_brand_kit(spec: BuildInput, gateway: Any) -> BuildOutput:
         banned_words=banned,
         cta=CallToAction(phone=spec.phone, website=spec.website, wechat_qr=spec.wechat_qr),
     )
-    allowed = [person.person_id for person in usable_people(kit.people)]
+    stored = persist_people(kit)
+    released = release_kit(stored, trust_consent=True)
+    allowed = [person.person_id for person in people_for_use(released)]
     on_screen = {uri for product in kit.products for uri in [*product.photos, *product.cutouts]}
-    for anchor in anchors:
-        if anchor.on_screen or anchor.uri in on_screen:
-            raise RuntimeError("anchor frame leaked onto a screen asset")
+    ready = [item for item in anchors if not item.on_screen and item.uri not in on_screen]
+    if len(ready) != len(anchors):
+        raise RuntimeError("anchor frame leaked onto a screen asset")
     save_record(
         BrandRecord(
             enterprise_id=spec.enterprise_id,
-            brand_kit=kit.model_dump(mode="json"),
+            brand_kit=stored.model_dump(mode="json"),
             mono_black=black_uri,
-            anchors=[item.model_dump(mode="json") for item in anchors],
+            anchors=[item.model_dump(mode="json") for item in ready],
             preferences=[],
             usable_people=allowed,
         )
     )
-    return BuildOutput(kit=kit, mono_black=black_uri, anchors=anchors, usable_people=allowed)
+    status = "ready" if not spec.products or ready else "not_ready"
+    return BuildOutput(
+        kit=released,
+        mono_black=black_uri,
+        anchors=ready,
+        usable_people=allowed,
+        anchor_status=status,
+    )
 
 
 def _cut(image: bytes, *, target: str):

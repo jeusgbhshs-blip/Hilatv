@@ -15,6 +15,9 @@ from PIL import Image
 _LOW = 36.0
 _HIGH = 96.0
 _MAX_SIDE = 1024
+_MAX_SIDE_IN = 4096
+_MAX_PIXELS = 4_000_000
+_MAX_BYTES = 8 * 1024 * 1024
 _SAFE = 0.2
 
 
@@ -95,11 +98,27 @@ def with_safe_margin(png: bytes, *, ratio: float = _SAFE) -> tuple[bytes, float]
     return _encode(canvas), round(min(padded, 1.0), 4)
 
 
+def reencode_image(image: bytes) -> bytes:
+    """Decode with a pixel cap, then write a fresh PNG. The original bytes are not stored."""
+
+    return _encode(_open(image))
+
+
 def _open(image: bytes) -> Image.Image:
     if not image:
         raise ReplaceImageError("图片是空的。请更换图片", target="image")
+    if len(image) > _MAX_BYTES:
+        raise ReplaceImageError("图片过大。请更换图片", target="image")
     try:
         loaded = Image.open(io.BytesIO(image))
+        width, height = loaded.size
+    except Exception as exc:
+        raise ReplaceImageError("图片无法读取。请更换图片", target="image") from exc
+    if width < 1 or height < 1 or width > _MAX_SIDE_IN or height > _MAX_SIDE_IN:
+        raise ReplaceImageError("图片尺寸过大。请更换图片", target="image")
+    if width * height > _MAX_PIXELS:
+        raise ReplaceImageError("图片尺寸过大。请更换图片", target="image")
+    try:
         loaded.load()
     except Exception as exc:
         raise ReplaceImageError("图片无法读取。请更换图片", target="image") from exc

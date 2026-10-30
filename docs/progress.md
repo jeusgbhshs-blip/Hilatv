@@ -65,7 +65,7 @@
 
 ### 2026-10-30 T15
 - 合并了哪些：T11（PR #38）、T25（PR #41，`66306cc`）已在 main。本分支已并入这份 main。
-- 正在做什么：T15 N2 品牌资料和 N3 方案卡。抠图、去底、单色版、色彩、肖像授权和锚点补全放在 `workers/brand_kit`，给 T13 复用。无 Key，`make accept-t15` 走 mock。
+- 正在做什么：T15 N2 品牌资料和 N3 方案卡。抠图、去底、单色版、色彩、肖像授权和锚点补全放在 `workers/brand_kit`，给 T13 复用。无 Key，`make accept-t15` 走 mock。inline 资料不写档案；未授权人物不进入下游；模型稿过不了相似度就明确降级。
 - 需要提供什么：没有新的 Key。Logo 和产品图用自绘样张，不使用客户实拍。
 
 ## T15 假设
@@ -74,10 +74,11 @@
 - 第 5 章 `LogoAsset` 只有 `mono_white`，没有黑版字段。黑版写在资料旁边的 `mono_black`，不改 BrandKit 模型，也不新增迁移。Alembic head 仍是 `t03_gateway_0002`。
 - 多角度补全走图像网关，提示词写明不直接上屏，并且带上「无文字」约束。生成结果只放在 `anchors`（`on_screen` 为 false），不写入 `photos` 或 `cutouts`。
 - 卖点只保留人工填写的句子，以及原文里已经出现的句子。模型多写的参数丢掉。用户改卖点或删掉的句子写回资料；删掉的句子追加进 `banned_words`，下一条片子不会再念。
-- 人物可以存 `consent=false`，但 `usable_people` 不包含他们。`require_consent` 会拒绝使用。未授权却填写 `voice_id` 时直接失败。
-- 企业资料存在 `HILATV_BRAND_DIR`（默认 `<项目目录>/_brands`）的 JSON 里。同一 `enterprise_id` 再开项目时按 Logo、色彩、字体、CTA、卖点原样套用。Postgres `brand_kits` 仍是按 `brand_id` 的只读兜底，验收不连数据库。
-- N3 读取 T25 写进行业模板的 `narrative_structures`（每行业 3–5 套），从中取 3 套做方案卡。不改 `templates/`。无 Key 时模型草稿是空的，规则文案交卷。两两文本嵌入余弦必须小于 0.85，并且不能含 `banned_words`。嵌入是本地字符二元组，不调用嵌入接口。
-- 每张卡一张封面，经图像网关生成。网关只返回 `mock://`、没有字节时，卡片预览是一张本地纯色图，画面上没有字。记录下来的 `cover_uri` 仍是网关返回的地址。
+- 肖像授权只认品牌资料流程写入档案的 `consent=true`。项目里附带的资料（inline kit）即使自报 `consent=true` 也不算授权，人物和照片都不会进入下游。未授权的人可以留在档案里，但照片和声音编号会被清掉；`people_for_use` / `release_kit` 给 T13 和其他节点的结果里没有他们。`usable_people` 每次按当前授权重算，不沿用旧列表。未授权却填写 `voice_id` 时直接失败。
+- TODO(auth): `/v1/brands` 和创建项目时的 `enterprise_id` 由客户端自己填写，T15 没有登录态，也不校验调用者属于该企业。全局认证不在本任务。认证任务落地前，不能把这些接口当成已隔离的生产入口。
+- 企业资料存在 `HILATV_BRAND_DIR`（默认 `<项目目录>/_brands`）的 JSON 里。同一 `enterprise_id` 再开项目、且请求里不带 inline kit 时，按 Logo、色彩、字体、CTA、卖点套用。inline kit 只用于这一次项目，不会写回档案。`brand://` 必须带本企业的 UUID，路径必须落在该企业的存储目录内。按 `brand_id` 查文件只查当前企业，不扫描别的企业。Postgres `brand_kits` 仍是按 `brand_id` 的只读兜底，验收不连数据库。
+- N3 读取 T25 写进行业模板的 `narrative_structures`（每行业 3–5 套），从中取 3 套做方案卡。不改 `templates/`。模型稿若两两余弦 ≥ 0.85、含禁用词或不可用，会带反馈再生成，最多 3 次；仍然不行就明确降级为 `source=template_fallback` 且 `degraded=true`，不能假装是模型通过。嵌入是本地字符二元组，不调用嵌入接口。
+- 封面和锚点图必须读到真实图片字节。`mock://` 或读不出来的地址是 `not_ready`，不写入可用锚点，也不用纯色图冒充封面。无 Key 时方案卡因此是降级结果，主流程仍可继续，但 `ok` 不是 true。
 - 主流程不暂停等选卡。没有 `concept_selection` 时 N3 仍生成三张卡，并自动记下「你帮我选」，所以 T10 的出片验收继续往下走。用户在方案页点了某一张，创建项目时带上那个方向 id。
 - 画面上的字、Logo、价格、电话仍然只由后期叠加。本任务不改 N15、`workers/qa`、`eval/`。
 

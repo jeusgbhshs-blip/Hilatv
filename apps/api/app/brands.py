@@ -7,9 +7,9 @@ import uuid
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
-from workers.brand_kit.store import load_record, read_asset
+from workers.brand_kit.store import export_record, load_record, read_asset
 from workers.nodes.n01_brief.node import run as run_brief
 from workers.nodes.n02_brand_kit.node import run as run_brand
 from workers.nodes.n02_brand_kit.qa import QAError as BrandQAError
@@ -18,7 +18,19 @@ from workers.nodes.n03_concept.node import run as run_concept
 from workers.nodes.n03_concept.qa import QAError as ConceptQAError
 from workers.schemas.brand import Industry
 
+# TODO(auth): enterprise_id is client-supplied and unauthenticated.
+# Global authentication is out of scope for T15. The auth task must bind
+# enterprise_id to the signed-in member before these routes are exposed.
+
+_MAX_B64_CHARS = 8_000_000
+
 router = APIRouter()
+
+
+def _cap_b64(value: str) -> str:
+    if len(value) > _MAX_B64_CHARS:
+        raise ValueError("图片过大")
+    return value
 
 
 class ProductBody(BaseModel):
@@ -27,6 +39,11 @@ class ProductBody(BaseModel):
     selling_points: list[str] = Field(default_factory=list)
     source_text: str = ""
     forbidden_changes: list[str] = Field(default_factory=list)
+
+    @field_validator("photo_b64")
+    @classmethod
+    def photo_is_bounded(cls, value: str) -> str:
+        return _cap_b64(value)
 
 
 class PersonBody(BaseModel):
@@ -49,6 +66,11 @@ class BrandBody(BaseModel):
     title_font: str = "NotoSansSC-Bold"
     body_font: str = "NotoSansSC-Regular"
     extra_banned_words: list[str] = Field(default_factory=list)
+
+    @field_validator("logo_b64")
+    @classmethod
+    def logo_is_bounded(cls, value: str) -> str:
+        return _cap_b64(value)
 
 
 class ReplacementBody(BaseModel):
@@ -86,21 +108,21 @@ def _public(payload: dict[str, Any], enterprise_id: str) -> dict[str, Any]:
         "usable_people": payload.get("usable_people") or [],
         "preferences": payload.get("preferences") or [],
         "previews": {
-            "logo": _data_url(logo) if isinstance(logo, str) else "",
-            "mono_white": _data_url((kit.get("logo") or {}).get("mono_white"))
+            "logo": _data_url(logo, enterprise_id) if isinstance(logo, str) else "",
+            "mono_white": _data_url((kit.get("logo") or {}).get("mono_white"), enterprise_id)
             if isinstance(kit, dict)
             else "",
-            "mono_black": _data_url(payload.get("mono_black"))
+            "mono_black": _data_url(payload.get("mono_black"), enterprise_id)
             if isinstance(payload.get("mono_black"), str)
             else "",
         },
     }
 
 
-def _data_url(uri: str | None) -> str:
-    if not uri:
+def _data_url(uri: str | None, enterprise_id: str) -> str:
+    if not uri or not uri.startswith("brand://"):
         return ""
-    data = read_asset(uri)
+    data = read_asset(uri, enterprise_id=enterprise_id)
     if not data:
         return ""
     return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
@@ -156,16 +178,8 @@ def read_brand(enterprise_id: str) -> dict[str, Any]:
     record = load_record(enterprise_id)
     if record is None:
         raise HTTPException(status_code=404, detail="还没有品牌资料")
-    return _public(
-        {
-            "brand_kit": record.brand_kit,
-            "mono_black": record.mono_black,
-            "anchors": record.anchors,
-            "usable_people": record.usable_people,
-            "preferences": record.preferences,
-        },
-        enterprise_id,
-    )
+    exported = export_record(record)
+    return _public(exported, enterprise_id)
 
 
 @router.patch("/v1/brands/{enterprise_id}/preferences")
@@ -187,7 +201,7 @@ def create_concepts(body: ConceptBody) -> dict[str, Any]:
     brand = None
     if enterprise_id:
         record = load_record(enterprise_id)
-        brand = record.brand_kit if record else None
+        brand = export_record(record)["brand_kit"] if record else None
     try:
         brief = run_brief(
             {

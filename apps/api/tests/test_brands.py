@@ -54,10 +54,10 @@ def test_saved_kit_is_reused_by_two_projects(client: TestClient) -> None:
     body = saved.json()
     assert body["previews"]["logo"].startswith("data:image/png;base64,")
     assert all(item["on_screen"] is False for item in body["anchors"])
-    usable = set(body["usable_people"])
-    people = {item["role"]: item for item in body["brand_kit"]["people"]}
-    assert people["老板"]["person_id"] not in usable
-    assert people["工程师"]["person_id"] in usable
+    roles = [item["role"] for item in body["brand_kit"]["people"]]
+    assert roles == ["工程师"]
+    assert body["usable_people"] == [body["brand_kit"]["people"][0]["person_id"]]
+    assert "老板" not in saved.text
     first = client.get(f"/v1/brands/{ENTERPRISE}")
     second = client.get(f"/v1/brands/{ENTERPRISE}")
     assert first.status_code == 200 and second.status_code == 200
