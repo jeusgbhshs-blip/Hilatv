@@ -22,6 +22,59 @@ def test_live_refuses_a_shot_with_no_picture(
         run({"project_id": "n15-live-plate", "payload": _payload(tmp_path)}, max_attempts=1)
 
 
+@pytest.mark.parametrize(
+    "report",
+    ["not_reviewed", "judge_unavailable", "mock"],
+)
+def test_unreviewed_shot_cannot_be_the_master_plate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, report: str
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    from workers.media.ffmpeg import encode_plate
+    from workers.qa.scores import judge_unavailable, not_reviewed
+    from workers.schemas.asset import QAReport, QAScores
+
+    clip = tmp_path / "shot.mp4"
+    encode_plate(clip, rgb=(18, 32, 48), width=320, height=180, frames=4, fps=24)
+    scores = QAScores(
+        product_fidelity=8,
+        motion_quality=8,
+        aesthetics=8,
+        prompt_match=8,
+        artifact_free=8,
+    )
+    if report == "not_reviewed":
+        qa = not_reviewed("missing", "no pixels")
+    elif report == "judge_unavailable":
+        qa = judge_unavailable("no judge", [])
+    else:
+        qa = QAReport(
+            scores=scores,
+            hard_fail=[],
+            total=8,
+            evaluator="mock-judge",
+            notes="mock; quality_pass=false",
+            visual_reviewed=True,
+        )
+    payload = _payload(tmp_path)
+    payload["videos"] = [
+        {
+            "candidate_id": "v1",
+            "shot_id": "S01",
+            "node": "N10",
+            "model": "mock",
+            "params": {"frame": "video"},
+            "uri": str(clip),
+            "qa": qa.model_dump(mode="json"),
+            "selected": True,
+        }
+    ]
+    payload["shot_clips"] = [{"shot_id": "S01", "path": str(clip), "cards": []}]
+    with pytest.raises(QAError, match="未经视觉评审"):
+        run({"project_id": "n15-unreviewed", "payload": payload}, max_attempts=1)
+
+
 def test_mock_color_plate_is_labelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_LIVE", "0")

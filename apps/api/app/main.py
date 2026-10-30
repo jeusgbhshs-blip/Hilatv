@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 
 from app.brands import router as brand_router
 from app.deliveries import router as delivery_router
+from app.expert import router as expert_router
 from app.identity import router as identity_router
 from app.logging import log_event
 from app.projects import router
@@ -17,7 +18,7 @@ from app.settings import get_settings
 from workers.identity.session import assert_live_session_configured
 from workers.workflow.runtime import shutdown_runtime
 
-_FRAME_PATH = re.compile(r"^/v1/projects/[^/]+/storyboard/[^/]+/frame$")
+_MEDIA_QUERY = re.compile(r"^/v1/projects/[^/]+/(?:storyboard/[^/]+/frame|expert/media/[^/]+)$")
 
 
 def web_origins() -> list[str]:
@@ -48,6 +49,7 @@ app.include_router(identity_router)
 app.include_router(router)
 app.include_router(brand_router)
 app.include_router(delivery_router)
+app.include_router(expert_router)
 
 
 @app.middleware("http")
@@ -56,7 +58,7 @@ async def reject_client_enterprise_id(request: Request, call_next):
 
     if "enterprise_id" in request.query_params:
         return JSONResponse(status_code=422, content={"detail": "enterprise_id 不能由请求指定"})
-    if "session" in request.query_params and not _FRAME_PATH.match(request.url.path):
+    if "session" in request.query_params and not _MEDIA_QUERY.match(request.url.path):
         return JSONResponse(status_code=422, content={"detail": "session 查询参数只用于画面"})
     return await call_next(request)
 

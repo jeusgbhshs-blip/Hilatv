@@ -24,7 +24,7 @@
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ✅ | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 已合并（70e1553）。改稿历史走 `/revisions`。假设见下方 |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。比例、语种、时长仍走 `/versions`。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ✅ | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 已合并（bbe69f9）。只有 `visual_reviewed is True` 算已评审。假设见下方 |
-| T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
+| T19 | 专家模式画布 | T10, T11, T12 | 🔵 | [cursor/t19-expert-canvas-7ff6](https://github.com/jeusgbhshs-blip/Hilatv/pull/55) | 验收中。重跑计次走 `open_project_budget`。假设见下方 |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
 | T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
@@ -78,13 +78,12 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：T14 分支并入 main `32380c9`（T23 分镜预览 #51）。未合并 PR #50
-- 正在做什么：人工复核。分镜确认之后，未评审镜头仍停在 `needs_human_review`。放行记下 `human_review_released` 时间，放行人留给 #54
+- 正在做什么：T19 专家模式画布。查看每镜关键帧、视频候选和质检结论，手动重跑该节点及下游。重生次数只通过 `open_project_budget.try_take` 增加，写在 `regen_budget.json`，不进快照。未评审镜头停在 `needs_human_review`，重跑不会交出成片。无 Key，`HILATV_LIVE` 关闭。
+- 合并了哪些：main `b915677`（T14 降级方案与人工复核暂停，PR #50）。专家重跑并入这一份账本，并在 `needs_human_review` 时不交付成片。
 - 需要提供什么：同下。无 Key，`HILATV_LIVE` 保持关闭
 
 ### 2026-10-30
 - 合并了哪些：main 现为 `70e1553`（T16 PR #45）。同日已在 main：T13、T21。都无新迁移
-- 正在做什么：T23 分镜预览。关键帧质检之后可以停下看卡片、改一镜旁白；选了直接出片就不停。无 Key，`make accept-t23` 走 mock。mock 没有可看的关键帧，画面预览记未测。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权仍未批。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测
 
 ### 2026-10-30
@@ -137,6 +136,20 @@
 - 授权记录只用 main 上 N12 的 `LicenseRecord` / `LicensingSummary`（`workers/nodes/n12_music/schema.py`），没有第二套类。T20 只把 `kind` 扩成也包含 `font` 和 `voice`，给字体和库存旁白用。缺来源、许可、证明、到期或使用范围时，沿用 N12 的 `incomplete_reason` 阻断。`expires_on` 为 `none` 表示不到期；ISO 日期早于今天（上海时区，当天仍有效）也阻断。`HILATV_LIVE=1` 时拒绝 `hilatv-test-` 来源和 `CC0-1.0` 测试曲库许可，与 N12 相同。
 - 素材说明写在项目目录 `compliance/materials-and-licences.txt`，路径由服务端生成。客户给的绝对路径必须落在项目目录内。http(s) 证明默认只做 SSRF 分类，不下载；`HILATV_FETCH_LICENCE_PROOF=1` 时才经 SEC-01 的 `fetch_bytes` 拉取。
 - 不新增 Alembic revision，head 仍是 `t03_gateway_0002`。备案登记和私有化部署不在本任务。
+
+## T19 假设
+
+- 专家画布读项目目录里已经落盘的节点结果。关键帧在 `keyframes`，视频在 `videos`，都是第 5 章的 `Candidate`。评分用候选上的 `QAReport`。`qa_passed` 只有 `visual_reviewed is True` 且 `is_quality_pass` 为真时才是真。Mock 评审看过文件也不会把 `visual_reviewed` 写成 true，验收里这一项记「未测」。
+- 手动重跑走 `POST /v1/projects/{id}/expert/rerun`，从该节点跑到下游，不重跑上游。会生成画面、视频或配音的节点是 `n06_voiceover`、`n08_keyframe`、`n10_video`。SPEC.md 第 213 行按镜头计重试；和 `shot_director` 一样，每个会重生的镜头对 `open_project_budget` 调用一次 `try_take`。下游节点按全部可生成镜头计，`shot_id` 只限制用户点的那个节点。纯动态图形镜不计画面和视频，空旁白不计配音。次数不够覆盖整次重跑时什么都不扣，接口 409，文案是「项目重生次数已用完」。账本只有这一份，文件是项目目录里的 `regen_budget.json`，不写进 `project.json`。镜头检查真正重生成时也调用同一个 `try_take`。没有减少的接口。改回 `project.json` 或节点文件不会把次数降下来。同一项目的重跑先拿 `locked_project`，再扣次数、再写节点文件。
+- 人工复核沿用 T14 的 `needs_human_review`。请求里的 `human_release` 不作数。重跑若走到配乐、字幕、包装或合成，而镜头笔记仍有 `needs_review`，或者项目已是 `needs_human_review` 且这次没有跑过镜头检查，就停住：状态保持 `needs_human_review`，`deliverable` 为空，不改已有成片文件。放行仍只走 `POST /v1/projects/{id}/human-review/release`。
+- 原有的 `POST /v1/projects/{id}/rerun` 也走同一个 `reserve`。N9/N11 和改稿已经用这个账本，专家模式不再另计。
+- `qa_passed`、`visual_reviewed`、`consent`、`licensed` 可以出现在请求里，服务端不拿它们当结论。`skip_ai_label` / `omit_ai_label` 会走 `walk_label_edits`，直接拒绝。重跑结果先过 `review_shot`，再由 `enforce_review` 原样留下 `visual_reviewed`。内容安全硬伤（`sensitive`）不能被选进成片，N15 也不会把这种候选当成镜头底。
+- 人物和克隆声音走 `workers.compliance.consent_gate`。`enterprise_id` 来自项目快照。`archive_people` / `assert_voice_allowed` 只认品牌档案，不认请求里自报的授权。
+- 「AI生成」由 N15 的固定层盖上。保存时间轴时如果提交的叠层里没有这四个字，拒绝保存。字体授权用 N12 的 `LicenseRecord`（`builtin_records`），不认 `licensed: true`。
+- 选用或把时间轴换成一条没有 `qa_passed_flag` 的候选（`visual_reviewed` 不是 true，或 mock / `not_reviewed` / `judge_unavailable` / 硬伤）时，项目改为 `needs_human_review`，`deliverable` 清空，不重写成片。N15 若被要求把这样的候选文件当成镜头底，直接拒绝。内容安全硬伤仍是错误，不能选进去。
+- 补充提示词会接到 N8 或 N10 的提示词后面，并再次加上无文字约束。画面上的字、Logo、价格、电话仍只由后期叠加。
+- 不新增表。Alembic head 仍是 `t03_gateway_0002`。无密钥，`HILATV_LIVE` 保持关闭。
+- 前端用 `@xyflow/react` 12.8.6（MIT）。节点外观是自写的。手机和桌面都靠页面滚动看完整张图，节点不缩小到点不中。
 
 ## T18 假设
 
@@ -225,7 +238,7 @@
 
 - 登录会话是服务端签发的 HMAC 令牌，企业编号写在令牌里。`POST /v1/session` 在 mock 下创建新企业，请求体不能指定 `enterprise_id`。`HILATV_LIVE=1` 时这个接口返回 403，除非请求头 `X-Hilatv-Admin-Secret` 与 `HILATV_SESSION_ADMIN_SECRET` 用 `compare_digest` 对上。Live 启动时没有 `HILATV_SESSION_SECRET` 就拒绝启动。令牌带 `jti`，`POST /v1/session/revoke` 之后不能再使用。`?session=` 只接受在分镜画面和进度 WebSocket 上，其它接口带这个查询参数返回 422。
 - 还没有成员账号表。谁拿到令牌，谁就是该企业。生产环境要配置 `HILATV_SESSION_SECRET`，否则密钥只活在当前进程里，重启后旧令牌失效。这不是厂商密钥。
-- 项目、品牌、上传、分镜、改稿、导出都先核对会话企业。对不上或项目上没有企业编号时返回 404「项目不存在」或「还没有品牌资料」，响应里不带对方的句子、人名或声音编号。`/v1/shares/{token}` 仍是分享能力链接，不要求企业会话。
+- 项目、品牌、上传、分镜、改稿、导出和专家画布（`/canvas`、`/expert/rerun`、`/expert/select`、`/expert/timeline`、`/expert/media`）都先核对会话企业。对不上或项目上没有企业编号时返回 404，响应里不带对方的句子、人名或声音编号。`/v1/shares/{token}` 仍是分享能力链接，不要求企业会话。专家模式没有单独的命令行入口。
 - 人工放行 `POST /v1/projects/{id}/human-review/release` 和 `hilatv release` 先核对项目属于当前企业，再写 `human_review_released`（放行人 `member_id`、企业编号、`ts`），然后才 `start_film`。别的企业返回 404，不写这条事件。
 - `Gateway.tts` 和 `execute("tts")` 必须带 consent_gate 签发的短时声音令牌。令牌绑定声音编号和企业编号，第一次合成后作废。业务节点走 `gated_tts`。网关自己的测试和 `accept_media` 仍调用 `tts`，但要先向授权门要令牌。静态检查会拦住 `getattr(..., "tts")`。`people_for_use` / `release_kit`、`LicenseRecord` 和 `open_project_budget` 的判断没有改，只是企业编号改从会话或项目记录来。
 - 无密钥，`HILATV_LIVE=0`。不新增迁移。Alembic head 仍是 `t03_gateway_0002`。

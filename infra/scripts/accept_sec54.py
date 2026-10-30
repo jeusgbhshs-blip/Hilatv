@@ -205,6 +205,24 @@ def _project_rows(client, project_id, own, theirs, before: bytes, snapshot: Path
         rows.append(
             _status(f"{method} {path} other enterprise", response, 404, absent=(SECRET_SENTENCE,))
         )
+    expert = [
+        ("GET", f"/v1/projects/{project_id}/canvas", None),
+        ("POST", f"/v1/projects/{project_id}/expert/rerun", {"node": "n08_keyframe"}),
+        (
+            "POST",
+            f"/v1/projects/{project_id}/expert/select",
+            {"node": "n08_keyframe", "shot_id": "S01", "candidate_id": "foreign"},
+        ),
+        ("POST", f"/v1/projects/{project_id}/expert/timeline", {"overlays": [], "clips": []}),
+        ("GET", f"/v1/projects/{project_id}/expert/media/foreign", None),
+    ]
+    for method, path, payload in expert:
+        response = client.request(method, path, headers=theirs, json=payload)
+        rows.append(
+            _status(f"{method} {path} other enterprise", response, 404, absent=(SECRET_SENTENCE,))
+        )
+    anonymous_canvas = client.get(f"/v1/projects/{project_id}/canvas")
+    rows.append(_status("GET /v1/projects/{id}/canvas unauthenticated", anonymous_canvas, 401))
     if snapshot.read_bytes() != before:
         rows.append(("project file after cross-enterprise calls", "FAIL", "bytes changed"))
     else:
