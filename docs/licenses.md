@@ -32,6 +32,7 @@
 | Redis | 7.2.17-alpine | BSD-3-Clause | 缓存。钉在 7.2，避开 7.4+ 的 RSALv2 / SSPL |
 | MinIO server | Bitnami 构建 `bitnamilegacy/minio:2025.7.23-debian-12-r5`（服务端 DEVELOPMENT / 2025.7 线） | AGPL-3.0（MinIO 服务端）；镜像打包脚本 Apache-2.0 | 本地对象存储 |
 | Temporal server | `temporalio/auto-setup:1.29.1` | MIT | 工作流 |
+| temporalio | ≥ 1.9, < 2 | MIT | Python Workflow / Activity SDK。验收默认在进程内启动 dev server，不另起 Compose |
 | Temporal UI | `temporalio/ui:2.34.0` | MIT | 工作流界面 |
 | Temporal development-sql dynamic config | 与 `temporalio/docker-compose` 中同名文件一致 | MIT | 让 auto-setup 在 Postgres 上启动 |
 | FFmpeg | 系统包（开发机 / CI `apt install ffmpeg`；编码器 libx264） | LGPL / GPL（取决于发行版编译选项；libx264 为 GPL） | mock 视频样例编码；T04 验收时解码 PNG / MP4 / WAV；N10 用 ffprobe 量时长并用 libx264 裁到镜头时长；N15 用 libx264 合成 H.264，并用 lut3d / overlay 做调色和后期叠字。未作为 Python 依赖链接进进程 |

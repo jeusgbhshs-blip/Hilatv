@@ -43,6 +43,17 @@ def test_english_lines_stay_within_42_and_keep_30_mpa() -> None:
     assert flat == source
 
 
+def test_repeated_word_matches_the_later_occurrence() -> None:
+    text = "工厂或检测画面。工厂"
+    stamps = _stamps(text, "zh")
+    lines = break_lines(text, stamps, language="zh", lexicon=["工厂"])
+    last = lines[-1]
+    bounds = stamp_bounds(last.text, stamps, near_s=last.start_s)
+    assert bounds is not None
+    assert alignment_error_ms(last.start_s, last.end_s, bounds[0], bounds[1]) <= 100
+    assert bounds[0] > stamp_bounds(last.text, stamps)[0]
+
+
 def test_alignment_matches_token_bounds() -> None:
     text = "高压柱塞泵每天稳定运行。"
     stamps = _stamps(text, "zh")

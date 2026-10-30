@@ -1,4 +1,4 @@
-"""Planned node order. Implementations land in their own tasks."""
+"""Planned node order. The running T10 line is ``workers.workflow.film``."""
 
 from __future__ import annotations
 

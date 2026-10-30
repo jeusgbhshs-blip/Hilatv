@@ -134,8 +134,17 @@ def within_alignment(error_ms: float) -> bool:
     return error_ms <= ALIGNMENT_MS + 1e-6
 
 
-def stamp_bounds(line: str, stamps: list[WordStamp]) -> tuple[float, float] | None:
-    """Contiguous N6 tokens that spell this line, ignoring spaces and punctuation."""
+def stamp_bounds(
+    line: str,
+    stamps: list[WordStamp],
+    *,
+    near_s: float | None = None,
+) -> tuple[float, float] | None:
+    """Contiguous N6 tokens that spell this line, ignoring spaces and punctuation.
+
+    A repeated word matches the occurrence closest to ``near_s`` when that hint
+    is the line's own start. Without it, the first occurrence is returned.
+    """
 
     wanted = [char for char in line if not char.isspace() and char not in _PUNCT]
     if not wanted:
@@ -147,13 +156,18 @@ def stamp_bounds(line: str, stamps: list[WordStamp]) -> tuple[float, float] | No
                 continue
             flat.append((char, stamp))
     width = len(wanted)
+    found: list[tuple[float, float]] = []
     for index in range(0, len(flat) - width + 1):
         window = [char for char, _stamp in flat[index : index + width]]
         if window == wanted:
             start = flat[index][1].start_s
             end = flat[index + width - 1][1].end_s
-            return start, end
-    return None
+            found.append((start, end))
+    if not found:
+        return None
+    if near_s is None:
+        return found[0]
+    return min(found, key=lambda item: (abs(item[0] - near_s), item[0]))
 
 
 def _pack(atoms: list[Atom], *, zh: bool, limit: int) -> list[list[Atom]]:

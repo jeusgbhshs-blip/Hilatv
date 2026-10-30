@@ -66,7 +66,7 @@ def _audit_cue(cue: SubtitleCue, take: ShotVoiceover | None) -> None:
         raise QAError(
             f"{cue.cue_id} alignment {cue.alignment_error_ms:.1f}ms exceeds {ALIGNMENT_MS}ms"
         )
-    bounds = stamp_bounds(cue.text, take.timestamps)
+    bounds = stamp_bounds(cue.text, take.timestamps, near_s=cue.audio_start_s)
     if bounds is None:
         raise QAError(f"{cue.cue_id} does not match the voiceover timestamps")
     drift = max(abs(cue.audio_start_s - bounds[0]), abs(cue.audio_end_s - bounds[1])) * 1000
