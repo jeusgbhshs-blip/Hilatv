@@ -16,8 +16,9 @@ from workers.nodes.n12_music.measure import read_wav
 
 _WIDTH = 96
 _HEIGHT = 54
-# A full-frame change clears this. A line of subtitle does not.
-_STEP_FLOOR = 18.0
+# High-contrast cuts clear this easily. Low-contrast cuts sit just above it.
+# A subtitle pop on a loud pattern stays under the relative part of the threshold.
+_STEP_FLOOR = 6.0
 
 
 @dataclass(frozen=True)

@@ -202,23 +202,32 @@ def read_snapshot(project_id: str) -> dict[str, Any] | None:
     return None
 
 
-def record_human_release(project_id: str) -> dict[str, Any]:
-    """Audit that a person released a held film.
-
-    The releaser's identity is added with #54. This record only carries the time.
-    """
+def record_human_release(
+    project_id: str,
+    *,
+    releaser: str | None = None,
+    enterprise_id: str | None = None,
+) -> dict[str, Any]:
+    """Audit that a person released a held film. Time plus the releaser's identity."""
 
     if not valid_project_id(project_id):
         raise ValueError("invalid project id")
-    record = {
+    record: dict[str, Any] = {
         "type": "human_review_released",
         "project_id": project_id,
         "ts": time.time(),
     }
+    if releaser:
+        record["releaser"] = releaser
+    if enterprise_id:
+        record["enterprise_id"] = enterprise_id
+    summary = {
+        key: record[key] for key in ("type", "ts", "releaser", "enterprise_id") if key in record
+    }
     with _lock(project_id) as directory:
         snapshot = _read(directory, project_id)
         events = list(snapshot.get("events") or [])
-        events.append({"type": record["type"], "ts": record["ts"]})
+        events.append(summary)
         snapshot["events"] = events[-200:]
         _write(directory, snapshot)
         path = directory / "events.jsonl"
@@ -232,6 +241,8 @@ def record_human_release(project_id: str) -> dict[str, Any]:
         node="shot_director",
         attempt=1,
         ts=record["ts"],
+        releaser=releaser,
+        enterprise_id=enterprise_id,
     )
     return record
 

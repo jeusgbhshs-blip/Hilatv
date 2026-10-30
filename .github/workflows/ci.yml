@@ -37,6 +37,9 @@ jobs:
       - name: Unit tests
         run: pytest -q
 
+      - name: Accept SEC-54
+        run: make accept-sec54
+
       - name: Accept T03
         run: make accept-t03
 

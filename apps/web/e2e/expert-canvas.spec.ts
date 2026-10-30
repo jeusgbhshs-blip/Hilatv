@@ -11,6 +11,12 @@ async function expectNoHorizontalOverflow(page: Page) {
 
 test("expert canvas shows candidates and a re-run charges the budget", async ({ page }) => {
   test.skip(!projectId, "needs HILATV_EXPERT_PROJECT");
+  const token = process.env.HILATV_E2E_SESSION;
+  if (token) {
+    await page.addInitScript((value) => {
+      window.localStorage.setItem("hilatv.session", value);
+    }, token);
+  }
   await page.goto(`/projects/${projectId}/expert`);
   if (test.info().project.name === "mobile") {
     expect(page.viewportSize()?.width).toBe(390);

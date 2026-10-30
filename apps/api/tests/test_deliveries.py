@@ -8,10 +8,16 @@ from fastapi.testclient import TestClient
 
 from app.deliveries import _public, _replace_json, _write
 from app.main import app
+from workers.identity.session import open_session
 from workers.nodes.n17_deliver.node import run as deliver
 from workers.nodes.n17_deliver.sample import acceptance_request, storyboard
 from workers.nodes.n17_deliver.support import build_gateway
 from workers.workflow.store import init_project, project_path
+
+
+def _session():
+    ident = open_session()
+    return ident, {"Authorization": f"Bearer {ident.token}"}
 
 
 def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
@@ -33,6 +39,7 @@ def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
     )
     payload = request["payload"]
     assert isinstance(payload, dict)
+    ident, headers = _session()
     init_project(
         project_id,
         status="completed",
@@ -42,8 +49,9 @@ def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
         brand_kit=payload["brand_kit"],
         master_plate=payload["master_path"],
         subject_tracks=payload["subject_tracks"],
+        enterprise_id=ident.enterprise_id,
     )
-    with TestClient(app) as client:
+    with TestClient(app, headers=headers) as client:
         created = client.post(
             f"/v1/projects/{project_id}/deliveries",
             json={"languages": ["zh"], "aspect_ratios": ["9:16"], "long_edge": 160},
@@ -79,8 +87,9 @@ def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
 
 def test_client_cannot_choose_the_master_path(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path / "projects"))
-    init_project("pathguard", status="completed")
-    with TestClient(app) as client:
+    ident, headers = _session()
+    init_project("pathguard", status="completed", enterprise_id=ident.enterprise_id)
+    with TestClient(app, headers=headers) as client:
         absolute = client.post(
             "/v1/projects/pathguard/deliveries",
             json={"master_path": "/etc/passwd"},
@@ -99,12 +108,14 @@ def test_snapshot_master_must_stay_inside_the_project(tmp_path, monkeypatch) -> 
     script, brief, _tracks, _durations = storyboard()
     outside = tmp_path / "secret.mp4"
     outside.write_bytes(b"not-a-project-file")
+    ident, headers = _session()
     init_project(
         "abs17",
         status="completed",
         script=script,
         brief=brief,
         master_plate="/etc/passwd",
+        enterprise_id=ident.enterprise_id,
     )
     escaped = project_path("trav17") / ".." / ".." / "secret.mp4"
     init_project(
@@ -113,6 +124,7 @@ def test_snapshot_master_must_stay_inside_the_project(tmp_path, monkeypatch) -> 
         script=script,
         brief=brief,
         master_plate=str(escaped),
+        enterprise_id=ident.enterprise_id,
     )
     linked = project_path("link17") / "plate.mp4"
     init_project(
@@ -121,9 +133,10 @@ def test_snapshot_master_must_stay_inside_the_project(tmp_path, monkeypatch) -> 
         script=script,
         brief=brief,
         master_plate=str(linked),
+        enterprise_id=ident.enterprise_id,
     )
     linked.symlink_to(outside)
-    with TestClient(app) as client:
+    with TestClient(app, headers=headers) as client:
         for project_id in ("abs17", "trav17", "link17"):
             response = client.post(f"/v1/projects/{project_id}/deliveries", json={})
             assert response.status_code == 422, response.text
@@ -133,8 +146,9 @@ def test_snapshot_master_must_stay_inside_the_project(tmp_path, monkeypatch) -> 
 def test_export_cap_returns_429(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path / "projects"))
     monkeypatch.setenv("HILATV_N17_EXPORT_SLOTS", "0")
-    init_project("cap17", status="completed")
-    with TestClient(app) as client:
+    ident, headers = _session()
+    init_project("cap17", status="completed", enterprise_id=ident.enterprise_id)
+    with TestClient(app, headers=headers) as client:
         response = client.post("/v1/projects/cap17/deliveries", json={})
     assert response.status_code == 429
 
@@ -219,7 +233,8 @@ def test_share_expires(tmp_path, monkeypatch) -> None:
     root = tmp_path / "projects"
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(root))
     monkeypatch.setenv("HILATV_SHARE_TTL_S", "0")
-    init_project("share17", status="completed")
+    ident, headers = _session()
+    init_project("share17", status="completed", enterprise_id=ident.enterprise_id)
     video = project_path("share17") / "clip.mp4"
     video.write_bytes(b"mp4")
     _write(
@@ -245,7 +260,7 @@ def test_share_expires(tmp_path, monkeypatch) -> None:
             "rights": {},
         },
     )
-    with TestClient(app) as client:
+    with TestClient(app, headers=headers) as client:
         shared = client.post("/v1/projects/share17/versions/v1/share")
         assert shared.status_code == 200, shared.text
         opened = client.get(shared.json()["share_path"])

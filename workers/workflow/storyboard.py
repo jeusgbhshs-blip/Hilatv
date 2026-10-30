@@ -254,11 +254,20 @@ def edit_voiceover(
 
 
 def _charge_edit(project_id: str) -> None:
-    """Spend one regen for the new voice and one for the new frames, before TTS."""
+    """Spend one regen for the new voice and one for the new frames, before TTS.
 
+    Both takes are required. When fewer than two remain, nothing is taken.
+    A take that already landed is kept: this counter never decreases.
+    """
+
+    needed = 2
     budget = open_project_budget(project_id)
-    for _ in range(2):
+    # Same fit check as try_take_n: the pair must fit before the first take.
+    if not budget.can_take(needed):
+        raise StoryboardError("项目重生次数已到上限", status=422)
+    for _ in range(needed):
         if not budget.try_take():
+            # A take that already landed stays. This counter never decreases.
             raise StoryboardError("项目重生次数已到上限", status=422)
 
 

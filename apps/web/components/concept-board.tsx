@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { apiUrl, errorMessage } from "@/lib/api";
-import { chooseCard, type DirectionCard, rememberedEnterprise } from "@/lib/selection";
+import { apiFetch, errorMessage } from "@/lib/api";
+import { chooseCard, type DirectionCard } from "@/lib/selection";
 
 type ConceptResponse = {
   brand_applied?: boolean;
@@ -45,10 +45,10 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(apiUrl("/v1/concepts"), {
+      const response = await apiFetch("/v1/concepts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sentence: text, enterprise_id: rememberedEnterprise() }),
+        body: JSON.stringify({ sentence: text }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const body = (await response.json()) as ConceptResponse;
@@ -70,12 +70,11 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
     setBusy(true);
     setError(null);
     try {
-      const response = await fetch(apiUrl("/v1/projects"), {
+      const response = await apiFetch("/v1/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sentence: sentence.trim(),
-          enterprise_id: rememberedEnterprise(),
           concept_selection: choice.id,
           skip_storyboard: skipStoryboard,
         }),

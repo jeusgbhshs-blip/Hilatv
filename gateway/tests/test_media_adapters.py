@@ -77,7 +77,14 @@ def test_mock_samples_roundtrip_through_the_store(tmp_path) -> None:
     )
     image = gateway.generate_image("冷色调金属柱塞泵特写", seed=4)
     video = gateway.generate_video("金属柱塞泵缓慢旋转", seed=4, duration_s=5)
-    speech = gateway.tts("三十兆帕", voice="zh_male_steady", seed=4)
+    from workers.compliance.consent_gate import issue_tts_consent
+
+    speech = gateway.tts(
+        "三十兆帕",
+        voice="zh_male_steady",
+        seed=4,
+        consent_token=issue_tts_consent("zh_male_steady", None),
+    )
     assert image["uri"].startswith("oss://hilatv/gateway/image/")
     assert video["uri"].startswith("oss://hilatv/gateway/video/")
     assert speech["uri"].startswith("oss://hilatv/gateway/tts/")
@@ -118,7 +125,14 @@ def test_budget_fallback_covers_image_video_and_tts(tmp_path) -> None:
     )
     image = gateway.generate_image("泵", seed=1)
     video = gateway.generate_video("泵旋转", seed=1)
-    speech = gateway.tts("稳定工作", voice="zh_male_steady", seed=1)
+    from workers.compliance.consent_gate import issue_tts_consent
+
+    speech = gateway.tts(
+        "稳定工作",
+        voice="zh_male_steady",
+        seed=1,
+        consent_token=issue_tts_consent("zh_male_steady", None),
+    )
     assert image["mock"] is True and video["mock"] is True and speech["mock"] is True
     logs = gateway.store.list_logs()
     assert {row["task"] for row in logs} == {"image", "video", "tts"}
@@ -338,7 +352,14 @@ def test_tts_returns_audio_and_word_timestamps(tmp_path) -> None:
         limits=(True, Decimal("10"), Decimal("10")),
         pricing=Pricing.load(),
     )
-    out = gateway.tts("三十", voice="zh_male_steady", seed=1)
+    from workers.compliance.consent_gate import issue_tts_consent
+
+    out = gateway.tts(
+        "三十",
+        voice="zh_male_steady",
+        seed=1,
+        consent_token=issue_tts_consent("zh_male_steady", None),
+    )
     body = seen["body"]
     assert isinstance(body, dict)
     assert str(seen["auth"]).startswith("Bearer;")

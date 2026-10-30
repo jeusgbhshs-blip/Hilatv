@@ -26,7 +26,7 @@ def dub(
     enterprise_id: str | None = None,
 ) -> list[ShotVoiceover]:
     from workers.brand_kit.people import ConsentError
-    from workers.compliance.consent_gate import assert_voice_allowed
+    from workers.compliance.consent_gate import assert_voice_allowed, gated_tts
 
     base = brand.voice.speed if brand is not None else DEFAULT_SPEED
     voice = brand.voice.tts_voice if brand is not None else DEFAULT_VOICE
@@ -42,9 +42,11 @@ def dub(
         if not shot.voiceover.strip():
             continue
         plan = plans[shot.shot_id]
-        spoken = gateway.tts(
+        spoken = gated_tts(
+            gateway,
             shot.voiceover,
             voice=voice,
+            enterprise_id=enterprise_id,
             seed=0,
             language=script.language,
             project_id=project_id,
