@@ -1,10 +1,8 @@
 """Review port for T12.
 
-T12 is expected to expose ``workers.qa.service.review_shot(payload) -> QAReport``.
-Until that function exists, a shot is reviewed only when a keyframe or video
-reference is passed through ``gateway.judge`` and the gateway returns a real
-score. A mock schema fill (all zeros, ``evaluator=mock``) is not a review.
-Storyboard text alone is not a score.
+Scores come only from ``workers.qa.service.review_shot``. A shot is reviewed
+only when that result has ``visual_reviewed is True``. If the function cannot
+be imported, the shot is ``review_error``. Storyboard text alone is not a score.
 """
 
 from __future__ import annotations
@@ -15,9 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from pydantic import ValidationError
 
+from workers.qa.service import VIDEO_SUFFIXES
 from workers.schemas.asset import QAReport
 
 _DIMS = (
@@ -43,16 +41,6 @@ _ALIASES = {
 TEXT_ONLY_LABEL = "只评了文字，不计入质量结论"
 UNREVIEWED_LABEL = "未评审"
 _NOT_REVIEWED_FAILS = frozenset({"not_reviewed", "judge_unavailable", "unreviewed"})
-_VIDEO_SUFFIXES = (".mp4", ".mov", ".webm")
-
-_PROMPTS = Path(__file__).resolve().parent / "prompts"
-_ENV = Environment(
-    loader=FileSystemLoader(_PROMPTS),
-    autoescape=False,
-    undefined=StrictUndefined,
-    trim_blocks=True,
-    lstrip_blocks=True,
-)
 
 
 class JudgeInvalid(ValueError):
@@ -91,7 +79,7 @@ def _t12_kwargs(fn: Any, gateway: Any) -> dict[str, Any]:
 
 
 def review_port() -> str:
-    return "t12" if t12_review_shot() is not None else "gateway-judge"
+    return "t12" if t12_review_shot() is not None else "unavailable"
 
 
 def review_shot(payload: dict[str, Any], *, gateway: Any) -> ShotReview:
@@ -134,48 +122,10 @@ def review_shot(payload: dict[str, Any], *, gateway: Any) -> ShotReview:
             media_uri=media_uri,
             note=report.notes,
         )
-    kind = "video" if str(payload.get("node") or "") == "n11_video" else "keyframe"
-    prompt = _ENV.get_template("judge.j2").render(
-        shot_id=payload.get("shot_id") or "",
-        purpose=payload.get("purpose") or "",
-        shot_size=payload.get("shot_size") or "",
-        camera=payload.get("shot_type") or "",
-        generation_mode=payload.get("generation_mode") or "",
-        visual=payload.get("visual") or "",
-        voiceover=payload.get("voiceover") or "",
-        media_kind=kind,
-        media_uri=media_uri,
-    )
-    try:
-        raw = gateway.judge(
-            prompt,
-            schema=QAReport,
-            project_id=payload.get("project_id"),
-            node=str(payload.get("node") or "n09_keyframe"),
-            shot_id=payload.get("shot_id"),
-            shot_type=payload.get("shot_type") or None,
-            attempt=1,
-            params={"media_uri": media_uri, "media_kind": kind},
-        )
-    except Exception as exc:
-        return _review_error("gateway-judge", media_uri, exc)
-    if not isinstance(raw, dict) or _not_a_review(raw):
-        return _not_reviewed(
-            "unreviewed",
-            media_uri,
-            f"{UNREVIEWED_LABEL}：网关返回的是 mock 填表，没有真实视觉评审",
-        )
-    try:
-        report = coerce_judge(raw)
-    except JudgeInvalid as exc:
-        return _invalid("gateway-judge", media_uri, str(exc))
-    return ShotReview(
-        status="reviewed",
-        source="gateway-judge",
-        basis="media",
-        report=report,
-        media_uri=media_uri,
-        note=report.notes,
+    return _review_error(
+        "t12",
+        media_uri,
+        RuntimeError("workers.qa.service.review_shot is unavailable"),
     )
 
 
@@ -261,7 +211,7 @@ def _opens(uri: str) -> bool:
     text = uri.strip()
     if not text or text.startswith("mock://") or text.startswith(("http://", "https://")):
         return False
-    if text.lower().endswith(_VIDEO_SUFFIXES):
+    if text.lower().endswith(VIDEO_SUFFIXES):
         from workers.qa.frames import sample_frames
 
         path_text = text[7:] if text.startswith("file://") else text
@@ -295,20 +245,6 @@ def _visually_reviewed(raw: dict[str, Any]) -> bool:
     """True only for an explicit visual review. A missing field stays False."""
 
     return raw.get("visual_reviewed") is True
-
-
-def _not_a_review(raw: dict[str, Any]) -> bool:
-    if _is_schema_fill(raw):
-        return True
-    if raw.get("degraded") is True or raw.get("mock") is True:
-        return True
-    status = str(raw.get("status") or raw.get("review_status") or "").strip().lower()
-    if status in {"not_reviewed", "unreviewed", "degraded", "mock", "judge_unavailable"}:
-        return True
-    evaluator = str(raw.get("evaluator") or "").strip().lower()
-    if not evaluator or evaluator == "mock" or evaluator.startswith("mock"):
-        return True
-    return bool(_refusal_tokens(raw))
 
 
 def _refusal_tokens(raw: dict[str, Any]) -> set[str]:

@@ -63,7 +63,7 @@
 - 合并了哪些：T09（PR #29，无新迁移）
 - 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
-- T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5。T12 的 `review_shot` 还没有，mock 没有画面，镜头标为未评审，不再把网关填表改写成 8.4。报告分开写「管线和报告结构」和「质量是否达标」。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后，`--mode live` 才会把关键帧或视频引用交给网关评审
+- T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5，并调用已合并的 T12 `review_shot`。mock 没有画面，镜头标为未评审。T12 导入不到时记 `review_error`，不再用网关单独打分。报告分开写「管线和报告结构」和「质量是否达标」。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后，`--mode live` 才会让视觉评审看实帧
 
 ## T18 假设
 
@@ -73,7 +73,7 @@
 - 有选中视频候选时，评审节点记 `n11_video`，模型名用候选上的 `model`。mock 只有分镜，节点记 `n09_keyframe`，模型记 `not-rendered`。镜头类型用分镜里的运镜预设 id。
 - 硬伤按已评审镜头计：`QAReport.hard_fail` 非空算 1 个硬伤镜头。质量达标要同时满足：60 条都在、失败 0 条、未评审和评审异常都是 0、已评审镜头数大于 0，并且硬伤率不超过 5%。分母为 0 不能算通过。失败或超时的样例即使镜头数记成 0，也不能让其余样例单独达标。
 - 报告和 `summary.json` 写评审来源、未评审镜头数，以及两个结论：管线和报告结构是否完整、质量是否达标。`--strict` 的退出码只看结构和「未评审被当成质量通过」这种假通过。mock 没有画面，质量结论是未达标，验收命令仍然可以在 CI 里跑完。
-- 备用评审有关键帧或视频 `uri` 时，把引用放进 `gateway.judge` 的提示词和 `params.media_uri`，仍然只走网关。没有引用时不把分镜文字送去打分，报告写「只评了文字，不计入质量结论」。
+- 没有可打开的画面时不调用 T12，报告写「只评了文字，不计入质量结论」。`review_shot` 导入不到时该镜记 `review_error`，算进未通过，不再另走网关打分。
 - 状态接口读 `project.json` 时，写入改为先写临时文件、`fsync`、再替换，然后 `fsync` 目录。`Path.write_text` 会先把目标截成空文件，CI 里 `test_create_progress_and_rerun` 的进度轮询因此读到空 JSON。替换之后读者看到的是上一份完整文件或新文件；目录 fsync 让新文件名落盘。
 - 盲评包只给匿名 pair id 和成片路径。对照组成片不在本任务里，key 里标 `withheld`。
 - 费用是该项目在网关 `call_logs.cost_cny` 的合计。mock 为 0。调用仍经过网关预算守卫。

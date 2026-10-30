@@ -415,6 +415,51 @@ def test_rule_only_8_6_is_not_reviewed(tmp_path: Path, monkeypatch: pytest.Monke
     assert review.note
 
 
+def test_missing_t12_is_review_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: None)
+    review = review_shot(
+        {"shot_id": "S01", "candidate_uri": _png(tmp_path)},
+        gateway=object(),
+    )
+    assert review.status == "review_error"
+    assert review.report is None
+    assert "unavailable" in review.note
+    state = {
+        "script": {"shots": [{"shot_id": "S01", "camera": "slow_push_in"}]},
+        "keyframes": [{"shot_id": "S01", "uri": review.media_uri, "selected": True, "model": "m"}],
+    }
+    scored = score_state(state, project_id="e18-missing-t12", gateway=object())
+    assert scored.reviewed_shots == 0
+    assert scored.review_error_shots == 1
+    assert scored.score is None
+
+
+def test_gateway_judge_error_is_not_reviewed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+
+    class Boom:
+        def judge(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            raise RuntimeError("judge down")
+
+    uri = _png(tmp_path)
+    review = review_shot(
+        {
+            "project_id": "e18-judge-down",
+            "shot_id": "S01",
+            "node": "n09_keyframe",
+            "candidate_uri": uri,
+        },
+        gateway=Boom(),
+    )
+    assert review.status in {"not_reviewed", "review_error"}
+    assert review.status != "reviewed"
+    assert review.report is None
+
+
 def test_http_mock_and_outside_dir_match_t12(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
