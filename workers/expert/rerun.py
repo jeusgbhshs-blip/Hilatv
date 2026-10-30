@@ -21,7 +21,8 @@ from workers.nodes.n15_compose.node import render_timeline
 from workers.nodes.n15_compose.schema import Timeline
 from workers.qa.scores import content_blocked
 from workers.schemas.asset import Candidate
-from workers.workflow.contract import PHASE, PIPELINE
+from workers.workflow.contract import FINAL_NODE, PEERS, PHASE, PIPELINE
+from workers.workflow.film import needs_human_review
 from workers.workflow.store import (
     load_checkpoint,
     project_path,
@@ -31,6 +32,8 @@ from workers.workflow.store import (
     update_snapshot,
     valid_project_id,
 )
+
+_AFTER_HOLD = set(PEERS) | {FINAL_NODE}
 
 _NEEDS = {
     "n03_concept": ("brief",),
@@ -58,14 +61,16 @@ def rerun_span(
     consent: bool | None = None,
     skip_ai_label: bool | None = None,
     licensed: bool | None = None,
+    human_release: bool | None = None,
 ) -> dict[str, Any]:
     """Re-run ``node`` and downstream nodes.
 
-    ``qa_passed``, ``visual_reviewed``, ``consent``, ``skip_ai_label`` and
-    ``licensed`` are accepted so a caller can send them. They are not read.
+    ``qa_passed``, ``visual_reviewed``, ``consent``, ``skip_ai_label``,
+    ``licensed`` and ``human_release`` are accepted so a caller can send them.
+    They are not read. A re-run cannot release a held project.
     """
 
-    _ = (qa_passed, visual_reviewed, consent, licensed)
+    _ = (qa_passed, visual_reviewed, consent, licensed, human_release)
     if node not in PIPELINE:
         raise GateError("未知节点", status=400)
     snapshot = _snapshot(project_id)
@@ -112,8 +117,13 @@ def rerun_span(
         },
     )
     nodes = span(node)
+    ran_director = False
     try:
         for name in nodes:
+            if name in _AFTER_HOLD and _delivery_blocked(
+                snapshot, state, ran_director=ran_director
+            ):
+                return _hold_result(project_id, node, nodes, charged, state)
             patch = invoke_node(
                 name,
                 project_id=project_id,
@@ -126,9 +136,13 @@ def rerun_span(
             )
             _store(project_id, name, patch)
             state.update(patch)
+            if name == "shot_director":
+                ran_director = True
             completed = [item for item in (state.get("completed") or []) if item != name]
             completed.append(name)
             state["completed"] = completed
+        if _delivery_blocked(snapshot, state, ran_director=ran_director):
+            return _hold_result(project_id, node, nodes, charged, state)
     except (GateError, BudgetExhausted):
         update_snapshot(project_id, status="failed", error="重跑没有通过检查")
         raise
@@ -158,6 +172,72 @@ def rerun_span(
     }
 
 
+def _delivery_blocked(
+    snapshot: dict[str, Any],
+    state: dict[str, Any],
+    *,
+    ran_director: bool,
+) -> bool:
+    """A re-run cannot deliver while the human-review hold applies.
+
+    ``human_release`` is never taken from the caller. Only a director pass
+    in this same re-run can clear notes that still say ``needs_review``.
+    """
+
+    if needs_human_review(state, {}):
+        return True
+    if not ran_director and snapshot.get("status") == "needs_human_review":
+        return True
+    return False
+
+
+def _hold_result(
+    project_id: str,
+    node: str,
+    nodes: list[str],
+    charged: int,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    notes = state.get("shot_quality") if isinstance(state.get("shot_quality"), list) else []
+    update_snapshot(
+        project_id,
+        status="needs_human_review",
+        phase="待人工复核",
+        node="shot_director",
+        message="有镜头未经视觉评审，成片暂停，需要人工放行",
+        paused=True,
+        deliverable=None,
+        shot_quality=notes,
+        error=None,
+    )
+    publish(
+        project_id,
+        {
+            "node": "shot_director",
+            "phase": "待人工复核",
+            "message": "有镜头未经视觉评审，成片暂停，需要人工放行",
+            "status": "needs_human_review",
+            "attempt": 1,
+        },
+    )
+    log_event(
+        "human_review_held",
+        project_id=project_id,
+        node="shot_director",
+        attempt=1,
+        shots=len(notes),
+    )
+    return {
+        "project_id": project_id,
+        "node": node,
+        "nodes": nodes,
+        "charged": charged,
+        "held": True,
+        "deliverable": None,
+        "canvas": build_canvas(project_id),
+    }
+
+
 def select_candidate(
     project_id: str,
     node: str,
@@ -174,7 +254,7 @@ def select_candidate(
     key = {"n08_keyframe": "keyframes", "n10_video": "videos"}.get(node)
     if key is None:
         raise GateError("这个节点没有候选", status=400)
-    _snapshot(project_id)
+    snapshot = _snapshot(project_id)
     state = load_checkpoint(project_id)
     raw_rows = state.get(key) or []
     rows = [Candidate.model_validate(item) for item in raw_rows if isinstance(item, dict)]
@@ -209,7 +289,12 @@ def select_candidate(
         updated.append(item.model_copy(update={"selected": chosen, "qa": item.qa}))
     _replace_rows(project_id, node, key, updated)
     state[key] = [item.model_dump(mode="json") for item in updated]
-    if node == "n10_video" and isinstance(state.get("script"), dict) and state.get("elements"):
+    if (
+        node == "n10_video"
+        and isinstance(state.get("script"), dict)
+        and state.get("elements")
+        and not _delivery_blocked(snapshot, state, ran_director=False)
+    ):
         _refresh_master(project_id, state, gateway=gateway)
     return {
         "project_id": project_id,
@@ -227,8 +312,10 @@ def save_timeline(
     """Apply a timeline edit. Dropping 「AI生成」 or a blocked clip is refused."""
 
     _ = gateway
-    _snapshot(project_id)
+    snapshot = _snapshot(project_id)
     state = load_checkpoint(project_id)
+    if _delivery_blocked(snapshot, state, ran_director=False):
+        raise GateError("有镜头未经视觉评审，成片暂停，需要人工放行", status=409)
     raw = load_timeline_dict(project_id, state)
     if raw is None:
         raise GateError("还没有时间轴", status=404)

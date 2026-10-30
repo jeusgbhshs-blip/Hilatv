@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from workers.logging import log_event
 from workers.workflow.contract import PIPELINE
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
@@ -175,6 +176,40 @@ def read_snapshot(project_id: str) -> dict[str, Any] | None:
     if last_error is not None:
         raise last_error
     return None
+
+
+def record_human_release(project_id: str) -> dict[str, Any]:
+    """Audit that a person released a held film.
+
+    The releaser's identity is added with #54. This record only carries the time.
+    """
+
+    if not valid_project_id(project_id):
+        raise ValueError("invalid project id")
+    record = {
+        "type": "human_review_released",
+        "project_id": project_id,
+        "ts": time.time(),
+    }
+    with _lock(project_id) as directory:
+        snapshot = _read(directory, project_id)
+        events = list(snapshot.get("events") or [])
+        events.append({"type": record["type"], "ts": record["ts"]})
+        snapshot["events"] = events[-200:]
+        _write(directory, snapshot)
+        path = directory / "events.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    log_event(
+        "human_review_released",
+        project_id=project_id,
+        node="shot_director",
+        attempt=1,
+        ts=record["ts"],
+    )
+    return record
 
 
 def publish(project_id: str, event: dict[str, Any]) -> dict[str, Any]:

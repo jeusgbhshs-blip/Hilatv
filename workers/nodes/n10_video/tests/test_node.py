@@ -11,7 +11,7 @@ from workers.nodes.n08_keyframe.node import run as run_keyframes
 from workers.nodes.n08_keyframe.tests.shots import request, shot
 from workers.nodes.n10_video.node import run
 from workers.nodes.n10_video.prompts import render_video
-from workers.nodes.n10_video.qa import QAError, check
+from workers.nodes.n10_video.qa import check
 
 
 def test_video_templates_forbid_text_and_differ() -> None:
@@ -202,19 +202,21 @@ def test_one_video_failure_does_not_block_the_other() -> None:
         on_screen_text=[],
     )
     gateway = Guard()
-    with pytest.raises(QAError):
-        run(
-            {
-                "project_id": "proj-1",
-                "payload": {
-                    "script": request(shot(), other)["payload"]["script"],
-                    "candidates": [_opening("S01"), _opening("S02")],
-                    "video_candidates": 3,
-                },
+    result = run(
+        {
+            "project_id": "proj-1",
+            "payload": {
+                "script": request(shot(), other)["payload"]["script"],
+                "candidates": [_opening("S01"), _opening("S02")],
+                "video_candidates": 3,
             },
-            gateway=gateway,
-            max_attempts=1,
-        )
+        },
+        gateway=gateway,
+        max_attempts=1,
+    )
+    check(result)
+    assert result.payload["generation_failed"] == ["S02"]
+    assert {row["shot_id"] for row in result.payload["candidates"]} == {"S01"}
     assert "S01" in gateway.seen
     assert "S02" in gateway.seen
 

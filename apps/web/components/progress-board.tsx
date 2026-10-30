@@ -184,6 +184,20 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
           <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
         </Button>
+        {status === "needs_human_review" ? (
+          <Button
+            data-testid="release-review"
+            size="lg"
+            className="w-full sm:w-auto"
+            onClick={() => {
+              void fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`), {
+                method: "POST",
+              });
+            }}
+          >
+            放行并成片
+          </Button>
+        ) : null}
         {status === "completed" ? (
           <Button asChild size="lg" className="w-full sm:w-auto">
             <Link href={`/projects/${projectId}/film`}>观看成片</Link>

@@ -16,7 +16,7 @@ from temporalio.client import WorkflowFailureError
 from workers.schemas.brand import BrandKit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.service import run_and_wait, serve_worker
-from workers.workflow.store import load_checkpoint, read_snapshot
+from workers.workflow.store import load_checkpoint, read_snapshot, record_human_release
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,6 +32,9 @@ def main(argv: list[str] | None = None) -> int:
     rerun_parser.add_argument("project_id")
     rerun_parser.add_argument("node")
 
+    release_parser = sub.add_parser("release", help="人工放行待复核的成片")
+    release_parser.add_argument("project_id")
+
     sub.add_parser("worker", help="连接 TEMPORAL_ADDRESS，执行活动")
 
     args = parser.parse_args(argv)
@@ -40,6 +43,8 @@ def main(argv: list[str] | None = None) -> int:
             return _cmd_run(args)
         if args.command == "rerun":
             return _cmd_rerun(args)
+        if args.command == "release":
+            return _cmd_release(args)
         asyncio.run(serve_worker())
         return 0
     except KeyboardInterrupt:
@@ -77,6 +82,31 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
     )
 
 
+def _cmd_release(args: argparse.Namespace) -> int:
+    snapshot = read_snapshot(args.project_id)
+    if snapshot is None:
+        print("项目不存在", file=sys.stderr)
+        return 2
+    if snapshot.get("status") != "needs_human_review":
+        print("项目不在人工复核", file=sys.stderr)
+        return 2
+    record_human_release(args.project_id)
+    return _execute(
+        project_id=args.project_id,
+        sentence=str(snapshot.get("sentence") or ""),
+        brand_kit=snapshot.get("brand_kit"),
+        brand_id=snapshot.get("brand_id"),
+        enterprise_id=snapshot.get("enterprise_id"),
+        concept_selection=snapshot.get("concept_selection"),
+        attachments=snapshot.get("attachments") or [],
+        keyframe_candidates=snapshot.get("keyframe_candidates"),
+        video_candidates=snapshot.get("video_candidates"),
+        start_from="n12_music",
+        checkpoint=load_checkpoint(args.project_id),
+        human_release=True,
+    )
+
+
 def _execute(**kwargs: Any) -> int:
     project_id = str(kwargs["project_id"])
     try:
@@ -85,15 +115,16 @@ def _execute(**kwargs: Any) -> int:
         _print_result({"project_id": project_id, "status": "failed", "error": str(exc)[:500]})
         print(str(exc), file=sys.stderr)
         return 1
+    status = str(result.get("status") or "completed")
     _print_result(
         {
             "project_id": project_id,
-            "status": "completed",
+            "status": status,
             "deliverable": result.get("deliverable"),
             "elapsed_s": result.get("elapsed_s"),
             "timing_recorded": True,
             "live": bool(result.get("live")),
-            "phase": "成片",
+            "phase": "待人工复核" if status == "needs_human_review" else "成片",
         }
     )
     return 0

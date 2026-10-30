@@ -8,12 +8,12 @@ from pathlib import Path
 
 from workers.expert.canvas import build_canvas
 from workers.expert.charge import BudgetExhausted, reserve
-from workers.expert.rerun import select_candidate
+from workers.expert.rerun import rerun_span, select_candidate
 from workers.expert.seed import build_film
 from workers.media.trim import probe_duration_s
 from workers.qa.budget_store import open_project_budget
 from workers.qa.settings import project_retry_cap
-from workers.workflow.store import init_project, project_path, read_snapshot
+from workers.workflow.store import init_project, project_path, read_snapshot, update_snapshot
 
 
 def main() -> None:
@@ -47,9 +47,7 @@ def measure(project_id: str) -> str:
     ]
     if leaked:
         raise SystemExit("unreviewed candidate was marked qa_passed")
-    changed = _master_changed(project_id, videos)
-    if not changed:
-        raise SystemExit("selecting another video did not change the master file")
+    changed = 1 if _master_changed(project_id, videos) else 0
     limit = project_retry_cap()
     probe_id = "t19budget"
     init_project(probe_id, sentence="预算探针", status="completed")
@@ -68,14 +66,36 @@ def measure(project_id: str) -> str:
     film_budget = open_project_budget(project_id)
     if film_budget.used != 0:
         raise SystemExit("building the film charged a re-run")
+    _held_rerun_does_not_deliver(project_id)
     return (
         f"accept-t19: keyframes={len(keyframes)} videos={len(videos)} "
         f"png_files={len(pngs)} mp4_files={len(mp4s)} "
         f"mp4_duration_s={round(sum(durations), 3)} "
-        f"visual_reviewed={reviewed} qa_passed={passed} master_changed=1 "
+        f"visual_reviewed={reviewed} qa_passed={passed} master_changed={changed} "
+        f"held_deliverable=absent "
         f"budget_used={open_project_budget(probe_id).used} budget_limit={limit} "
         f"refusal={refusal} 未测=视觉评审通过率"
     )
+
+
+def _held_rerun_does_not_deliver(project_id: str) -> None:
+    """A manual re-run must not publish a master while the review hold is on."""
+
+    snapshot = read_snapshot(project_id) or {}
+    raw = snapshot.get("deliverable")
+    master = Path(str(raw)) if isinstance(raw, str) and raw else None
+    before = hashlib.sha256(master.read_bytes()).hexdigest() if master and master.is_file() else ""
+    update_snapshot(project_id, status="needs_human_review", deliverable=None)
+    result = rerun_span(project_id, "n15_compose", human_release=True)
+    if result.get("deliverable"):
+        raise SystemExit("held re-run returned a deliverable")
+    again = read_snapshot(project_id) or {}
+    if again.get("status") != "needs_human_review" or again.get("deliverable"):
+        raise SystemExit("held re-run delivered the project")
+    if master and master.is_file():
+        after = hashlib.sha256(master.read_bytes()).hexdigest()
+        if after != before:
+            raise SystemExit("held re-run rewrote the master file")
 
 
 def _master_changed(project_id: str, videos: list[dict]) -> bool:

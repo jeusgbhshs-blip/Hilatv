@@ -14,7 +14,13 @@ from workers.expert.rerun import rerun_span, save_timeline, select_candidate
 from workers.expert.seed import build_film
 from workers.qa.budget_store import open_project_budget
 from workers.schemas.asset import Candidate
-from workers.workflow.store import init_project, project_path, read_snapshot, save_node
+from workers.workflow.store import (
+    init_project,
+    project_path,
+    read_snapshot,
+    save_node,
+    update_snapshot,
+)
 
 
 def test_reserve_matches_the_generative_span(tmp_path, monkeypatch) -> None:
@@ -91,7 +97,13 @@ def test_canvas_review_selection_and_rerun(tmp_path, monkeypatch) -> None:
     assert result["nodes"][0] == "n08_keyframe"
     assert result["nodes"][-1] == "n15_compose"
     assert "n01_brief" not in result["nodes"]
-    assert open_project_budget("film1").used == 2
+    # shot_director spends the same ledger when it actually regenerates a fallback.
+    assert open_project_budget("film1").used >= 2
+    if result.get("held"):
+        assert result["deliverable"] is None
+        held_snapshot = read_snapshot("film1") or {}
+        assert held_snapshot["status"] == "needs_human_review"
+        assert not held_snapshot.get("deliverable")
     again = result["canvas"]
     frames = again["shots"][0]["keyframes"]
     assert frames
@@ -159,7 +171,36 @@ def test_http_rerun_charges_and_does_not_mark_unreviewed_output(tmp_path, monkey
     assert all(item["verdict"]["qa_passed"] is False for item in frames)
     assert all(item["verdict"]["visual_reviewed"] is not True for item in frames)
     assert body["canvas"]["timeline"]["ai_label"] is True
-    assert open_project_budget("httpfilm").used == 2
+    assert open_project_budget("httpfilm").used >= 2
+    if body.get("held"):
+        assert body["deliverable"] is None
+        assert body["canvas"]["status"] == "needs_human_review"
+
+
+def test_held_project_is_not_delivered(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_RENDER_WIDTH", "320")
+    monkeypatch.setenv("HILATV_RENDER_HEIGHT", "180")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "6")
+    built = build_film("held")
+    snapshot = read_snapshot("held") or {}
+    master = Path(str(snapshot["deliverable"]))
+    before = hashlib.sha256(master.read_bytes()).hexdigest()
+    update_snapshot("held", status="needs_human_review", deliverable=None)
+    result = rerun_span(
+        "held",
+        "n15_compose",
+        gateway=built["gateway"],
+        human_release=True,
+    )
+    assert result["held"] is True
+    assert result["deliverable"] is None
+    again = read_snapshot("held") or {}
+    assert again["status"] == "needs_human_review"
+    assert not again.get("deliverable")
+    assert hashlib.sha256(master.read_bytes()).hexdigest() == before
+    assert open_project_budget("held").used == 0
 
 
 def test_api_refuses_a_rerun_when_the_ledger_is_full(tmp_path, monkeypatch) -> None:

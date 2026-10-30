@@ -417,10 +417,59 @@ def _n14(**kwargs: Any) -> dict[str, Any]:
     }
 
 
-def _n15(**kwargs: Any) -> dict[str, Any]:
-    from workers.nodes.n15_compose.node import run
+def _shot_director(**kwargs: Any) -> dict[str, Any]:
+    from workers.fallback.direct import direct_shots
+    from workers.media.packaging import canvas_size
+    from workers.schemas.brand import BrandKit
+    from workers.schemas.brief import Brief
+    from workers.schemas.script import Script
 
     state = kwargs["state"]
+    script = Script.model_validate(_require(state, "script"))
+    brief_raw = state.get("brief")
+    brief = Brief.model_validate(brief_raw) if isinstance(brief_raw, dict) else None
+    kit_raw = state.get("brand_kit")
+    kit = BrandKit.model_validate(kit_raw) if isinstance(kit_raw, dict) else None
+    aspect = brief.aspect_ratios[0] if brief and brief.aspect_ratios else None
+    width, height = canvas_size(aspect)
+    videos = [
+        Candidate.model_validate(item)
+        for item in state.get("videos") or []
+        if isinstance(item, dict)
+    ]
+    keyframes = [
+        Candidate.model_validate(item)
+        for item in state.get("keyframes") or []
+        if isinstance(item, dict)
+    ]
+    gateway = kwargs["gateway"]
+    if gateway is None:
+        from gateway import get_gateway
+
+        gateway = get_gateway()
+    result = direct_shots(
+        project_id=kwargs["project_id"],
+        script=script,
+        videos=videos,
+        keyframes=keyframes,
+        brand_kit=kit,
+        width=width,
+        height=height,
+        gateway=gateway,
+    )
+    return {
+        "shot_clips": [item.model_dump(mode="json") for item in result.clips],
+        "shot_quality": [item.model_dump(mode="json") for item in result.notes],
+    }
+
+
+def _n15(**kwargs: Any) -> dict[str, Any]:
+    from workers.nodes.n15_compose.node import run
+    from workers.workflow.film import needs_human_review
+
+    state = kwargs["state"]
+    if needs_human_review(state, {}):
+        raise GateError("有镜头未经视觉评审，成片暂停，需要人工放行", status=409)
     result = _run(
         "n15_compose",
         run,
@@ -432,6 +481,7 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
                 "cues": state.get("cues") or [],
                 "elements": state.get("elements") or [],
                 "videos": state.get("videos") or [],
+                "shot_clips": state.get("shot_clips") or [],
                 "audio_track": state.get("audio_track"),
                 "licenses": (
                     state["licensing_summary"].get("records") or []
@@ -479,6 +529,7 @@ _RUNNERS = {
     "n08_keyframe": _n08,
     "n09_keyframe_qa": _n09,
     "n10_video": _n10,
+    "shot_director": _shot_director,
     "n12_music": _n12,
     "n13_subtitle": _n13,
     "n14_packaging": _n14,
