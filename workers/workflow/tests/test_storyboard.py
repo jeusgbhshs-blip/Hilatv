@@ -320,6 +320,231 @@ def test_live_unreviewed_narration_leaves_script_and_wav(tmp_path, monkeypatch) 
     assert _sha(wav) == before_wav
 
 
+REFUSAL = "项目重生次数已到上限"
+
+
+def _seed_budget(directory: Path, used: int) -> None:
+    atomic_write(
+        directory / "regen_budget.json",
+        (json.dumps({"used": used, "increase_only": True}) + "\n").encode(),
+    )
+
+
+def _watch_budget(monkeypatch: pytest.MonkeyPatch) -> list[int]:
+    """Record every ledger write. The count may rise and must not fall or pass the cap."""
+
+    from workers.qa import budget_store
+
+    seen: list[int] = []
+    real = budget_store._update
+
+    def wrapped(path: Path, *, limit: int, take: bool) -> tuple[bool, int]:
+        taken, used = real(path, limit=limit, take=take)
+        if seen:
+            assert used >= seen[-1]
+        assert 0 <= used <= limit
+        seen.append(used)
+        return taken, used
+
+    monkeypatch.setattr(budget_store, "_update", wrapped)
+    return seen
+
+
+def _block_generation(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    from gateway.service import get_gateway, reset_gateway
+
+    reset_gateway()
+    gateway = get_gateway()
+    calls: list[str] = []
+
+    def blocked(name: str):
+        def _call(*_args: object, **_kwargs: object) -> None:
+            calls.append(name)
+            raise AssertionError(f"{name} must not run")
+
+        return _call
+
+    gateway.content_safety = blocked("content_safety")
+    gateway.tts = blocked("tts")
+    gateway.generate_image = blocked("image")
+    gateway.generate_video = blocked("video")
+    return calls
+
+
+def _assert_still_paused(directory: Path, before_script: str, before_wav: dict[str, str]) -> None:
+    script_path = directory / "nodes" / "n06_voiceover.json"
+    assert _sha(script_path) == before_script
+    for shot_id, digest in before_wav.items():
+        assert _sha(directory / "storyboard" / shot_id / "voice.wav") == digest
+    saved = script_path.read_text(encoding="utf-8")
+    assert "改过一句" not in saved
+    snapshot = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+    assert snapshot["status"] == "paused"
+    assert snapshot.get("storyboard_gate") == "hold"
+    assert snapshot.get("storyboard_editing") is not True
+    assert not snapshot.get("deliverable")
+    assert "regen_used" not in snapshot
+    assert "改过一句" not in json.dumps(snapshot, ensure_ascii=False)
+    assert not (directory / "nodes" / "n08_keyframe.json").is_file()
+    assert not (directory / "storyboard" / "index.json").is_file()
+    assert not list(directory.glob("storyboard/*/frame.*"))
+    assert not (directory / "playback" / "master.mp4").is_file()
+    assert not (directory / "render" / "n15" / "master.mp4").is_file()
+
+
+def _plant_lower_budget(directory: Path) -> str:
+    """A version that claims ``used`` is 0. Restoring it must not shrink the live ledger."""
+
+    from workers.workflow.store import locked_project
+    from workers.workflow.versions import commit_locked
+
+    with locked_project(directory.name) as folder:
+        snapshot = json.loads((folder / "project.json").read_text(encoding="utf-8"))
+        snapshot["regen_used"] = 0
+        manifest = commit_locked(
+            folder,
+            snapshot,
+            instruction="改旁白之前",
+            quality_pass=False,
+            concept_degraded=False,
+            executed=[],
+            video_shots=[],
+            decisions=[],
+            shot_reviews=[],
+            regen_used=0,
+        )
+    version_id = manifest["version_id"]
+    decoy = directory / "versions" / version_id / "regen_budget.json"
+    decoy.write_text(
+        json.dumps({"used": 0, "limit": 1, "increase_only": True}) + "\n",
+        encoding="utf-8",
+    )
+    return version_id
+
+
+def test_one_remaining_regen_refuses_without_charging(tmp_path, monkeypatch) -> None:
+    """A narration edit needs two takes. One left means neither is taken."""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "2")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    project_id = "oneleft"
+    directory = _hold(project_id)
+    _seed_budget(directory, 1)
+    version_id = _plant_lower_budget(directory)
+    seen = _watch_budget(monkeypatch)
+    calls = _block_generation(monkeypatch)
+    script_path = directory / "nodes" / "n06_voiceover.json"
+    before_script = _sha(script_path)
+    before_wav = {
+        shot_id: _sha(directory / "storyboard" / shot_id / "voice.wav")
+        for shot_id in ("S01", "S02")
+    }
+    from app.main import app
+    from gateway.service import reset_gateway
+
+    try:
+        with TestClient(app) as client:
+            refused = client.post(
+                f"/v1/projects/{project_id}/storyboard/S01",
+                json={"voiceover": "先看这台柱塞泵。改过一句"},
+            )
+        assert refused.status_code == 422
+        assert refused.json()["detail"] == REFUSAL
+        assert calls == []
+        _assert_still_paused(directory, before_script, before_wav)
+        from workers.qa.budget_store import open_project_budget
+
+        assert seen
+        assert min(seen) == 1
+        assert max(seen) == 1
+        stored = json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))
+        assert stored["used"] == 1
+        assert stored["increase_only"] is True
+        assert stored["used"] <= stored["limit"]
+        assert open_project_budget(project_id).used == 1
+        from workers.workflow.versions import restore_version
+
+        restore_version(project_id, version_id)
+        assert open_project_budget(project_id).used == 1
+        decoy = json.loads(
+            (directory / "versions" / version_id / "regen_budget.json").read_text(encoding="utf-8")
+        )
+        assert decoy["used"] == 0
+        restored = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+        assert "regen_used" not in restored
+    finally:
+        reset_gateway()
+
+
+def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch) -> None:
+    """The second take failing keeps the take that already landed and refuses the edit."""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    project_id = "takefail"
+    directory = _hold(project_id)
+    _seed_budget(directory, 1)
+    version_id = _plant_lower_budget(directory)
+    seen = _watch_budget(monkeypatch)
+    calls = _block_generation(monkeypatch)
+    from workers.qa.budget_store import ProjectBudget
+
+    real_take = ProjectBudget.try_take
+
+    def second_fails(self: ProjectBudget) -> bool:
+        second_fails.calls += 1
+        if second_fails.calls >= 2:
+            return False
+        return real_take(self)
+
+    second_fails.calls = 0
+    monkeypatch.setattr(ProjectBudget, "try_take", second_fails)
+    script_path = directory / "nodes" / "n06_voiceover.json"
+    before_script = _sha(script_path)
+    before_wav = {
+        shot_id: _sha(directory / "storyboard" / shot_id / "voice.wav")
+        for shot_id in ("S01", "S02")
+    }
+    from app.main import app
+    from gateway.service import reset_gateway
+
+    try:
+        with TestClient(app) as client:
+            refused = client.post(
+                f"/v1/projects/{project_id}/storyboard/S01",
+                json={"voiceover": "先看这台柱塞泵。改过一句"},
+            )
+        assert refused.status_code == 422
+        assert refused.json()["detail"] == REFUSAL
+        assert second_fails.calls == 2
+        assert calls == []
+        _assert_still_paused(directory, before_script, before_wav)
+        from workers.qa.budget_store import open_project_budget
+
+        assert min(seen) == 1
+        assert max(seen) == 2
+        assert seen == sorted(seen)
+        stored = json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))
+        assert stored["used"] == 2
+        assert stored["increase_only"] is True
+        assert stored["used"] <= stored["limit"]
+        assert open_project_budget(project_id).used == 2
+        from workers.workflow.versions import restore_version
+
+        restore_version(project_id, version_id)
+        assert open_project_budget(project_id).used == 2
+        decoy = json.loads(
+            (directory / "versions" / version_id / "regen_budget.json").read_text(encoding="utf-8")
+        )
+        assert decoy["used"] == 0
+        restored = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+        assert "regen_used" not in restored
+    finally:
+        reset_gateway()
+
+
 def test_exhausted_budget_rejects_before_tts(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_LIVE", "0")
