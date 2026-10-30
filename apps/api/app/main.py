@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.brands import router as brand_router
 from app.logging import log_event
 from app.projects import router
 from app.settings import get_settings
@@ -36,6 +37,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 app.include_router(router)
+app.include_router(brand_router)
 
 
 @app.get("/health")

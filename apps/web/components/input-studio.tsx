@@ -1,6 +1,7 @@
 "use client";
 
 import { ImagePlus } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
@@ -310,6 +311,17 @@ export function InputStudio() {
         <Button type="submit" size="lg" className="mt-6 w-full" disabled={busy}>
           {busy ? "正在提交" : "开始生成"}
         </Button>
+        <p className="mt-3 text-center text-sm">
+          <Link
+            href={
+              sentence.trim()
+                ? `/concepts?sentence=${encodeURIComponent(sentence.trim())}`
+                : "/concepts"
+            }
+          >
+            先看三个方案
+          </Link>
+        </p>
       </form>
 
       <Card className="min-w-0 p-5">

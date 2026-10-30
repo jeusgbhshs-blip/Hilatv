@@ -16,17 +16,17 @@
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ✅ | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ✅ | [t09-render](https://github.com/jeusgbhshs-blip/Hilatv/pull/29) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ✅ | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T11 | 前端：输入页、进度页、成片页 | T10 | 🔵 | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T11 | 前端：输入页、进度页、成片页 | T10 | ✅ | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
-| T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
+| T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | 🔵 | t15-brand-concept | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ⬜ | – | |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
-| T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | 🔵 | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 验收中。预设全部「试用」，未做 20 次实测。假设见下方 |
+| T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并。预设全部「试用」，未做 20 次实测。假设见下方 |
 
 状态：⬜ 未开始 · 🟡 开发中 · 🔵 验收中 · ✅ 已合并 · ⛔ 阻塞
 
@@ -62,6 +62,24 @@
 - 合并了哪些：T09（PR #29，无新迁移）、T10（PR #30，无新迁移）
 - 正在做什么：T11 输入页、进度页、成片页。无 Key，`make accept-t11` 用 mock 后端。Alembic 仍是单一 head `t03_gateway_0002`。另开 T25：电商、本地生活、教育、政企四套模板补上镜头计划和叙事变体，镜头预设全部标成「试用」。
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测，本任务不跑。
+
+### 2026-10-30 T15
+- 合并了哪些：T11（PR #38）、T25（PR #41，`66306cc`）已在 main。本分支已并入这份 main。
+- 正在做什么：T15 N2 品牌资料和 N3 方案卡。抠图、去底、单色版、色彩、肖像授权和锚点补全放在 `workers/brand_kit`，给 T13 复用。无 Key，`make accept-t15` 走 mock。
+- 需要提供什么：没有新的 Key。Logo 和产品图用自绘样张，不使用客户实拍。
+
+## T15 假设
+
+- 抠图、Logo 去底、白版和黑版、安全边距、色彩、卖点、肖像授权、偏好回写、侧面/背面锚点，都在 `workers/brand_kit`。N2 只编排。T13 应调用这个包，不要在节点里再写一套。当前抠图是本地纯色去底，用来在没有 BiRefNet / RMBG 权重时通过质检；接口是 `matte()` 返回透明 PNG 和边缘报告。
+- 第 5 章 `LogoAsset` 只有 `mono_white`，没有黑版字段。黑版写在资料旁边的 `mono_black`，不改 BrandKit 模型，也不新增迁移。Alembic head 仍是 `t03_gateway_0002`。
+- 多角度补全走图像网关，提示词写明不直接上屏，并且带上「无文字」约束。生成结果只放在 `anchors`（`on_screen` 为 false），不写入 `photos` 或 `cutouts`。
+- 卖点只保留人工填写的句子，以及原文里已经出现的句子。模型多写的参数丢掉。用户改卖点或删掉的句子写回资料；删掉的句子追加进 `banned_words`，下一条片子不会再念。
+- 人物可以存 `consent=false`，但 `usable_people` 不包含他们。`require_consent` 会拒绝使用。未授权却填写 `voice_id` 时直接失败。
+- 企业资料存在 `HILATV_BRAND_DIR`（默认 `<项目目录>/_brands`）的 JSON 里。同一 `enterprise_id` 再开项目时按 Logo、色彩、字体、CTA、卖点原样套用。Postgres `brand_kits` 仍是按 `brand_id` 的只读兜底，验收不连数据库。
+- N3 读取 T25 写进行业模板的 `narrative_structures`（每行业 3–5 套），从中取 3 套做方案卡。不改 `templates/`。无 Key 时模型草稿是空的，规则文案交卷。两两文本嵌入余弦必须小于 0.85，并且不能含 `banned_words`。嵌入是本地字符二元组，不调用嵌入接口。
+- 每张卡一张封面，经图像网关生成。网关只返回 `mock://`、没有字节时，卡片预览是一张本地纯色图，画面上没有字。记录下来的 `cover_uri` 仍是网关返回的地址。
+- 主流程不暂停等选卡。没有 `concept_selection` 时 N3 仍生成三张卡，并自动记下「你帮我选」，所以 T10 的出片验收继续往下走。用户在方案页点了某一张，创建项目时带上那个方向 id。
+- 画面上的字、Logo、价格、电话仍然只由后期叠加。本任务不改 N15、`workers/qa`、`eval/`。
 
 ## T11 假设
 
