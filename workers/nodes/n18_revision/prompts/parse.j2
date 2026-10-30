@@ -1,0 +1,13 @@
+把用户的一句改稿解析成 JSON。只返回一个对象，字段是 targets、change、keep。
+targets 是镜头 id 列表，只能从下面的镜头里选。
+change 的键只能是 lighting、narration、voice、logo、price、phone、duration、visual。
+lighting 取 brighter 或 darker。voice 取 male 或 female。logo 取 remove 或 replace。
+price 和 phone 取 remove。duration 取 shorter 或 longer。visual 取 regenerate。
+narration 是新的旁白原文，或 shorter。
+keep 写出必须保持不变的方面，例如 composition、narration、logo、other_shots。
+画面里的文字、Logo、价格、电话由后期叠加，不要写进画面描述。
+
+镜头：
+{{ shots }}
+
+用户说：{{ instruction }}

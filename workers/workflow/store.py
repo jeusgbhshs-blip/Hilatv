@@ -43,6 +43,14 @@ def project_path(project_id: str, *, create: bool = False) -> Path:
 
 
 @contextmanager
+def locked_project(project_id: str) -> Iterator[Path]:
+    """Exclusive lock for project.json, node files, and version history."""
+
+    with _lock(project_id) as directory:
+        yield directory
+
+
+@contextmanager
 def _lock(project_id: str) -> Iterator[Path]:
     directory = project_path(project_id, create=True)
     handle = (directory / ".lock").open("a+")
