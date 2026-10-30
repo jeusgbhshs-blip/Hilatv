@@ -32,6 +32,8 @@ class N14Input(BaseModel):
     brief: Brief | None = None
     intro: str | None = None
     corner_logo: bool | None = None
+    # False drops intro, corner, and ending logo cards. None keeps today's overlays.
+    brand_logo: bool | None = None
     width: int | None = Field(default=None, ge=16)
     height: int | None = Field(default=None, ge=16)
     work_dir: str | None = None

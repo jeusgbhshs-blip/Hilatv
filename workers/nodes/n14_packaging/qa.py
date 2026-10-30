@@ -40,8 +40,11 @@ def check(result: NodeResult) -> list[PackageElement]:
             raise QAError("intro logo is missing")
     logos = [item for item in elements if item.kind == "outro_logo"]
     ctas = [item for item in elements if item.kind == "outro_cta"]
+    show_logo = result.payload.get("brand_logo", True) is not False
     if len(logos) != 1 or len(ctas) != 1:
         raise QAError("the ending needs one logo and one CTA")
+    if not show_logo and any(item.kind in {"intro_logo", "corner_logo"} for item in elements):
+        raise QAError("corner and opening logos were supposed to be omitted")
     phone = str(result.payload.get("phone") or "")
     if phone and phone not in ctas[0].text:
         raise QAError("CTA does not include the brand phone")

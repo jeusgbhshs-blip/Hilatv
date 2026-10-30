@@ -133,6 +133,17 @@ def test_badge_pixels_match_the_source_text(tmp_path: Path) -> None:
     assert same_pixels(Image.open(logo["png_path"]), redraw)
 
 
+def test_brand_logo_can_leave_only_the_ending_card(tmp_path: Path) -> None:
+    result = _run(tmp_path, brand_logo=False)
+    elements = check(result)
+    kinds = {item.kind for item in elements}
+    assert "outro_logo" in kinds
+    assert "outro_cta" in kinds
+    assert "intro_logo" not in kinds
+    assert "corner_logo" not in kinds
+    assert result.payload["brand_logo"] is False
+
+
 def test_corner_logo_can_be_omitted(tmp_path: Path) -> None:
     result = _run(tmp_path, intro="none", corner_logo=False)
     elements = check(result)

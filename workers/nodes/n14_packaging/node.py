@@ -80,7 +80,8 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     width, height = _canvas(payload)
     insets = safe_insets(list(payload.brief.platform) if payload.brief else [])
     board_s = sum(float(shot.duration_s) for shot in script.shots)
-    template = _intro_template(payload.intro, payload, board_s)
+    show_logo = True if payload.brand_logo is None else payload.brand_logo
+    template = "none" if not show_logo else _intro_template(payload.intro, payload, board_s)
     opening = min(float(intro_spec()["default_s"]), float(intro_spec()["max_s"]))
     intro_s = 0.0 if template == "none" else quantize_s(opening)
     outro_s = quantize_s(float(outro_spec()["duration_s"]))
@@ -88,7 +89,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     primary, secondary, accent = _colors(payload)
     phone = payload.brand_kit.cta.phone.strip() if payload.brand_kit else ""
     website = payload.brand_kit.cta.website.strip() if payload.brand_kit else ""
-    corner = True if payload.corner_logo is None else payload.corner_logo
+    corner = (True if payload.corner_logo is None else payload.corner_logo) and show_logo
     fallback = Path("/tmp") / "hilatv-n14" / request.project_id
     work = Path(payload.work_dir) if payload.work_dir else fallback
     work.mkdir(parents=True, exist_ok=True)
@@ -101,7 +102,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     corner_path = work / "corner.png"
     save_png(render_logo(corner_size, primary, secondary), corner_path)
     elements: list[PackageElement] = []
-    if template != "none":
+    if template != "none" and show_logo:
         elements.append(
             _element(
                 request.project_id,
@@ -295,6 +296,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
             "duration_s": round(total, 3),
             "phone": phone,
             "corner_logo": corner,
+            "brand_logo": show_logo,
             "width": width,
             "height": height,
         },

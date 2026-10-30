@@ -43,6 +43,14 @@ def project_path(project_id: str, *, create: bool = False) -> Path:
 
 
 @contextmanager
+def locked_project(project_id: str) -> Iterator[Path]:
+    """Exclusive lock for project.json, node files, and version history."""
+
+    with _lock(project_id) as directory:
+        yield directory
+
+
+@contextmanager
 def _lock(project_id: str) -> Iterator[Path]:
     directory = project_path(project_id, create=True)
     handle = (directory / ".lock").open("a+")
@@ -69,6 +77,8 @@ def _read(directory: Path, project_id: str) -> dict[str, Any]:
 
 
 def _write(directory: Path, snapshot: dict[str, Any]) -> None:
+    # Regenerations live in regen_budget.json. A snapshot must not keep a copy.
+    snapshot.pop("regen_used", None)
     _atomic_text(
         directory / "project.json",
         json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n",

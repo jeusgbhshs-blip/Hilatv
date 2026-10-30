@@ -96,8 +96,17 @@ test("one sentence becomes a playable download", async ({ page }) => {
   await expect(page.getByLabel("语种")).toBeVisible();
   await expect(page.getByLabel("时长")).toBeVisible();
   await expect(page.getByRole("button", { name: "导出其他版本" })).toBeVisible();
-  await expect(page.getByLabel("改稿")).toBeDisabled();
+  await expect(page.getByLabel("改稿版本")).toBeVisible();
+  await expect(page.getByRole("option", { name: /版本 1/ })).toBeEnabled();
+  const edit = page.getByLabel("改稿", { exact: true });
+  await expect(edit).toBeEnabled();
   await expect(page.getByRole("button", { name: "发送改稿" })).toBeDisabled();
+  await edit.fill("第二个镜头太暗");
+  await expect(page.getByRole("button", { name: "发送改稿" })).toBeEnabled();
+  await edit.fill("");
+  const shot = page.getByRole("button", { name: /第 \d+ 镜/ }).first();
+  await shot.click();
+  await expect(shot).toHaveAttribute("aria-pressed", "true");
   await expectNoHorizontalOverflow(page);
 
   const downloadPromise = page.waitForEvent("download");

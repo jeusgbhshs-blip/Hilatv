@@ -12,12 +12,15 @@ from typing import Any
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.logging import log_event
+from gateway import get_gateway
 from workers.nodes.n01_brief.schema import AttachmentRef
+from workers.nodes.n18_revision.concept_gate import classify_concept, read_project_concept
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
 from workers.workflow.contract import PIPELINE
+from workers.workflow.revise import RevisionError, revise_project
 from workers.workflow.service import start_film
 from workers.workflow.store import (
     load_checkpoint,
@@ -27,6 +30,7 @@ from workers.workflow.store import (
     read_snapshot,
     valid_project_id,
 )
+from workers.workflow.versions import VersionError, list_versions, restore_version
 
 router = APIRouter()
 
@@ -54,6 +58,13 @@ class CreateProject(BaseModel):
 
 class RerunProject(BaseModel):
     node: str = Field(min_length=1)
+
+
+class ReviseProject(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    instruction: str = Field(min_length=1, max_length=4000)
+    shot_id: str | None = None
 
 
 def brand_for_request(body: CreateProject, *, project_id: str) -> dict[str, Any] | None:
@@ -222,12 +233,34 @@ def _public_attachments(raw: Any) -> list[dict[str, Any]]:
     return public
 
 
+def _concept_public(project_id: str, snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Surface a degraded concept. A 200 from /v1/concepts can still be a fallback."""
+
+    file_view = classify_concept(None)
+    if valid_project_id(project_id):
+        file_view = classify_concept(read_project_concept(project_root() / project_id))
+    text_source = file_view.text_source or str(snapshot.get("concept_text_source") or "")
+    degraded = (
+        file_view.degraded
+        or snapshot.get("concept_degraded") is True
+        or snapshot.get("concept_ok") is False
+        or text_source == "template_fallback"
+    )
+    ok: bool | None = False if degraded else file_view.ok
+    return {
+        "concept_degraded": degraded,
+        "concept_ok": ok,
+        "concept_text_source": text_source,
+    }
+
+
 def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     body = dict(snapshot)
     if body.get("status") == "running" and body.get("started_at"):
         body["elapsed_s"] = round(time.time() - float(body["started_at"]), 3)
     if "attachments" in body:
         body["attachments"] = _public_attachments(body.get("attachments"))
+    body.update(_concept_public(str(body.get("project_id") or ""), body))
     return body
 
 
@@ -334,6 +367,35 @@ async def rerun_project(project_id: str, body: RerunProject) -> JSONResponse:
         status_code=202,
         content={"project_id": project_id, "workflow_id": workflow_id, "status": "running"},
     )
+
+
+@router.get("/v1/projects/{project_id}/revisions")
+def project_revisions(project_id: str) -> dict[str, Any]:
+    try:
+        return list_versions(project_id)
+    except VersionError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/v1/projects/{project_id}/revisions/{version_id}/restore")
+def project_restore(project_id: str, version_id: str) -> dict[str, Any]:
+    try:
+        return restore_version(project_id, version_id)
+    except VersionError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/v1/projects/{project_id}/revisions")
+def project_revision(project_id: str, body: ReviseProject) -> dict[str, Any]:
+    try:
+        return revise_project(
+            project_id,
+            body.instruction,
+            shot_id=body.shot_id,
+            gateway=get_gateway(),
+        )
+    except (RevisionError, VersionError) as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
 @router.get("/v1/projects/{project_id}/download")
