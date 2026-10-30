@@ -55,6 +55,9 @@ jobs:
       - name: Accept T09
         run: make accept-t09
 
+      - name: Accept T10
+        run: make accept-t10
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

@@ -12,10 +12,10 @@
 | T04 | 图像/视频/TTS adapter | T03 | ✅ | [t04-media-adapters](https://github.com/jeusgbhshs-blip/Hilatv/pull/24) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T05 | N1 需求理解 + 行业默认值表 | T02, T03 | ✅ | [t05-n1-brief](https://github.com/jeusgbhshs-blip/Hilatv/pull/25) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T06 | N4 脚本 + N5 分镜 | T05 | ✅ | [t06-script-storyboard](https://github.com/jeusgbhshs-blip/Hilatv/pull/26) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T07 | N6 TTS + 时间戳回写 | T04, T06 | 🔵 | [t07-n6-voiceover](https://github.com/jeusgbhshs-blip/Hilatv/pull/27) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T07 | N6 TTS + 时间戳回写 | T04, T06 | ✅ | [t07-n6-voiceover](https://github.com/jeusgbhshs-blip/Hilatv/pull/27) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ✅ | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | 🔵 | t09-render | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ⬜ | – | |
+| T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ✅ | [t09-render](https://github.com/jeusgbhshs-blip/Hilatv/pull/29) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | 🔵 | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
@@ -58,9 +58,26 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：无
-- 正在做什么：T09 N13 字幕、N14 包装、N15 FFmpeg 合成。无 Key，本地字体和 FFmpeg。Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T09 本身不需要 Key
+- 合并了哪些：T09（PR #29，无新迁移）
+- 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
+
+## T10 假设
+
+- 默认 `HILATV_TEMPORAL_MODE=embedded`：用 temporalio 在进程里拉起 dev server（真实时间，`HILATV_TEMPORAL_CLOCK=local`）。不依赖 Compose 里的 Temporal。`remote` 才连 `TEMPORAL_ADDRESS`，活动要另起 `hilatv worker`。单元测试里的断点续跑用 time-skipping 测试服务器，同一套 Workflow。
+- Worker 关掉 workflow cache，新进程可以马上接上未完成的 run，不用等 sticky queue 超时。
+- 节点内部 `max_attempts=1`。重试在 Temporal Activity 上，最多 3 次。质检标了 `retryable=False` 的错误不再重试。
+- N2 在 T15 之前只读：请求里的 Brand Kit 优先；否则按 `brand_id` 读 `brand_kits`。库不在或没有记录就当没有资料，不创建。N3 不调用模型，也不做 3 张方案卡，固定「你帮我选」，方向用 Brief 的 `video_type`。N4 仍然只吃 Brief 和 Brand Kit。
+- N1 若还有开放问题，不挡住出片。推荐项已经写进 Brief。
+- 主链路每镜候选默认 3（不低于 SPEC 的 3，可用环境变量调到 8）。不传 `enterprise_id`，不写 `candidates` 表。
+- 交给 N13/N14/N15 的脚本是 N6 回写过时长的那份。N8/N10 的候选单独保存。N15 现有输入没有视频地址，成片底板仍是它自己的纯色画面，字和 Logo 只在后期叠。N10 的片子留在候选里。
+- 画面上的字、Logo、价格、电话仍然只由 N13/N14/N15 叠加。
+- 项目状态写在 `HILATV_PROJECT_DIR`（默认系统临时目录）。不新增表。Alembic head 仍是 `t03_gateway_0002`。
+- `start_from` 会重跑该节点和它后面的节点。n13 与 n14 并行；从 n13 重跑时 n14 会再跑一次，从 n14 重跑则留下已有字幕。
+- `elapsed_s` 是从开跑到成片的墙钟秒数。mock 和 live 都记，不跟 SPEC §1.4 的 15 分钟比。
+- `make accept-t10` 用一句 15 秒中文宣传片，画布 320×180，并清掉对象存储变量，这样 mock 不连 MinIO。issue 里的 30 秒英文 live 命令不在这条验收里执行。
+- 创建项目的句子最长 4000 字。
+- N13 对重复出现的词，按这一行自己的起点去对时间戳，不再总是用第一次出现。否则真实 N6 稿里第二个「工厂」会对不上，误差会超过 100ms。
 
 ### 2026-10-29
 - 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）、T05（PR #25，无新迁移）、T06（PR #26，无新迁移）、T08（PR #28，无新迁移）

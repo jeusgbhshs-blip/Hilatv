@@ -1,1 +1,1 @@
-"""Temporal workflow package. The director graph is wired in T10."""
+"""Temporal workflows. The T10 film line is ``workers.workflow.film``."""

@@ -23,7 +23,11 @@ dependencies = [
   "jsonschema>=4.23.0",
   "pypdf>=5.1",
   "pillow>=10.4.0",
+  "temporalio>=1.9,<2",
 ]
+
+[project.scripts]
+hilatv = "workers.workflow.cli:main"
 
 [project.optional-dependencies]
 dev = [
@@ -63,6 +67,7 @@ testpaths = [
   "workers/nodes/n14_packaging/tests",
   "workers/nodes/n15_compose/tests",
   "workers/schemas/tests",
+  "workers/workflow/tests",
   "eval/tests",
 ]
 pythonpath = [".", "apps/api"]
