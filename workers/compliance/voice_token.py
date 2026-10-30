@@ -11,11 +11,17 @@ import hashlib
 import hmac
 import json
 import os
+import secrets
+import threading
 import time
+import uuid
 
-from workers.identity.session import session_secret
+from workers.identity.session import SessionConfigError, session_secret
 
 _TTL_S = 120
+_PROCESS_VOICE = secrets.token_bytes(32)
+_USED: set[str] = set()
+_USED_LOCK = threading.Lock()
 
 
 class VoiceConsentError(Exception):
@@ -28,6 +34,7 @@ def issue_voice_token(voice: str, enterprise_id: str) -> str:
         "v": 1,
         "voice": voice,
         "eid": enterprise_id,
+        "jti": str(uuid.uuid4()),
         "iat": now,
         "exp": now + _TTL_S,
     }
@@ -36,7 +43,11 @@ def issue_voice_token(voice: str, enterprise_id: str) -> str:
     return body + "." + _b64(digest)
 
 
-def verify_voice_token(token: str | None, voice: str | None) -> None:
+def verify_voice_token(
+    token: str | None,
+    voice: str | None,
+    enterprise_id: str | None = None,
+) -> None:
     if not token:
         raise VoiceConsentError("tts 必须经过授权门")
     body, separator, digest = token.partition(".")
@@ -55,14 +66,32 @@ def verify_voice_token(token: str | None, voice: str | None) -> None:
     exp = payload.get("exp")
     if not isinstance(exp, int) or exp < int(time.time()):
         raise VoiceConsentError("声音令牌已过期")
-    expected_voice = voice or ""
-    if payload.get("voice") != expected_voice:
+    if payload.get("voice") != (voice or ""):
         raise VoiceConsentError("声音令牌与请求不一致")
+    if payload.get("eid") != (enterprise_id or ""):
+        raise VoiceConsentError("声音令牌与企业不一致")
+    jti = payload.get("jti")
+    if not isinstance(jti, str) or not jti or not _consume(jti):
+        raise VoiceConsentError("声音令牌已使用")
+
+
+def _consume(jti: str) -> bool:
+    with _USED_LOCK:
+        if jti in _USED:
+            return False
+        _USED.add(jti)
+        return True
 
 
 def _key() -> bytes:
     raw = os.getenv("HILATV_VOICE_CONSENT_SECRET", "").strip()
-    material = raw.encode("utf-8") if raw else session_secret()
+    if raw:
+        material = raw.encode("utf-8")
+    else:
+        try:
+            material = session_secret()
+        except SessionConfigError:
+            material = _PROCESS_VOICE
     return hmac.new(material, b"hilatv-voice-consent", hashlib.sha256).digest()
 
 

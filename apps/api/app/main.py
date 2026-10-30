@@ -1,6 +1,7 @@
 """FastAPI application."""
 
 import os
+import re
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -13,7 +14,10 @@ from app.identity import router as identity_router
 from app.logging import log_event
 from app.projects import router
 from app.settings import get_settings
+from workers.identity.session import assert_live_session_configured
 from workers.workflow.runtime import shutdown_runtime
+
+_FRAME_PATH = re.compile(r"^/v1/projects/[^/]+/storyboard/[^/]+/frame$")
 
 
 def web_origins() -> list[str]:
@@ -27,6 +31,7 @@ def web_origins() -> list[str]:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    assert_live_session_configured()
     yield
     await shutdown_runtime()
 
@@ -51,6 +56,8 @@ async def reject_client_enterprise_id(request: Request, call_next):
 
     if "enterprise_id" in request.query_params:
         return JSONResponse(status_code=422, content={"detail": "enterprise_id 不能由请求指定"})
+    if "session" in request.query_params and not _FRAME_PATH.match(request.url.path):
+        return JSONResponse(status_code=422, content={"detail": "session 查询参数只用于画面"})
     return await call_next(request)
 
 

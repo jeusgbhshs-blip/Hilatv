@@ -223,11 +223,11 @@
 
 ## SEC-54 假设
 
-- 登录会话是服务端签发的 HMAC 令牌，企业编号写在令牌里。`POST /v1/session` 只创建新企业，请求体不能指定 `enterprise_id`。浏览器把令牌放在 `localStorage`，接口走 `Authorization: Bearer`。图片和 WebSocket 不能带这个头，所以另外接受查询参数 `session`（会话令牌，不是企业编号）。查询参数里的 `enterprise_id` 一律 422。
+- 登录会话是服务端签发的 HMAC 令牌，企业编号写在令牌里。`POST /v1/session` 在 mock 下创建新企业，请求体不能指定 `enterprise_id`。`HILATV_LIVE=1` 时这个接口返回 403，除非请求头 `X-Hilatv-Admin-Secret` 与 `HILATV_SESSION_ADMIN_SECRET` 用 `compare_digest` 对上。Live 启动时没有 `HILATV_SESSION_SECRET` 就拒绝启动。令牌带 `jti`，`POST /v1/session/revoke` 之后不能再使用。`?session=` 只接受在分镜画面和进度 WebSocket 上，其它接口带这个查询参数返回 422。
 - 还没有成员账号表。谁拿到令牌，谁就是该企业。生产环境要配置 `HILATV_SESSION_SECRET`，否则密钥只活在当前进程里，重启后旧令牌失效。这不是厂商密钥。
 - 项目、品牌、上传、分镜、改稿、导出都先核对会话企业。对不上或项目上没有企业编号时返回 404「项目不存在」或「还没有品牌资料」，响应里不带对方的句子、人名或声音编号。`/v1/shares/{token}` 仍是分享能力链接，不要求企业会话。
 - 人工放行 `POST /v1/projects/{id}/human-review/release` 和 `hilatv release` 先核对项目属于当前企业，再写 `human_review_released`（放行人 `member_id`、企业编号、`ts`），然后才 `start_film`。别的企业返回 404，不写这条事件。
-- `Gateway.tts` 和 `execute("tts")` 必须带 consent_gate 签发的短时声音令牌。令牌和声音编号绑定。业务节点走 `gated_tts`。网关自己的测试和 `accept_media` 仍调用 `tts`，但要先向授权门要令牌。`people_for_use` / `release_kit`、`LicenseRecord` 和 `open_project_budget` 的判断没有改，只是企业编号改从会话或项目记录来。
+- `Gateway.tts` 和 `execute("tts")` 必须带 consent_gate 签发的短时声音令牌。令牌绑定声音编号和企业编号，第一次合成后作废。业务节点走 `gated_tts`。网关自己的测试和 `accept_media` 仍调用 `tts`，但要先向授权门要令牌。静态检查会拦住 `getattr(..., "tts")`。`people_for_use` / `release_kit`、`LicenseRecord` 和 `open_project_budget` 的判断没有改，只是企业编号改从会话或项目记录来。
 - 无密钥，`HILATV_LIVE=0`。不新增迁移。Alembic head 仍是 `t03_gateway_0002`。
 
 ## SEC-01 假设

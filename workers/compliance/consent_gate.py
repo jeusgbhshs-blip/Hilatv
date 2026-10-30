@@ -108,4 +108,10 @@ def gated_tts(
     """The only supported way for a node to synthesize speech."""
 
     token = issue_tts_consent(voice, enterprise_id)
-    return gateway.tts(text, voice=voice, consent_token=token, **kwargs)
+    return gateway.tts(
+        text,
+        voice=voice,
+        consent_token=token,
+        enterprise_id=enterprise_id or "",
+        **kwargs,
+    )

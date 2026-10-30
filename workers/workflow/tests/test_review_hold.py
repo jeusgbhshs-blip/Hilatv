@@ -78,6 +78,7 @@ def test_storyboard_continue_still_stops_for_needs_review(tmp_path: Path, monkey
     from app.main import app
     from workers.identity.session import open_session
 
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "review-hold-session")
     ident = open_session()
     update_snapshot("boardhold", enterprise_id=ident.enterprise_id)
     headers = {"Authorization": f"Bearer {ident.token}"}

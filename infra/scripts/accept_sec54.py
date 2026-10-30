@@ -44,16 +44,19 @@ def main() -> int:
             server.wait(timeout=10)
         except subprocess.TimeoutExpired:
             server.kill()
+    passed = 0
     failed = 0
     print(f"{'endpoint':<56} {'result':<24} status")
     for name, result, detail in rows:
         print(f"{name:<56} {result:<24} {detail}")
-        if result != "PASS" and result != "SKIP":
+        if result == "PASS":
+            passed += 1
+        else:
             failed += 1
     if failed:
-        print(f"accept-sec54 failed {failed}")
+        print(f"accept-sec54 failed pass={passed} fail={failed}")
         return 1
-    print(f"accept-sec54 ok endpoints={len(rows)}")
+    print(f"accept-sec54 ok pass={passed}")
     return 0
 
 
@@ -251,7 +254,7 @@ def _human_review(
     route = "/v1/projects/{project_id}/human-review/release"
     name = "POST /v1/projects/{id}/human-review/release"
     if route not in paths:
-        return [(name, "SKIP", "route not on this build")]
+        return [(name, "FAIL", "route missing")]
     before = snapshot.read_bytes()
     hidden = client.post(f"/v1/projects/{project_id}/human-review/release", headers=stranger)
     rows = [_status(f"{name} other enterprise", hidden, 404, absent=(SECRET_SENTENCE,))]

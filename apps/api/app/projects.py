@@ -23,7 +23,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.identity import owned_project, require_identity
+from app.identity import owned_project, require_frame_identity, require_identity
 from app.logging import log_event
 from gateway import get_gateway
 from workers.identity.access import Conflict, NotFound, audit_human_release
@@ -550,7 +550,7 @@ def edit_storyboard(
 def storyboard_frame(
     project_id: str,
     shot_id: str,
-    identity: Identity = Depends(require_identity),
+    identity: Identity = Depends(require_frame_identity),
 ) -> FileResponse:
     _snapshot_or_404(project_id, identity)
     path = frame_file(project_id, shot_id)

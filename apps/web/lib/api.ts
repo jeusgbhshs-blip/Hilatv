@@ -54,10 +54,21 @@ export async function ensureSession(): Promise<string> {
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  const token = await ensureSession();
   const headers = new Headers(init.headers);
-  if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
-  return fetch(apiUrl(path), { ...init, headers });
+  if (!headers.has("Authorization")) {
+    const token = await ensureSession();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
+  }
+  const response = await fetch(apiUrl(path), { ...init, headers });
+  if (response.status !== 401 || typeof window === "undefined" || headers.get("X-HiLatv-Retried")) {
+    return response;
+  }
+  window.localStorage.removeItem(SESSION_KEY);
+  const fresh = await ensureSession();
+  const retryHeaders = new Headers(init.headers);
+  if (fresh) retryHeaders.set("Authorization", `Bearer ${fresh}`);
+  retryHeaders.set("X-HiLatv-Retried", "1");
+  return fetch(apiUrl(path), { ...init, headers: retryHeaders });
 }
 
 export async function errorMessage(response: Response): Promise<string> {

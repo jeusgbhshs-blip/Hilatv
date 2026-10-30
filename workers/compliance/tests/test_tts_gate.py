@@ -33,13 +33,35 @@ def test_direct_tts_is_rejected(tmp_path: Path) -> None:
         gateway.execute("tts", "你好", params={"voice": "zh_male_steady"})
 
 
-def test_gate_token_is_bound_to_the_voice(tmp_path: Path) -> None:
+def test_gate_token_is_bound_to_the_voice_and_enterprise(tmp_path: Path) -> None:
     gateway = build_gateway(tmp_path, routes=mock_llm_routes())
-    token = issue_tts_consent("zh_male_steady", None)
-    spoken = gateway.tts("你好", voice="zh_male_steady", seed=1, consent_token=token)
-    assert spoken["voice"] == "zh_male_steady"
-    with pytest.raises(GatewayError, match="不一致"):
+    token = issue_tts_consent("zh_male_steady", "11111111-1111-4111-8111-111111111111")
+    with pytest.raises(GatewayError, match="声音"):
         gateway.tts("你好", voice="zh_female_steady", seed=1, consent_token=token)
+    with pytest.raises(GatewayError, match="企业"):
+        gateway.tts(
+            "你好",
+            voice="zh_male_steady",
+            seed=1,
+            consent_token=token,
+            enterprise_id="22222222-2222-4222-8222-222222222222",
+        )
+    spoken = gateway.tts(
+        "你好",
+        voice="zh_male_steady",
+        seed=1,
+        consent_token=token,
+        enterprise_id="11111111-1111-4111-8111-111111111111",
+    )
+    assert spoken["voice"] == "zh_male_steady"
+    with pytest.raises(GatewayError, match="已使用"):
+        gateway.tts(
+            "你好",
+            voice="zh_male_steady",
+            seed=1,
+            consent_token=token,
+            enterprise_id="11111111-1111-4111-8111-111111111111",
+        )
 
 
 def test_unarchived_clone_cannot_mint_a_token() -> None:
@@ -52,6 +74,11 @@ def test_production_code_cannot_call_tts_directly() -> None:
     mint = _calls("issue_voice_token")
     assert callers == []
     assert mint == []
+
+
+def test_getattr_tts_is_treated_as_a_call() -> None:
+    tree = ast.parse('result = getattr(gateway, "tts")("你好")')
+    assert any(_is_tts_call(node) for node in ast.walk(tree) if isinstance(node, ast.Call))
 
 
 def _calls(name: str) -> list[str]:
@@ -70,9 +97,34 @@ def _calls(name: str) -> list[str]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
+            if name == "tts" and _is_tts_call(node):
+                found.append(f"{relative}:{node.lineno}")
+                continue
             called = node.func
             if isinstance(called, ast.Attribute) and called.attr == name:
                 found.append(f"{relative}:{node.lineno}")
             elif isinstance(called, ast.Name) and called.id == name:
                 found.append(f"{relative}:{node.lineno}")
     return found
+
+
+def _is_tts_call(node: ast.Call) -> bool:
+    called = node.func
+    if isinstance(called, ast.Attribute) and called.attr == "tts":
+        return True
+    if isinstance(called, ast.Name) and called.id == "tts":
+        return True
+    if isinstance(called, ast.Call) and _is_getattr_tts(called):
+        return True
+    return _is_getattr_tts(node)
+
+
+def _is_getattr_tts(node: ast.Call) -> bool:
+    called = node.func
+    is_getattr = (isinstance(called, ast.Name) and called.id == "getattr") or (
+        isinstance(called, ast.Attribute) and called.attr == "getattr"
+    )
+    if not is_getattr or len(node.args) < 2:
+        return False
+    argument = node.args[1]
+    return isinstance(argument, ast.Constant) and argument.value == "tts"
