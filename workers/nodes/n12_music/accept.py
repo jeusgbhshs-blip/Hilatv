@@ -1,24 +1,23 @@
-"""T21 acceptance. Loudness, ducking, and beat error are read back from the wavs.
+"""T21 acceptance.
 
-The beat detector here is not the one inside the node. It smooths the sample
-difference and picks peaks. Cut times are the node's edit. The comparison is
-those cuts against this detector, on the rendered bed.
+Picture-cut alignment is not met: T10 still cuts on N6 durations, so this
+command does not treat a plan-versus-grid check as the SPEC beat limit.
+Ducking is the music level under narration versus the gaps, recovered from
+the rendered mix. Master loudness is ffmpeg ebur128 on the N15 mp4.
 """
 
 from __future__ import annotations
 
 import array
-import math
+import os
 from pathlib import Path
 from typing import Any
 
 from gateway.media_bytes import speech_timestamps
-from workers.nodes.n12_music.measure import integrated_lufs, mean_volume_db, read_wav
+from workers.nodes.n12_music.measure import ducking_db_on_mix, integrated_lufs, read_wav
 from workers.nodes.n12_music.node import run
 from workers.nodes.n12_music.qa import QAError
 from workers.nodes.n12_music.schema import LicenseRecord
-
-BEAT_LIMIT_MS = 80.0
 
 
 def main() -> int:
@@ -33,17 +32,28 @@ def main() -> int:
         print(f"T21 accept: FAIL {exc}")
         return 1
     print(
-        "beat_error_ms={beat_error_ms:.2f} ducking_db={ducking_db:.2f} "
-        "narration_lufs={narration_lufs:.2f} master_lufs={master_lufs:.2f}".format(**metrics)
+        "picture_cut_alignment={picture_cut_alignment} "
+        "internal_grid_check_ms={internal_grid_ms:.2f} "
+        "ducking_db={ducking_db:.2f} "
+        "narration_lufs={narration_lufs:.2f} "
+        "mix_lufs={mix_lufs:.2f} "
+        "mp4_lufs={mp4_lufs:.2f}".format(**metrics)
     )
-    print("T21 accept: cuts within 80ms of measured beats, ducking 10–12 dB, master -14 LUFS ± 1")
+    print(
+        "T21 accept: picture cuts 未达标 / 遗留 (not aligned on the film). "
+        "ducking 10–12 dB measured on the mix. N15 mp4 -14 LUFS ± 1"
+    )
     return 0
 
 
-def evaluate(work: Path, gateway: Any) -> dict[str, float]:
-    work.mkdir(parents=True, exist_ok=True)
+def evaluate(work: Path, gateway: Any) -> dict[str, Any]:
+    root = work.resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    os.environ["HILATV_PROJECT_DIR"] = str(root)
+    os.environ["HILATV_LIVE"] = "0"
+    n12 = root / "n12"
     result = run(
-        {"project_id": "accept-t21", "payload": {**fixture(), "work_dir": str(work)}},
+        {"project_id": "accept-t21", "payload": {**fixture(), "work_dir": str(n12)}},
         gateway=gateway,
     )
     payload = result.payload
@@ -51,55 +61,103 @@ def evaluate(work: Path, gateway: Any) -> dict[str, float]:
     if "无歌词" not in prompt or "无文字" not in prompt:
         raise AssertionError("music prompt is missing the no-lyrics constraint")
     records = [LicenseRecord.model_validate(item) for item in payload["segments"]]
-    if not records or any(not item.source.strip() or not item.license.strip() for item in records):
-        raise AssertionError("a music or sound-effect segment has no source or license")
+    if not records or any(_bare_record(item) for item in records):
+        raise AssertionError("a music or sound-effect segment is missing a rights field")
     kinds = {item.kind for item in records}
     if kinds != {"music", "sfx"}:
         raise AssertionError(f"expected music and sfx segments, got {kinds}")
-    metrics = measure_files(
-        cuts_s=[float(item) for item in payload["cut_times_s"]],
-        bed=Path(payload["music_bed_path"]),
-        ducked=Path(payload["music_ducked_path"]),
-        narration=Path(payload["narration_path"]),
-        mix=Path(payload["mix_path"]),
-    )
-    if metrics["beat_error_ms"] > BEAT_LIMIT_MS:
-        raise AssertionError(f"beat error {metrics['beat_error_ms']:.1f}ms")
+    metrics = _measure(payload, root)
     if not 10.0 <= metrics["ducking_db"] <= 12.0:
         raise AssertionError(f"ducking {metrics['ducking_db']:.2f} dB")
     if abs(metrics["narration_lufs"] + 16) > 1:
         raise AssertionError(f"narration {metrics['narration_lufs']:.2f} LUFS")
-    if abs(metrics["master_lufs"] + 14) > 1:
-        raise AssertionError(f"master {metrics['master_lufs']:.2f} LUFS")
+    if abs(metrics["mix_lufs"] + 14) > 1:
+        raise AssertionError(f"mix {metrics['mix_lufs']:.2f} LUFS")
+    if abs(metrics["mp4_lufs"] + 14) > 1:
+        raise AssertionError(f"mp4 {metrics['mp4_lufs']:.2f} LUFS")
+    if metrics["picture_cut_alignment"] != "未达标":
+        raise AssertionError("picture-cut alignment must stay marked as not met")
     return metrics
 
 
-def measure_files(
-    *,
-    cuts_s: list[float],
-    bed: Path,
-    ducked: Path,
-    narration: Path,
-    mix: Path,
-) -> dict[str, float]:
+def _bare_record(record: LicenseRecord) -> bool:
+    return not all(
+        (
+            record.source.strip(),
+            record.license.strip(),
+            record.evidence_ref.strip(),
+            record.expires_on.strip(),
+            record.usage_scope.strip(),
+        )
+    )
+
+
+def _measure(payload: dict[str, Any], root: Path) -> dict[str, Any]:
+    bed = Path(payload["music_bed_path"])
+    narration = Path(payload["narration_path"])
+    mix = Path(payload["mix_path"])
     bed_pcm, rate = read_wav(bed)
     beats = smoothed_onsets(bed_pcm, rate)
-    if not beats:
-        raise AssertionError("no beats found in the rendered bed")
-    worst = max(min(abs(cut - beat) for beat in beats) for cut in cuts_s)
-    speech_pcm, speech_rate = read_wav(narration)
-    regions = speech_regions(speech_pcm, speech_rate)
-    spans = pad_spans(regions, beats)
-    if not spans:
-        raise AssertionError("no narration span clear of the clicks")
-    deltas = [
-        mean_volume_db(bed, start, end) - mean_volume_db(ducked, start, end) for start, end in spans
-    ]
+    cuts = [float(item) for item in payload["cut_times_s"]]
+    if beats and cuts:
+        internal_ms = max(min(abs(cut - beat) for beat in beats) for cut in cuts) * 1000
+    else:
+        internal_ms = 1_000_000.0
+    track = payload["audio_track"]
+    script = payload["script"]
+    for shot in script.get("shots") or []:
+        shot["transition_out"] = "cut"
+    mp4 = _compose_mp4(root, script, track)
     return {
-        "beat_error_ms": worst * 1000,
-        "ducking_db": sum(deltas) / len(deltas),
+        "picture_cut_alignment": "未达标",
+        "internal_grid_ms": internal_ms,
+        "ducking_db": ducking_db_on_mix(mix, narration, mix.parent),
         "narration_lufs": integrated_lufs(narration),
-        "master_lufs": integrated_lufs(mix),
+        "mix_lufs": integrated_lufs(mix),
+        "mp4_lufs": integrated_lufs(mp4),
+    }
+
+
+def _compose_mp4(root: Path, script: dict[str, Any], track: dict[str, Any]) -> Path:
+    from PIL import Image
+
+    from workers.nodes.n15_compose.node import run as run_edit
+
+    logo = root / "logo.png"
+    Image.new("RGBA", (16, 16), (255, 255, 255, 255)).save(logo)
+    edited = run_edit(
+        {
+            "project_id": "accept-t21",
+            "payload": {
+                "script": script,
+                "work_dir": str(root / "n15"),
+                "intro_s": 0,
+                "outro_s": 0.4,
+                "width": 320,
+                "height": 180,
+                "audio_track": track,
+                "elements": [
+                    _element("outro-logo", "outro_logo", "", 0.4, logo),
+                    _element("outro-cta", "outro_cta", "联系我们", 0.6, logo),
+                ],
+            },
+        },
+        timeout_s=120,
+        max_attempts=1,
+    )
+    return Path(edited.payload["exports"]["master"])
+
+
+def _element(element_id: str, kind: str, text: str, y_ratio: float, logo: Path) -> dict[str, Any]:
+    return {
+        "element_id": element_id,
+        "kind": kind,
+        "text": text,
+        "start_s": 0.2,
+        "end_s": 1.2,
+        "anchor": "center",
+        "y_ratio": y_ratio,
+        "png_path": str(logo),
     }
 
 
@@ -135,61 +193,6 @@ def smoothed_onsets(samples: array.array, sample_rate: int) -> list[float]:
             found.append(index / sample_rate)
             last = index
     return found
-
-
-def speech_regions(
-    samples: array.array,
-    sample_rate: int,
-    *,
-    threshold: int = 400,
-) -> list[tuple[float, float]]:
-    """Windows of energy, so a sine's zero crossings do not split the phrase."""
-
-    hop = max(1, sample_rate // 100)
-    window = max(hop, sample_rate // 50)
-    hot_hops: list[bool] = []
-    for start in range(0, max(0, len(samples) - window), hop):
-        total = 0
-        for sample in samples[start : start + window]:
-            value = int(sample)
-            total += value * value
-        rms = math.sqrt(total / window)
-        hot_hops.append(rms >= threshold)
-    regions: list[tuple[float, float]] = []
-    begin: int | None = None
-    for index, hot in enumerate(hot_hops):
-        if hot and begin is None:
-            begin = index
-        elif not hot and begin is not None:
-            regions.append((begin * hop / sample_rate, index * hop / sample_rate))
-            begin = None
-    if begin is not None:
-        regions.append((begin * hop / sample_rate, len(hot_hops) * hop / sample_rate))
-    return [(start, end) for start, end in regions if end - start >= 0.08]
-
-
-def pad_spans(
-    regions: list[tuple[float, float]],
-    clicks: list[float],
-    *,
-    inset: float = 0.02,
-    guard: float = 0.008,
-) -> list[tuple[float, float]]:
-    spans: list[tuple[float, float]] = []
-    for start, end in regions:
-        inner_s = start + inset
-        inner_e = end - inset
-        if inner_e - inner_s < 0.04:
-            continue
-        cursor = inner_s
-        for click in sorted(item for item in clicks if inner_s < item < inner_e):
-            left = click - guard
-            if left - cursor >= 0.04:
-                spans.append((cursor, left))
-            cursor = max(cursor, click + guard)
-        if inner_e - cursor >= 0.04:
-            spans.append((cursor, inner_e))
-    return spans
 
 
 def fixture() -> dict[str, Any]:

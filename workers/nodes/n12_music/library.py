@@ -13,9 +13,13 @@ from dataclasses import dataclass
 from workers.schemas.script import Shot
 
 LICENSE = "CC0-1.0"
+EVIDENCE_REF = "workers/nodes/n12_music/library.py"
+EXPIRES_ON = "none"
+USAGE_SCOPE = "internal-test-mock-only"
 LICENSE_NOTE = (
     "Synthesized in this repository for tests and dedicated CC0. "
-    "Not a third-party composition or a purchased library."
+    "Not a third-party composition or a purchased library. "
+    f"Evidence: {EVIDENCE_REF}. Expiry: {EXPIRES_ON}. Scope: {USAGE_SCOPE}."
 )
 
 

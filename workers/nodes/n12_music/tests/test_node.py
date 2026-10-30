@@ -60,6 +60,65 @@ def test_mock_music_echoes_the_test_library_license() -> None:
     assert wav.startswith(b"RIFF")
 
 
+def test_live_mode_rejects_the_test_library(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+
+    class _LiveMock:
+        def music(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
+            del prompt, kwargs
+            return {
+                "mock": True,
+                "source": "hilatv-test-library/steady",
+                "license": "CC0-1.0",
+                "bpm": 90,
+                "duration_s": 2,
+            }
+
+    from workers.nodes.n12_music.accept import fixture
+
+    with pytest.raises(QAError, match="test-library"):
+        run(
+            {
+                "project_id": "live-block",
+                "payload": {**fixture(), "work_dir": str(tmp_path / "n12")},
+            },
+            gateway=_LiveMock(),
+            max_attempts=1,
+        )
+
+
+def test_work_dir_must_stay_inside_the_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path / "proj"))
+    (tmp_path / "proj").mkdir()
+
+    class _Gateway:
+        def music(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
+            del prompt, kwargs
+            return {
+                "mock": True,
+                "source": "hilatv-test-library/steady",
+                "license": "CC0-1.0",
+                "bpm": 90,
+                "duration_s": 2,
+            }
+
+    from workers.nodes.n12_music.accept import fixture
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    with pytest.raises(QAError, match="project directory"):
+        run(
+            {"project_id": "path-block", "payload": {**fixture(), "work_dir": str(outside)}},
+            gateway=_Gateway(),
+            max_attempts=1,
+        )
+
+
 def test_missing_license_does_not_deliver(tmp_path: Path) -> None:
     class Blank:
         def music(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
@@ -90,10 +149,11 @@ def test_rendered_mix_meets_the_spec(tmp_path: Path) -> None:
             return gateway.music(prompt, **kwargs)
 
     metrics = evaluate(tmp_path / "mix", Recording())
-    assert metrics["beat_error_ms"] <= 80
+    assert metrics["picture_cut_alignment"] == "未达标"
     assert 10 <= metrics["ducking_db"] <= 12
     assert abs(metrics["narration_lufs"] + 16) <= 1
-    assert abs(metrics["master_lufs"] + 14) <= 1
+    assert abs(metrics["mix_lufs"] + 14) <= 1
+    assert abs(metrics["mp4_lufs"] + 14) <= 1
     assert seen and "无歌词" in seen[0] and "无文字" in seen[0]
     assert gateway.store.list_logs()[-1]["task"] == "music"
 

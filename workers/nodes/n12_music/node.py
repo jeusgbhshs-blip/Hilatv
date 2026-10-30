@@ -9,6 +9,7 @@ Sound effects are picked from the same test library by shot wording.
 from __future__ import annotations
 
 import hashlib
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -19,8 +20,11 @@ from workers.media.ffmpeg import RenderError
 from workers.nodes.n06_voiceover.schema import ShotVoiceover
 from workers.nodes.n12_music.align import boundaries_for
 from workers.nodes.n12_music.library import (
+    EVIDENCE_REF,
+    EXPIRES_ON,
     LICENSE_NOTE,
     SFX_CATALOG,
+    USAGE_SCOPE,
     Track,
     match_sfx,
     select_track,
@@ -39,6 +43,7 @@ from workers.nodes.n12_music.schema import (
     incomplete_reason,
 )
 from workers.nodes.runtime import Deadline
+from workers.qa.settings import project_dir
 from workers.schemas.asset import Asset, AssetKind
 from workers.schemas.script import OnScreenText, Script, Shot
 
@@ -140,9 +145,8 @@ def _execute(
     license_name = str(spoken.get("license") or "").strip()
     if not source or not license_name:
         raise QAError("music response has no source or license", retryable=False)
-    fallback = Path("/tmp") / "hilatv-n12" / request.project_id
-    work = Path(payload.work_dir) if payload.work_dir else fallback
-    work.mkdir(parents=True, exist_ok=True)
+    _reject_test_library_when_live(spoken, source, license_name)
+    work = _work_dir(payload.work_dir, request.project_id)
     cuts, regions, placed = _layout(payload.script.shots, marks, minimums, track.bpm)
     files = build_mix(
         work=work,
@@ -298,6 +302,7 @@ def _records(
             start_s=cuts[0].start_s if cuts else 0.0,
             duration_s=round(span, 6),
             note=LICENSE_NOTE,
+            **_rights(),
         )
     ]
     for index, (kind, start, shot_id) in enumerate(effects):
@@ -314,6 +319,7 @@ def _records(
                 duration_s=0.45 if kind == "machine" else 0.18 if kind == "whoosh" else 0.09,
                 shot_id=shot_id,
                 note=LICENSE_NOTE,
+                **_rights(),
             )
         )
     return records
@@ -374,6 +380,48 @@ def _voice_s(shot: Shot, take: ShotVoiceover | None, language: str) -> float:
     if take is not None and take.audio_s > 0:
         return float(take.audio_s)
     return float(speech_timestamps(shot.voiceover, language=language)[1])
+
+
+def _rights() -> dict[str, str]:
+    return {
+        "evidence_ref": EVIDENCE_REF,
+        "expires_on": EXPIRES_ON,
+        "usage_scope": USAGE_SCOPE,
+    }
+
+
+def _reject_test_library_when_live(spoken: dict[str, Any], source: str, license_name: str) -> None:
+    """A live run must not ship the synthesized CC0 test library as the licence."""
+
+    if os.getenv("HILATV_LIVE", "0").strip() != "1":
+        return
+    mock = bool(spoken.get("mock"))
+    test_source = source.startswith("hilatv-test-")
+    test_license = license_name == "CC0-1.0"
+    if mock or test_source or test_license:
+        raise QAError(
+            "live mode cannot deliver the mock test-library licence",
+            retryable=False,
+        )
+
+
+def _work_dir(raw: str | None, project_id: str) -> Path:
+    root = project_dir()
+    default = root / project_id / "n12"
+    if not raw:
+        default.mkdir(parents=True, exist_ok=True)
+        return default
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise QAError(
+            "n12 work directory must stay inside the project directory",
+            retryable=False,
+        )
+    resolved.mkdir(parents=True, exist_ok=True)
+    return resolved
 
 
 def _mood(payload: N12Input) -> str:

@@ -13,7 +13,8 @@ from workers.nodes.n15_compose.node import run
 from workers.nodes.n15_compose.qa import QAError, check
 
 
-def test_missing_license_blocks_before_export(tmp_path: Path) -> None:
+def test_missing_license_blocks_before_export(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     wav = tmp_path / "mix.wav"
     _tone(wav)
     with pytest.raises(QAError, match="license"):
@@ -34,7 +35,32 @@ def test_missing_license_blocks_before_export(tmp_path: Path) -> None:
         )
 
 
-def test_licensed_track_is_the_timeline_audio(tmp_path: Path) -> None:
+def test_track_outside_the_project_is_refused(tmp_path: Path, monkeypatch) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(project))
+    wav = tmp_path / "mix.wav"
+    _tone(wav)
+    with pytest.raises(QAError, match="project directory"):
+        run(
+            {
+                "project_id": "n15-escape",
+                "payload": {
+                    **_payload(project),
+                    "audio_track": {
+                        "path": str(wav),
+                        "duration_s": 0.4,
+                        "source": "hilatv-test-library/steady",
+                        "license": "CC0-1.0",
+                    },
+                },
+            },
+            max_attempts=1,
+        )
+
+
+def test_licensed_track_is_the_timeline_audio(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     wav = tmp_path / "mix.wav"
     _tone(wav)
     logo = tmp_path / "logo.png"

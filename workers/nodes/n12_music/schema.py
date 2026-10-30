@@ -59,14 +59,19 @@ class AudioTrack(BaseModel):
 class LicenseRecord(BaseModel):
     """One music or sound-effect use.
 
-    T20 should copy ``source`` and ``license`` into the delivery rights summary.
-    A blank ``source`` or ``license`` means the piece cannot be delivered.
+    T20 should copy ``source``, ``license``, ``evidence_ref``, ``expires_on``,
+    and ``usage_scope`` into the delivery rights summary. A blank field means
+    the piece cannot be delivered. ``expires_on`` is an ISO date, or ``none``
+    when the licence does not expire.
     """
 
     record_id: str = Field(min_length=1)
     kind: Literal["music", "sfx"]
     source: str = ""
     license: str = ""
+    evidence_ref: str = ""
+    expires_on: str = ""
+    usage_scope: str = ""
     title: str = ""
     uri: str = ""
     start_s: float = Field(default=0, ge=0)
@@ -85,10 +90,16 @@ class LicensingSummary(BaseModel):
 
 
 def incomplete_reason(records: list[LicenseRecord]) -> str:
-    """Empty when every music and sound-effect row names a source and a license."""
+    """Empty when every music and sound-effect row can be handed to T20."""
 
     for record in records:
+        label = record.shot_id or record.record_id
         if not record.source.strip() or not record.license.strip():
-            label = record.shot_id or record.record_id
             return f"{record.kind} {label} is missing a source or a license"
+        if (
+            not record.evidence_ref.strip()
+            or not record.expires_on.strip()
+            or not record.usage_scope.strip()
+        ):
+            return f"{record.kind} {label} is missing licence evidence, expiry, or usage scope"
     return ""

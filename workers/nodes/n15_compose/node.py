@@ -38,6 +38,7 @@ from workers.nodes.n15_compose.schema import (
     VideoClip,
 )
 from workers.nodes.runtime import Deadline
+from workers.qa.settings import project_dir
 from workers.schemas.asset import Asset, AssetKind
 
 NODE = "n15_compose"
@@ -231,11 +232,25 @@ def _require_license(payload: N15Input) -> None:
         return
     if not track.source.strip() or not track.license.strip():
         raise QAError("audio track is missing a source or a license", retryable=False)
-    if not Path(track.path).is_file():
-        raise QAError("audio track file is missing", retryable=False)
+    resolved = _inside_project(track.path)
+    track.path = str(resolved)
     for item in payload.licenses:
         if not item.source.strip() or not item.license.strip():
             raise QAError("a music or sound-effect license record is incomplete", retryable=False)
+
+
+def _inside_project(raw: str) -> Path:
+    root = project_dir()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root) or not resolved.is_file():
+        raise QAError(
+            "audio track must stay inside the project directory",
+            retryable=False,
+        )
+    return resolved
 
 
 def _license_payload(payload: N15Input) -> dict[str, Any]:
