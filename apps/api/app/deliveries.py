@@ -13,10 +13,12 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.identity import owned_project, require_identity
+from workers.identity.session import Identity
 from workers.nodes.n17_deliver.node import run
 from workers.nodes.n17_deliver.qa import QAError
 from workers.schemas.brand import BrandKit
@@ -26,9 +28,7 @@ from workers.workflow.store import (
     load_checkpoint,
     project_path,
     project_root,
-    read_snapshot,
     update_snapshot,
-    valid_project_id,
 )
 
 router = APIRouter()
@@ -54,13 +54,8 @@ class DeliverBody(BaseModel):
     subject_tracks: list[dict[str, Any]] | None = None
 
 
-def _snapshot_or_404(project_id: str) -> dict[str, Any]:
-    if not valid_project_id(project_id):
-        raise HTTPException(status_code=404, detail="项目不存在")
-    snapshot = read_snapshot(project_id)
-    if snapshot is None:
-        raise HTTPException(status_code=404, detail="项目不存在")
-    return snapshot
+def _snapshot_or_404(project_id: str, identity: Identity) -> dict[str, Any]:
+    return owned_project(project_id, identity)
 
 
 def _checkpoint(project_id: str) -> dict[str, Any]:
@@ -95,8 +90,12 @@ def _release_export() -> None:
 
 
 @router.post("/v1/projects/{project_id}/deliveries")
-def create_delivery(project_id: str, body: DeliverBody) -> dict[str, Any]:
-    snapshot = _snapshot_or_404(project_id)
+def create_delivery(
+    project_id: str,
+    body: DeliverBody,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    snapshot = _snapshot_or_404(project_id, identity)
     if snapshot.get("status") == "needs_human_review":
         raise HTTPException(status_code=409, detail="成片待人工复核，尚未放行")
     if not _acquire_export():
@@ -127,8 +126,11 @@ def create_delivery(project_id: str, body: DeliverBody) -> dict[str, Any]:
 
 
 @router.get("/v1/projects/{project_id}/versions")
-def list_versions(project_id: str) -> dict[str, Any]:
-    _snapshot_or_404(project_id)
+def list_versions(
+    project_id: str,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    _snapshot_or_404(project_id, identity)
     record = _read(project_id)
     return {
         "project_id": project_id,
@@ -138,20 +140,32 @@ def list_versions(project_id: str) -> dict[str, Any]:
 
 
 @router.get("/v1/projects/{project_id}/versions/{version_id}")
-def read_version(project_id: str, version_id: str) -> dict[str, Any]:
-    _snapshot_or_404(project_id)
+def read_version(
+    project_id: str,
+    version_id: str,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    _snapshot_or_404(project_id, identity)
     return _find(project_id, version_id)
 
 
 @router.get("/v1/projects/{project_id}/versions/{version_id}/download")
-def download_version(project_id: str, version_id: str) -> FileResponse:
-    _snapshot_or_404(project_id)
+def download_version(
+    project_id: str,
+    version_id: str,
+    identity: Identity = Depends(require_identity),
+) -> FileResponse:
+    _snapshot_or_404(project_id, identity)
     return _file(project_id, version_id)
 
 
 @router.post("/v1/projects/{project_id}/versions/{version_id}/share")
-def share_version(project_id: str, version_id: str) -> dict[str, Any]:
-    _snapshot_or_404(project_id)
+def share_version(
+    project_id: str,
+    version_id: str,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    _snapshot_or_404(project_id, identity)
     _find(project_id, version_id)
     token = secrets.token_urlsafe(18)
     expires_at = time.time() + _share_ttl()
@@ -184,8 +198,12 @@ def share_version(project_id: str, version_id: str) -> dict[str, Any]:
 
 
 @router.delete("/v1/projects/{project_id}/versions/{version_id}/share")
-def revoke_share(project_id: str, version_id: str) -> Response:
-    _snapshot_or_404(project_id)
+def revoke_share(
+    project_id: str,
+    version_id: str,
+    identity: Identity = Depends(require_identity),
+) -> Response:
+    _snapshot_or_404(project_id, identity)
     with _locked(project_id) as directory:
         record = _read_unlocked(directory)
         if not any(item.get("version_id") == version_id for item in record.get("versions") or []):

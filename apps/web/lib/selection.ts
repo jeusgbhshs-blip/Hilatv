@@ -29,18 +29,3 @@ export function chooseCard(cards: DirectionCard[], selection: string | null): Ca
   };
 }
 
-const ENTERPRISE_KEY = "hilatv.enterpriseId";
-
-export function rememberEnterprise(id: string): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(ENTERPRISE_KEY, id);
-}
-
-export function rememberedEnterprise(): string {
-  if (typeof window === "undefined") return "";
-  const existing = window.localStorage.getItem(ENTERPRISE_KEY);
-  if (existing) return existing;
-  const created = crypto.randomUUID();
-  window.localStorage.setItem(ENTERPRISE_KEY, created);
-  return created;
-}
