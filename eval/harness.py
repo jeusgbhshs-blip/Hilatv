@@ -65,16 +65,25 @@ def main(argv: list[str] | None = None) -> int:
     outcomes = execute(cases, mode=args.mode)
     summary = build_summary(outcomes, mode=args.mode)
     write_report(out, outcomes, summary)
+    conclusions = summary["conclusions"]
     short = {
         "task": "T18",
         "mode": args.mode,
         "cases": summary["cases"],
         "failed": summary["failed"],
         "shots": summary["shots"],
+        "reviewed_shots": summary["reviewed_shots"],
+        "unreviewed_shots": summary["unreviewed_shots"],
+        "text_only_shots": summary["text_only_shots"],
+        "invalid_shots": summary["invalid_shots"],
+        "reviewer": summary["reviewer"],
         "hard_shots": summary["hard_shots"],
         "hard_injury_rate": summary["hard_injury_rate"],
-        "within_hard_injury_limit": summary["within_hard_injury_limit"],
         "mean_score": summary["mean_score"],
+        "pipeline_complete": summary["pipeline_complete"],
+        "pipeline_label": conclusions["pipeline"]["label"],
+        "quality_met": summary["quality_met"],
+        "quality_label": conclusions["quality"]["label"],
         "total_elapsed_s": summary["total_elapsed_s"],
         "total_cost_cny": summary["total_cost_cny"],
         "out": str(out),

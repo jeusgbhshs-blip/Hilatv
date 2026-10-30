@@ -29,6 +29,10 @@ class CaseOutcome:
     cost_cny: str
     error: str = ""
     deliverable: str | None = None
+    reviewed_shots: int = 0
+    unreviewed_shots: int = 0
+    text_only_shots: int = 0
+    invalid_shots: int = 0
     shots: list[ShotScore] = field(default_factory=list)
 
 
@@ -66,6 +70,10 @@ def _ok(
         elapsed_s=round(time.perf_counter() - started, 3),
         cost_cny=_cost(gateway, project_id),
         deliverable=str(deliverable) if deliverable else None,
+        reviewed_shots=scored.reviewed_shots,
+        unreviewed_shots=scored.unreviewed_shots,
+        text_only_shots=scored.text_only_shots,
+        invalid_shots=scored.invalid_shots,
         shots=scored.shots,
     )
 

@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-from eval.qa_port import review_shot
+from eval.qa_port import ShotReview, review_shot
 from workers.schemas.asset import QAReport
 
 HARD_INJURY_LIMIT = Decimal("0.05")
@@ -24,14 +24,23 @@ class ShotScore:
     node: str
     model: str
     purpose: str
-    report: QAReport
+    report: QAReport | None
+    review_status: str = "reviewed"
+    review_source: str = "t12"
+    review_basis: str = "t12"
+    media_uri: str = ""
+    note: str = ""
 
 
 @dataclass
 class CaseScore:
-    score: float
+    score: float | None
     hard_shots: int
     shot_count: int
+    reviewed_shots: int = 0
+    unreviewed_shots: int = 0
+    text_only_shots: int = 0
+    invalid_shots: int = 0
     shots: list[ShotScore] = field(default_factory=list)
 
 
@@ -79,7 +88,7 @@ def score_state(state: dict[str, Any], *, project_id: str, gateway: Any) -> Case
             raise RuntimeError("shot is missing shot_id")
         shot_type = str(shot.get("camera") or "unknown")
         model = generation_model(state, shot_id, node)
-        report = review_shot(
+        review = review_shot(
             {
                 "project_id": project_id,
                 "shot_id": shot_id,
@@ -95,20 +104,8 @@ def score_state(state: dict[str, Any], *, project_id: str, gateway: Any) -> Case
             },
             gateway=gateway,
         )
-        scored.append(
-            ShotScore(
-                shot_id=shot_id,
-                shot_type=shot_type,
-                node=node,
-                model=model,
-                purpose=str(shot.get("purpose") or ""),
-                report=report,
-            )
-        )
-    totals = [Decimal(str(item.report.total)) for item in scored]
-    mean = (sum(totals, Decimal("0")) / Decimal(len(totals))).quantize(Decimal("0.01"))
-    hard = sum(1 for item in scored if item.report.hard_fail)
-    return CaseScore(score=float(mean), hard_shots=hard, shot_count=len(scored), shots=scored)
+        scored.append(_shot_score(shot_id, shot_type, node, model, shot, review))
+    return _case_score(scored)
 
 
 def hard_injury_rate(hard_shots: int, shot_count: int) -> Decimal:
@@ -121,6 +118,55 @@ def within_hard_injury_limit(hard_shots: int, shot_count: int) -> bool:
     if shot_count <= 0:
         return True
     return Decimal(hard_shots) * Decimal(100) <= Decimal(shot_count) * Decimal(5)
+
+
+def _shot_score(
+    shot_id: str,
+    shot_type: str,
+    node: str,
+    model: str,
+    shot: dict[str, Any],
+    review: ShotReview,
+) -> ShotScore:
+    return ShotScore(
+        shot_id=shot_id,
+        shot_type=shot_type,
+        node=node,
+        model=model,
+        purpose=str(shot.get("purpose") or ""),
+        report=review.report,
+        review_status=review.status,
+        review_source=review.source,
+        review_basis=review.basis,
+        media_uri=review.media_uri,
+        note=review.note,
+    )
+
+
+def _case_score(scored: list[ShotScore]) -> CaseScore:
+    reviewed = [
+        item for item in scored if item.review_status == "reviewed" and item.report is not None
+    ]
+    text_only = sum(1 for item in scored if item.review_status == "text_only")
+    invalid = sum(1 for item in scored if item.review_status == "invalid")
+    bare = sum(1 for item in scored if item.review_status == "unreviewed")
+    fully = len(reviewed) == len(scored) and bool(scored)
+    if fully:
+        totals = [Decimal(str(item.report.total)) for item in reviewed if item.report is not None]
+        mean = float((sum(totals, Decimal("0")) / Decimal(len(totals))).quantize(Decimal("0.01")))
+    else:
+        mean = None
+    hard = sum(1 for item in reviewed if item.report is not None and item.report.hard_fail)
+    return CaseScore(
+        score=mean,
+        hard_shots=hard,
+        shot_count=len(scored),
+        reviewed_shots=len(reviewed),
+        unreviewed_shots=bare + text_only,
+        text_only_shots=text_only,
+        invalid_shots=invalid,
+        shots=scored,
+    )
 
 
 def _candidate_uri(state: dict[str, Any], shot_id: str, node: str) -> str:
