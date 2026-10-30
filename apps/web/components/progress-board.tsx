@@ -194,7 +194,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
           size="lg"
           className="w-full sm:w-auto"
           onClick={() => {
-            void fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`), {
+            void apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`, {
               method: "POST",
             });
           }}
