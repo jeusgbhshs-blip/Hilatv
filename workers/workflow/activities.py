@@ -528,11 +528,54 @@ def n14_packaging(payload: dict[str, Any]) -> dict[str, Any]:
     return _finish(project_id, "n14_packaging", patch, attempt)
 
 
+@activity.defn(name="hold_for_review")
+def hold_for_review(payload: dict[str, Any]) -> dict[str, Any]:
+    """Stop before compose. No master file and no delivery record."""
+
+    project_id = _project(payload)
+    notes = _state(payload).get("shot_quality") or []
+    publish(
+        project_id,
+        {
+            "node": "shot_director",
+            "phase": "待人工复核",
+            "message": "有镜头未经视觉评审，成片暂停，需要人工放行",
+            "status": "needs_human_review",
+            "attempt": 1,
+        },
+    )
+    update_snapshot(
+        project_id,
+        status="needs_human_review",
+        phase="待人工复核",
+        node="shot_director",
+        message="有镜头未经视觉评审，成片暂停，需要人工放行",
+        paused=True,
+        deliverable=None,
+        shot_quality=notes,
+    )
+    log_event(
+        "human_review_held",
+        project_id=project_id,
+        node="shot_director",
+        attempt=1,
+        shots=len(notes) if isinstance(notes, list) else 0,
+    )
+    return {"patch": {"held_for_review": True}}
+
+
 @activity.defn(name="n15_compose")
 def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n15_compose")
     project_id = _project(payload)
     state = _state(payload)
+    from workers.workflow.film import needs_human_review
+
+    if needs_human_review(state, _request(payload)):
+        raise ApplicationError(
+            "needs_human_review blocks delivery until a person releases the project",
+            non_retryable=True,
+        )
     from workers.nodes.n15_compose.node import run
 
     result = _call(
@@ -594,5 +637,6 @@ ACTIVITIES = [
     n13_subtitle,
     n14_packaging,
     n15_compose,
+    hold_for_review,
     mark_failed,
 ]

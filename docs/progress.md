@@ -83,7 +83,7 @@
 ## T14 假设
 
 - 产品负责人（2026-10-30）改了 SPEC §6.10 的第 3、4 级：不调用企业素材库里的真实视频，也不在交付信息里写「此镜头建议补拍」。新顺序是：① 换视频路由、改写提示词、换种子，经网关再生，花费只走 `open_project_budget`；② 只用已经通过质检（`visual_reviewed` 且达到 7.5）的 AI 关键帧做图生视频；③ 这张关键帧加本地程序化运镜（Ken Burns，有抠图时再加 2.5D 视差）；④ 动态图形（T13 抠图 + 渲染层文字动画 + 生成的背景运动）。第 ④ 级必须能做出来，所以片子一定能交。SPEC.md 正文没有改。
-- 第 1–3 级只接受 `visual_reviewed is True` 且 `hard_fail` 为空的片段。`not_reviewed`、`judge_unavailable` 和 mock 评审都落到下一级，不能当成通过。第 4 级在评审不可用时仍出片，交付记 `needs_review`，并且 `qa_passed` 和 `reviewed` 仍是 false。`HILATV_LIVE=1` 时，N15 没有镜头文件就拒绝画纯色底板；mock 可以保留底板，并在时间轴上标 `placeholder`。
+- 第 1–3 级只接受 `visual_reviewed is True` 且 `hard_fail` 为空的片段。`not_reviewed`、`judge_unavailable` 和 mock 评审都落到下一级，不能当成通过。第 4 级在评审不可用时仍做出片段，但只要有一镜 `needs_review`，工作流在合成前停下，项目状态是 `needs_human_review`，不写 master，也不写 deliveries。只有 `POST /v1/projects/{id}/human-review/release`（或 `hilatv release`）才继续合成。`HILATV_LIVE=1` 不会自动放行。N15 在 live 时没有镜头文件就拒绝画纯色底板；mock 可以保留底板，并在时间轴上标 `placeholder`。
 - 再生的 seed 混入项目预算已用次数和本次尝试序号，同镜同级再跑不会重复同一个 seed。
 - Mock 评审不会把 `visual_reviewed` 设为 true。因此无 Key 时第 ② 级不会被选中。验收里的第 ② 级测试在进程内打开 `HILATV_LIVE=1`，用一个不联网的假评审返回完整分数。`make accept-t14` 的端到端流程保持 `HILATV_LIVE=0`。
 - 有内容硬伤的成片先走 T12 的 `run_shot_loop`（每镜最多 3 次，项目花费只走预算文件）。没有可审像素的镜头不再空转这 3 次，直接进入上面的阶梯，第 ① 级仍是一次计费的再生。

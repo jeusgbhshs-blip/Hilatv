@@ -63,8 +63,10 @@ test("one sentence becomes a playable download", async ({ page }) => {
   await page.waitForURL(/\/projects\/[0-9a-f-]+$/);
 
   await expect(page.getByRole("list", { name: "进度" }).getByText("理解需求")).toBeVisible();
+  await expect(page.getByRole("button", { name: "放行并成片" })).toBeVisible({ timeout: 240_000 });
+  await page.getByRole("button", { name: "放行并成片" }).click();
   await expect(page.getByRole("list", { name: "进度" }).getByText("成片")).toBeVisible();
-  await expect(page.getByRole("link", { name: "观看成片" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "观看成片" })).toBeVisible({ timeout: 240_000 });
   await expect(page.locator(".animate-spin")).toHaveCount(0);
   const stages = page.getByTestId("shot-stage");
   await expect(stages.first()).toBeVisible();

@@ -155,6 +155,7 @@ export function latestMessage(events: ProgressEvent[], fallback: string): string
 }
 
 export function projectStatus(snapshotStatus: string | undefined, events: ProgressEvent[]): string {
+  if (snapshotStatus === "needs_human_review") return snapshotStatus;
   let status = snapshotStatus || "running";
   for (const event of events) {
     if (event.status) status = event.status;

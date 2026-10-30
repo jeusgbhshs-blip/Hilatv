@@ -29,7 +29,23 @@ _PUBLIC = (
     "fail_nodes",
     "enterprise_id",
     "concept_selection",
+    "human_release",
 )
+
+
+def needs_human_review(state: dict[str, Any], request: dict[str, Any]) -> bool:
+    """True when a fallback clip was not vision-reviewed and nobody has released it.
+
+    Live mode does not bypass this. Only ``human_release`` on the request,
+    set by the explicit release action, continues into compose and delivery.
+    """
+
+    if request.get("human_release") is True:
+        return False
+    notes = state.get("shot_quality") or []
+    if not isinstance(notes, list):
+        return False
+    return any(isinstance(item, dict) and item.get("needs_review") is True for item in notes)
 
 
 def _retry(attempts: int) -> RetryPolicy:
@@ -62,7 +78,12 @@ def _view(
     status: str,
     paused: bool,
 ) -> dict[str, Any]:
-    phase = "成片" if status == "completed" else PHASE[node]
+    if status == "needs_human_review":
+        phase = "待人工复核"
+    elif status == "completed":
+        phase = "成片"
+    else:
+        phase = PHASE[node]
     return {
         "project_id": request["project_id"],
         "status": status,
@@ -95,6 +116,18 @@ class ProduceFilm:
         except ActivityError as exc:
             await self._fail(request, exc)
             raise
+        if state.get("held_for_review"):
+            self._status = _view(
+                request, "shot_director", state, status="needs_human_review", paused=True
+            )
+            return {
+                "project_id": request["project_id"],
+                "deliverable": None,
+                "elapsed_s": state.get("elapsed_s"),
+                "completed": list(state.get("completed") or []),
+                "shot_quality": state.get("shot_quality"),
+                "status": "needs_human_review",
+            }
         self._status = _view(request, FINAL_NODE, state, status="completed", paused=False)
         return {
             "project_id": request["project_id"],
@@ -102,6 +135,7 @@ class ProduceFilm:
             "elapsed_s": state.get("elapsed_s"),
             "completed": list(state.get("completed") or []),
             "shot_quality": state.get("shot_quality"),
+            "status": "completed",
         }
 
     @workflow.signal
@@ -124,6 +158,11 @@ class ProduceFilm:
                 continue
             patch = await self._call(node, request, state)
             state = _merge(state, patch, node)
+        if needs_human_review(state, request):
+            patch = await self._call("hold_for_review", request, state)
+            state = _merge(state, patch, "shot_director")
+            state["held_for_review"] = True
+            return state
         peers = [node for node in PEERS if PIPELINE.index(node) >= start_index]
         if peers:
             patches = await asyncio.gather(*(self._call(node, request, state) for node in peers))
@@ -140,11 +179,13 @@ class ProduceFilm:
         request: dict[str, Any],
         state: dict[str, Any],
     ) -> dict[str, Any]:
+        view_node = "shot_director" if node == "hold_for_review" else node
         if request.get("pause_after") == node:
-            self._status = _view(request, node, state, status="paused", paused=True)
+            self._status = _view(request, view_node, state, status="paused", paused=True)
             await workflow.wait_condition(lambda: self._release)
             self._release = False
-        self._status = _view(request, node, state, status="running", paused=False)
+        self._status = _view(request, view_node, state, status="running", paused=False)
+        timeout = 30 if node == "hold_for_review" else TIMEOUT_S[node]
         result = await workflow.execute_activity(
             node,
             {
@@ -152,7 +193,7 @@ class ProduceFilm:
                 "request": _public(request),
                 "state": state,
             },
-            start_to_close_timeout=timedelta(seconds=TIMEOUT_S[node]),
+            start_to_close_timeout=timedelta(seconds=timeout),
             retry_policy=_retry(3),
         )
         patch = result.get("patch") if isinstance(result, dict) else None

@@ -398,6 +398,40 @@ def project_revision(project_id: str, body: ReviseProject) -> dict[str, Any]:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
+@router.post("/v1/projects/{project_id}/human-review/release")
+async def release_human_review(project_id: str) -> JSONResponse:
+    """Explicit human release. This is the only way past needs_review."""
+
+    snapshot = _snapshot_or_404(project_id)
+    if snapshot.get("status") != "needs_human_review":
+        raise HTTPException(status_code=409, detail="项目不在人工复核")
+    from workers.workflow.service import start_film
+    from workers.workflow.store import load_checkpoint
+
+    workflow_id = await start_film(
+        project_id=project_id,
+        sentence=str(snapshot.get("sentence") or ""),
+        brand_kit=snapshot.get("brand_kit"),
+        brand_id=snapshot.get("brand_id"),
+        enterprise_id=snapshot.get("enterprise_id"),
+        concept_selection=snapshot.get("concept_selection"),
+        attachments=snapshot.get("attachments") or [],
+        keyframe_candidates=snapshot.get("keyframe_candidates"),
+        video_candidates=snapshot.get("video_candidates"),
+        start_from="n12_music",
+        checkpoint=load_checkpoint(project_id),
+        human_release=True,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "project_id": project_id,
+            "workflow_id": workflow_id,
+            "status": "running",
+        },
+    )
+
+
 @router.get("/v1/projects/{project_id}/download")
 def download_master(project_id: str) -> FileResponse:
     snapshot = _snapshot_or_404(project_id)
@@ -426,7 +460,7 @@ async def project_progress(websocket: WebSocket, project_id: str) -> None:
                 await websocket.send_json(event)
                 sent += 1
             snapshot = read_snapshot(project_id) or {}
-            terminal = snapshot.get("status") in {"completed", "failed"}
+            terminal = snapshot.get("status") in {"completed", "failed", "needs_human_review"}
             if terminal and sent >= len(read_events(project_id)):
                 await websocket.close()
                 return

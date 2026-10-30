@@ -43,6 +43,7 @@ def make_request(
     pause_after: str | None = None,
     enterprise_id: str | None = None,
     concept_selection: str | None = None,
+    human_release: bool = False,
 ) -> dict[str, Any]:
     return {
         "project_id": project_id,
@@ -67,6 +68,7 @@ def make_request(
         "pause_after": pause_after,
         "enterprise_id": enterprise_id,
         "concept_selection": concept_selection,
+        "human_release": human_release is True,
     }
 
 
@@ -85,6 +87,7 @@ def prepare(
     pause_after: str | None = None,
     enterprise_id: str | None = None,
     concept_selection: str | None = None,
+    human_release: bool = False,
     workflow_id: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     request = make_request(
@@ -101,6 +104,7 @@ def prepare(
         pause_after=pause_after,
         enterprise_id=enterprise_id,
         concept_selection=concept_selection,
+        human_release=human_release,
     )
     if workflow_id is None:
         if start_from:

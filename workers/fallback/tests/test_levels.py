@@ -490,7 +490,7 @@ def test_vlm_error_drops_to_level_4(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     assert note.needs_review is True
     assert note.qa_passed is False
     assert note.reviewed is False
-    assert "judge_unavailable" in note.hard_fail or note.hard_fail
+    assert note.hard_fail == ["judge_unavailable"]
     _playable(Path(clip.path))
 
 
