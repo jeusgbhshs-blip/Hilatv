@@ -62,7 +62,7 @@ def test_rollback_any_version_and_fsync(tmp_path, monkeypatch) -> None:
 
 
 def test_rollback_after_regenerations_leaves_the_count_unchanged(tmp_path, monkeypatch) -> None:
-    from workers.workflow.regen_count import project_regens, raise_project_regens
+    from workers.qa.budget_store import open_project_budget
 
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     project_id = "regencap"
@@ -76,8 +76,12 @@ def test_rollback_after_regenerations_leaves_the_count_unchanged(tmp_path, monke
     )
     listed = list_versions(project_id)
     first = listed["current_version_id"]
-    assert raise_project_regens(project_id, 4) == 4
-    assert raise_project_regens(project_id, 1) == 4
+    budget = open_project_budget(project_id)
+    for _ in range(4):
+        assert budget.try_take() is True
+    assert open_project_budget(project_id).used == 4
+    decoy = directory / "versions" / first / "regen_budget.json"
+    decoy.write_text(json.dumps({"used": 0, "limit": 12}) + "\n", encoding="utf-8")
     (directory / "media" / "S01.bin").write_bytes(b"b")
     with locked_project(project_id) as folder:
         snapshot = json.loads((folder / "project.json").read_text(encoding="utf-8"))
@@ -104,11 +108,12 @@ def test_rollback_after_regenerations_leaves_the_count_unchanged(tmp_path, monke
     restore_version(project_id, first)
     restored = json.loads((directory / "project.json").read_text(encoding="utf-8"))
     assert "regen_used" not in restored
-    assert project_regens(project_id) == 4
+    assert open_project_budget(project_id).used == 4
     restore_version(project_id, second["version_id"])
     again = json.loads((directory / "project.json").read_text(encoding="utf-8"))
     assert "regen_used" not in again
-    assert project_regens(project_id) == 4
+    assert open_project_budget(project_id).used == 4
+    assert json.loads(decoy.read_text(encoding="utf-8"))["used"] == 0
 
 
 def test_interrupted_restore_puts_the_previous_tree_back(tmp_path, monkeypatch) -> None:

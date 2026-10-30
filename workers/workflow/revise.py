@@ -21,14 +21,13 @@ from workers.nodes.n18_revision.concept_gate import (
 from workers.nodes.n18_revision.node import run as run_revision
 from workers.nodes.n18_revision.qa import QAError
 from workers.nodes.runtime import read_bytes
+from workers.qa.budget_store import open_project_budget
 from workers.qa.scores import is_quality_pass, not_reviewed
 from workers.qa.service import review_shot
-from workers.qa.settings import project_retry_cap
 from workers.schemas.asset import QAReport
 from workers.schemas.director import DecisionAction, DecisionTarget, DirectorDecision
 from workers.schemas.script import Script, ShotStatus
 from workers.workflow.contract import PIPELINE
-from workers.workflow.regen_count import project_regens, try_spend_regen
 from workers.workflow.store import locked_project, project_path, valid_project_id
 from workers.workflow.versions import (
     _recover_restore,
@@ -240,11 +239,11 @@ def _execute(
     decisions: list[dict[str, Any]] = []
     video_shots: list[str] = []
     blocked: set[str] = set()
-    limit = project_retry_cap()
+    budget = open_project_budget(project_id)
     for shot_id in planned_video:
-        if not try_spend_regen(project_id):
+        if not budget.try_take():
             blocked.add(shot_id)
-            decisions.append(_blocked(shot_id, limit))
+            decisions.append(_blocked(shot_id, budget.limit))
             continue
         video_shots.append(shot_id)
     patches = _patches(directory)
@@ -369,7 +368,6 @@ def _execute(
         "video_shots": video_shots,
         "decisions": decisions,
         "reviews": [reviews[shot.shot_id] for shot in script.shots],
-        "regen_used": project_regens(project_id),
         "deliverable": deliverable,
         "master_path": master_path,
         "fresh": fresh,

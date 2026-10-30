@@ -211,7 +211,7 @@
 - 人物只经 `people_for_use` / `release_kit`。项目上的 Brand Kit 是内联副本，不是品牌档案，所以 `trust_consent` 为 false，肖像和克隆声线都不会进改稿。模块暂时不可导入时，人物列表直接清空，同样不读取原始人物字段。
 - 改稿走 `get_gateway()`。`HILATV_LIVE` 未开或没有预算时是 mock，不挂对象存储，配音是 `mock://`。生产路径里，镜头文件缺失或视频没有字节时保留上一版画面，状态是未完成，并告诉用户哪些镜头留了原文件；不用色块冒充新画面。色块只出现在测试夹具里。
 - 去掉 Logo 会说明片头和角标已去掉、片尾仍保留 Logo 和行动号召。接口的 `notice` 和成片页的 `revision_notice` 都写这句话。
-- 项目重生次数只记在 `regen_budget.json`，不写进 `project.json`，也不写进版本清单。回滚不打开这个文件，所以不会把次数退回。`project_regens` / `try_spend_regen` 是仅有的两个入口；T13 的 `open_project_budget` 合并进 main 之后改成调用它。上限仍是 `HILATV_QA_PROJECT_RETRIES`。
+- 项目重生次数只走 `workers.qa.budget_store.open_project_budget`。文件是 `regen_budget.json`，加锁并 fsync，只增不减。不写进 `project.json`，也不写进版本清单。回滚不打开这个文件，版本目录里的同名文件也不会盖掉它。上限仍是 `HILATV_QA_PROJECT_RETRIES`。
 - 版本恢复先写入临时目录再换入。换到一半留下 `.restore-inflight` 时，下次读取会把 `.restore-prev` 整树换回，包括快照和成片。
 - 项目锁只包住状态的读和写。单镜重生（每镜最长约 180 秒）在锁外执行，进度查询不会被挡在锁上。
 - 画面文字、Logo、价格、电话仍只由 N13/N14/N15 叠加。换 Logo 若句子里带 http(s) 地址，只走 SEC-01 的 `fetch_bytes`。测试图是代码画的色块。

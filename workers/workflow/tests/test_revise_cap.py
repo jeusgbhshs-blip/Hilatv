@@ -53,9 +53,9 @@ def test_project_regen_cap_blocks_another_video_call(tmp_path, monkeypatch) -> N
     (media / "S01.bin").write_bytes(b"a")
     (media / "S02.bin").write_bytes(b"b")
     update_snapshot(project_id, status="completed", deliverable=None)
-    from workers.workflow.regen_count import raise_project_regens
+    from workers.qa.budget_store import open_project_budget
 
-    raise_project_regens(project_id, 1)
+    assert open_project_budget(project_id).try_take() is True
     before = hashes(directory)
     from workers.workflow.revise import revision_gateway
 
