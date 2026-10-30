@@ -37,6 +37,23 @@ def main() -> int:
     if proc.returncode != 0:
         return proc.returncode or 1
     result = _result_line(proc.stdout)
+    if result.get("status") == "needs_human_review":
+        if result.get("deliverable"):
+            print("held project already had a deliverable", file=sys.stderr)
+            return 1
+        released = subprocess.run(
+            [sys.executable, "-m", "workers.workflow.cli", "release", str(result["project_id"])],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=600,
+            check=False,
+        )
+        sys.stdout.write(released.stdout)
+        sys.stderr.write(released.stderr)
+        if released.returncode != 0:
+            return released.returncode or 1
+        result = _result_line(released.stdout)
     if result.get("status") != "completed":
         print("workflow did not complete", file=sys.stderr)
         return 1

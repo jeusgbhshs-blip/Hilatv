@@ -15,6 +15,7 @@ def test_pipeline_covers_the_t10_chain() -> None:
         < PIPELINE.index("n09_keyframe_qa")
         < PIPELINE.index("n10_video")
     )
+    assert PIPELINE.index("shot_director") == PIPELINE.index("n10_video") + 1
     assert PIPELINE.index("n12_music") < PIPELINE.index("n13_subtitle")
     assert PEERS == ("n12_music", "n13_subtitle", "n14_packaging")
     assert PHASE["n08_keyframe"] == "生成中"

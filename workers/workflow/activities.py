@@ -425,7 +425,59 @@ def n10_video(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "n10_video",
     )
-    return _finish(project_id, "n10_video", {"videos": result.payload["candidates"]}, attempt)
+    return _finish(
+        project_id,
+        "n10_video",
+        {
+            "videos": result.payload["candidates"],
+            "generation_failed": result.payload.get("generation_failed") or [],
+        },
+        attempt,
+    )
+
+
+@activity.defn(name="shot_director")
+def shot_director(payload: dict[str, Any]) -> dict[str, Any]:
+    attempt = _announce(payload, "shot_director")
+    project_id = _project(payload)
+    state = _state(payload)
+    from workers.fallback.direct import direct_shots
+    from workers.media.packaging import canvas_size
+    from workers.schemas.asset import Candidate
+    from workers.schemas.brand import BrandKit
+    from workers.schemas.brief import Brief
+    from workers.schemas.script import Script
+
+    script = Script.model_validate(_require_dict(state, "script"))
+    brief_raw = state.get("brief")
+    brief = Brief.model_validate(brief_raw) if isinstance(brief_raw, dict) else None
+    kit_raw = state.get("brand_kit")
+    kit = BrandKit.model_validate(kit_raw) if isinstance(kit_raw, dict) else None
+    aspect = brief.aspect_ratios[0] if brief and brief.aspect_ratios else None
+    width, height = canvas_size(aspect)
+    videos = [Candidate.model_validate(item) for item in state.get("videos") or []]
+    keyframes = [Candidate.model_validate(item) for item in state.get("keyframes") or []]
+    from gateway import get_gateway
+
+    result = direct_shots(
+        project_id=project_id,
+        script=script,
+        videos=videos,
+        keyframes=keyframes,
+        brand_kit=kit,
+        width=width,
+        height=height,
+        gateway=get_gateway(),
+    )
+    return _finish(
+        project_id,
+        "shot_director",
+        {
+            "shot_clips": [item.model_dump(mode="json") for item in result.clips],
+            "shot_quality": [item.model_dump(mode="json") for item in result.notes],
+        },
+        attempt,
+    )
 
 
 @activity.defn(name="n12_music")
@@ -517,11 +569,54 @@ def n14_packaging(payload: dict[str, Any]) -> dict[str, Any]:
     return _finish(project_id, "n14_packaging", patch, attempt)
 
 
+@activity.defn(name="hold_for_review")
+def hold_for_review(payload: dict[str, Any]) -> dict[str, Any]:
+    """Stop before compose. No master file and no delivery record."""
+
+    project_id = _project(payload)
+    notes = _state(payload).get("shot_quality") or []
+    publish(
+        project_id,
+        {
+            "node": "shot_director",
+            "phase": "待人工复核",
+            "message": "有镜头未经视觉评审，成片暂停，需要人工放行",
+            "status": "needs_human_review",
+            "attempt": 1,
+        },
+    )
+    update_snapshot(
+        project_id,
+        status="needs_human_review",
+        phase="待人工复核",
+        node="shot_director",
+        message="有镜头未经视觉评审，成片暂停，需要人工放行",
+        paused=True,
+        deliverable=None,
+        shot_quality=notes,
+    )
+    log_event(
+        "human_review_held",
+        project_id=project_id,
+        node="shot_director",
+        attempt=1,
+        shots=len(notes) if isinstance(notes, list) else 0,
+    )
+    return {"patch": {"held_for_review": True}}
+
+
 @activity.defn(name="n15_compose")
 def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n15_compose")
     project_id = _project(payload)
     state = _state(payload)
+    from workers.workflow.film import needs_human_review
+
+    if needs_human_review(state, _request(payload)):
+        raise ApplicationError(
+            "needs_human_review blocks delivery until a person releases the project",
+            non_retryable=True,
+        )
     from workers.nodes.n15_compose.node import run
 
     result = _call(
@@ -538,6 +633,7 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
                 "intro_s": float(state.get("intro_s") or 0),
                 "outro_s": float(state.get("outro_s") or 0),
                 "work_dir": _work(payload, "n15"),
+                "shot_clips": state.get("shot_clips") or [],
                 **_soundtrack(state),
             },
             "attempt": attempt,
@@ -580,9 +676,11 @@ ACTIVITIES = [
     storyboard_sync,
     storyboard_expire,
     n10_video,
+    shot_director,
     n12_music,
     n13_subtitle,
     n14_packaging,
     n15_compose,
+    hold_for_review,
     mark_failed,
 ]

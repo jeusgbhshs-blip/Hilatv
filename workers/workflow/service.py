@@ -57,6 +57,7 @@ def make_request(
     pause_after: str | None = None,
     enterprise_id: str | None = None,
     concept_selection: str | None = None,
+    human_release: bool = False,
     skip_storyboard: bool | None = None,
     storyboard_wait_s: int | None = None,
 ) -> dict[str, Any]:
@@ -83,6 +84,7 @@ def make_request(
         "pause_after": pause_after,
         "enterprise_id": enterprise_id,
         "concept_selection": concept_selection,
+        "human_release": human_release is True,
         # Omitted means 直接出片. The product page sends false when it wants the cards.
         "skip_storyboard": True if skip_storyboard is None else bool(skip_storyboard),
         "storyboard_wait_s": _storyboard_wait(storyboard_wait_s),
@@ -104,6 +106,7 @@ def prepare(
     pause_after: str | None = None,
     enterprise_id: str | None = None,
     concept_selection: str | None = None,
+    human_release: bool = False,
     skip_storyboard: bool | None = None,
     workflow_id: str | None = None,
 ) -> tuple[dict[str, Any], str]:
@@ -121,6 +124,7 @@ def prepare(
         pause_after=pause_after,
         enterprise_id=enterprise_id,
         concept_selection=concept_selection,
+        human_release=human_release,
         skip_storyboard=skip_storyboard,
     )
     if workflow_id is None:

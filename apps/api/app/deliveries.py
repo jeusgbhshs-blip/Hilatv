@@ -96,6 +96,8 @@ def create_delivery(
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
     snapshot = _snapshot_or_404(project_id, identity)
+    if snapshot.get("status") == "needs_human_review":
+        raise HTTPException(status_code=409, detail="成片待人工复核，尚未放行")
     if not _acquire_export():
         raise HTTPException(status_code=429, detail="导出太多，请稍后再试")
     try:

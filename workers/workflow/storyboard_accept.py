@@ -52,7 +52,8 @@ async def _skip(client: httpx.AsyncClient) -> None:
     )
     assert created.status_code == 202, created.text
     project_id = created.json()["project_id"]
-    body = await _wait(client, project_id, {"completed", "failed"})
+    body = await _wait(client, project_id, {"completed", "failed", "needs_human_review"})
+    body = await _release_if_held(client, project_id, body)
     if body.get("status") != "completed":
         raise SystemExit(f"skip run did not finish: {body.get('status')} {body.get('error')}")
     if body.get("storyboard_gate") != "skip":
@@ -127,7 +128,8 @@ async def _preview(client: httpx.AsyncClient) -> None:
     continued = await client.post(f"/v1/projects/{project_id}/storyboard/continue")
     if continued.status_code != 200:
         raise SystemExit(f"continue failed {continued.status_code} {continued.text}")
-    done = await _wait(client, project_id, {"completed", "failed"})
+    done = await _wait(client, project_id, {"completed", "failed", "needs_human_review"})
+    done = await _release_if_held(client, project_id, done)
     if done.get("status") != "completed":
         raise SystemExit(f"preview run did not finish: {done.get('status')} {done.get('error')}")
     _assert_prompts(directory)
@@ -182,6 +184,19 @@ def _snapshot_path(project_id: str, key: str, body: dict) -> str:
     if not isinstance(value, str) or not value:
         raise SystemExit(f"{project_id} has no {key}")
     return value
+
+
+async def _release_if_held(client: httpx.AsyncClient, project_id: str, body: dict) -> dict:
+    """Mock review leaves needs_review. Measure the film only after an explicit release."""
+
+    if body.get("status") != "needs_human_review":
+        return body
+    if body.get("deliverable"):
+        raise SystemExit(f"{project_id} already had a deliverable while held")
+    released = await client.post(f"/v1/projects/{project_id}/human-review/release")
+    if released.status_code != 202:
+        raise SystemExit(f"release failed {released.status_code} {released.text}")
+    return await _wait(client, project_id, {"completed", "failed"})
 
 
 async def _wait(client: httpx.AsyncClient, project_id: str, terminal: set[str]) -> dict:

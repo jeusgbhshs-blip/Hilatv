@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import time
-
 from workers.identity.session import Identity, canonical_enterprise
-from workers.workflow.store import append_audit_event, read_snapshot, valid_project_id
+from workers.workflow.store import read_snapshot, record_human_release, valid_project_id
 
 
 class AccessError(Exception):
@@ -42,13 +40,9 @@ def audit_human_release(identity: Identity, project_id: str) -> dict:
     snapshot = project_for(identity, project_id)
     if snapshot.get("status") != "needs_human_review":
         raise Conflict("项目不在人工复核")
-    append_audit_event(
+    record_human_release(
         project_id,
-        {
-            "type": "human_review_released",
-            "enterprise_id": identity.enterprise_id,
-            "releaser": identity.member_id,
-            "at": time.time(),
-        },
+        releaser=identity.member_id,
+        enterprise_id=identity.enterprise_id,
     )
     return snapshot

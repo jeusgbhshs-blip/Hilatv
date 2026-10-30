@@ -17,6 +17,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
+from workers.logging import log_event
 from workers.workflow.contract import PIPELINE
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
@@ -177,6 +178,51 @@ def read_snapshot(project_id: str) -> dict[str, Any] | None:
     return None
 
 
+def record_human_release(
+    project_id: str,
+    *,
+    releaser: str | None = None,
+    enterprise_id: str | None = None,
+) -> dict[str, Any]:
+    """Audit that a person released a held film. Time plus the releaser's identity."""
+
+    if not valid_project_id(project_id):
+        raise ValueError("invalid project id")
+    record: dict[str, Any] = {
+        "type": "human_review_released",
+        "project_id": project_id,
+        "ts": time.time(),
+    }
+    if releaser:
+        record["releaser"] = releaser
+    if enterprise_id:
+        record["enterprise_id"] = enterprise_id
+    summary = {
+        key: record[key] for key in ("type", "ts", "releaser", "enterprise_id") if key in record
+    }
+    with _lock(project_id) as directory:
+        snapshot = _read(directory, project_id)
+        events = list(snapshot.get("events") or [])
+        events.append(summary)
+        snapshot["events"] = events[-200:]
+        _write(directory, snapshot)
+        path = directory / "events.jsonl"
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+    log_event(
+        "human_review_released",
+        project_id=project_id,
+        node="shot_director",
+        attempt=1,
+        ts=record["ts"],
+        releaser=releaser,
+        enterprise_id=enterprise_id,
+    )
+    return record
+
+
 def publish(project_id: str, event: dict[str, Any]) -> dict[str, Any]:
     record: dict[str, Any] = {
         "type": "progress",
@@ -222,37 +268,6 @@ def publish(project_id: str, event: dict[str, Any]) -> dict[str, Any]:
         }
         events = list(snapshot.get("events") or [])
         events.append(summary)
-        snapshot["events"] = events[-200:]
-        with (directory / "events.jsonl").open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        _write(directory, snapshot)
-    return record
-
-
-def append_audit_event(project_id: str, event: dict[str, Any]) -> dict[str, Any]:
-    """Append one audit line. The caller has already checked ownership."""
-
-    if not valid_project_id(project_id):
-        raise ValueError("invalid project id")
-    at = event.get("at")
-    record = {
-        "type": str(event.get("type") or "audit"),
-        "project_id": project_id,
-        "enterprise_id": event.get("enterprise_id"),
-        "releaser": event.get("releaser"),
-        "at": float(at) if isinstance(at, int | float) else time.time(),
-    }
-    with _lock(project_id) as directory:
-        snapshot = _read(directory, project_id)
-        events = list(snapshot.get("events") or [])
-        events.append(
-            {
-                "type": record["type"],
-                "releaser": record["releaser"],
-                "at": record["at"],
-                "enterprise_id": record["enterprise_id"],
-            }
-        )
         snapshot["events"] = events[-200:]
         with (directory / "events.jsonl").open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False) + "\n")

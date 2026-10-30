@@ -162,7 +162,7 @@ def _measure(port: int) -> list[tuple[str, str, str]]:
         rows.extend(_project_rows(client, project_id, own, theirs, before, snapshot))
         rows.append(_websocket(port, project_id, stranger["token"], SECRET_SENTENCE))
         rows.append(_cli(project_id, owner["token"], stranger["token"], snapshot))
-        rows.append(_human_review(client, project_id, own, theirs, snapshot))
+        rows.extend(_human_review(client, project_id, own, theirs, snapshot))
     return rows
 
 
@@ -239,23 +239,35 @@ def _project_rows(client, project_id, own, theirs, before: bytes, snapshot: Path
     return rows
 
 
-def _human_review(client, project_id, owner, stranger, snapshot: Path) -> tuple[str, str, str]:
+def _human_review(
+    client,
+    project_id,
+    owner,
+    stranger,
+    snapshot: Path,
+) -> list[tuple[str, str, str]]:
     spec = client.get("/openapi.json")
     paths = spec.json().get("paths") or {}
     route = "/v1/projects/{project_id}/human-review/release"
+    name = "POST /v1/projects/{id}/human-review/release"
     if route not in paths:
-        return ("POST /v1/projects/{id}/human-review/release", "SKIP", "route not on this build")
+        return [(name, "SKIP", "route not on this build")]
     before = snapshot.read_bytes()
     hidden = client.post(f"/v1/projects/{project_id}/human-review/release", headers=stranger)
-    if hidden.status_code not in {403, 404} or SECRET_SENTENCE in hidden.text:
-        return (
-            "POST /v1/projects/{id}/human-review/release other",
-            "FAIL",
-            str(hidden.status_code),
-        )
+    rows = [_status(f"{name} other enterprise", hidden, 404, absent=(SECRET_SENTENCE,))]
     if snapshot.read_bytes() != before:
-        return ("POST /v1/projects/{id}/human-review/release other", "FAIL", "bytes changed")
-    return ("POST /v1/projects/{id}/human-review/release other", "PASS", str(hidden.status_code))
+        rows.append((f"{name} other bytes", "FAIL", "changed"))
+    else:
+        rows.append((f"{name} other bytes", "PASS", "unchanged"))
+    anonymous = client.post(f"/v1/projects/{project_id}/human-review/release")
+    rows.append(_status(f"{name} unauthenticated", anonymous, 401))
+    held_off = client.post(f"/v1/projects/{project_id}/human-review/release", headers=owner)
+    rows.append(_status(f"{name} owner not in review", held_off, 409))
+    if snapshot.read_bytes() != before:
+        rows.append((f"{name} owner bytes", "FAIL", "changed"))
+    else:
+        rows.append((f"{name} owner bytes", "PASS", "unchanged"))
+    return rows
 
 
 def _websocket(port: int, project_id: str, token: str, secret: str) -> tuple[str, str, str]:

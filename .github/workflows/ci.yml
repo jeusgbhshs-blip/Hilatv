@@ -70,6 +70,9 @@ jobs:
       - name: Accept T13
         run: make accept-t13
 
+      - name: Accept T14
+        run: make accept-t14
+
       - name: Accept T16
         run: make accept-t16
 

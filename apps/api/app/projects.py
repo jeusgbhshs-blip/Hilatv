@@ -481,6 +481,41 @@ def project_revision(
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
+@router.post("/v1/projects/{project_id}/human-review/release")
+async def release_human_review(
+    project_id: str,
+    identity: Identity = Depends(require_identity),
+) -> JSONResponse:
+    """Explicit human release. This is the only way past needs_review."""
+
+    snapshot = prepare_human_release(project_id, identity)
+    from workers.workflow.service import start_film
+    from workers.workflow.store import load_checkpoint
+
+    workflow_id = await start_film(
+        project_id=project_id,
+        sentence=str(snapshot.get("sentence") or ""),
+        brand_kit=snapshot.get("brand_kit"),
+        brand_id=snapshot.get("brand_id"),
+        enterprise_id=snapshot.get("enterprise_id"),
+        concept_selection=snapshot.get("concept_selection"),
+        attachments=snapshot.get("attachments") or [],
+        keyframe_candidates=snapshot.get("keyframe_candidates"),
+        video_candidates=snapshot.get("video_candidates"),
+        start_from="n12_music",
+        checkpoint=load_checkpoint(project_id),
+        human_release=True,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={
+            "project_id": project_id,
+            "workflow_id": workflow_id,
+            "status": "running",
+        },
+    )
+
+
 @router.post("/v1/projects/{project_id}/storyboard/continue")
 async def continue_storyboard(
     project_id: str,
@@ -573,7 +608,7 @@ async def project_progress(websocket: WebSocket, project_id: str) -> None:
                 await websocket.send_json(event)
                 sent += 1
             snapshot = read_snapshot(project_id) or {}
-            terminal = snapshot.get("status") in {"completed", "failed"}
+            terminal = snapshot.get("status") in {"completed", "failed", "needs_human_review"}
             if terminal and sent >= len(read_events(project_id)):
                 await websocket.close()
                 return

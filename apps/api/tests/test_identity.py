@@ -81,5 +81,6 @@ def test_human_release_records_releaser(tmp_path, monkeypatch) -> None:
     assert events[-1]["type"] == "human_review_released"
     assert events[-1]["releaser"] == owner.member_id
     assert events[-1]["enterprise_id"] == owner.enterprise_id
+    assert isinstance(events[-1]["ts"], float)
     stored = json.loads((project_path("held1") / "project.json").read_text(encoding="utf-8"))
     assert stored["events"][-1]["releaser"] == owner.member_id
