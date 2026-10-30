@@ -1,0 +1,14 @@
+Do not render any on-screen text, logos, prices, or phone numbers. Those are composited later.
+画面里的文字、Logo、价格、电话只交给后期叠加。
+
+把下面每个镜头的旁白改写成 {{ language }}。这不是逐句翻译。
+按采购习惯重写。只有资料里已经出现的数字才能保留。不要自己补 MOQ、交期或认证。
+
+{% for shot in shots %}
+- {{ shot.shot_id }}：{{ shot.voiceover }}
+{% endfor %}
+
+资料卖点：
+{{ points }}
+证明：{{ proof }}
+禁用词：{{ banned }}
