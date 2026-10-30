@@ -17,6 +17,7 @@ from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
 from workers.schemas.script import Script
 from workers.workflow.store import (
+    load_checkpoint,
     project_path,
     project_root,
     read_snapshot,
@@ -49,10 +50,12 @@ def _snapshot_or_404(project_id: str) -> dict[str, Any]:
     return snapshot
 
 
-def _pick(body: dict[str, Any] | None, snapshot: dict[str, Any], key: str) -> Any:
-    if body is not None:
-        return body
-    return snapshot.get(key)
+def _checkpoint(project_id: str) -> dict[str, Any]:
+    try:
+        found = load_checkpoint(project_id)
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
 
 
 @router.post("/v1/projects/{project_id}/deliveries")
@@ -134,18 +137,30 @@ def open_share(token: str) -> FileResponse:
 
 
 def _payload(project_id: str, snapshot: dict[str, Any], body: DeliverBody) -> dict[str, Any]:
-    script = _pick(body.script, snapshot, "script")
-    brief = _pick(body.brief, snapshot, "brief")
-    master = body.master_path or snapshot.get("master_plate")
+    saved = _checkpoint(project_id)
+    script = body.script or snapshot.get("script") or saved.get("script")
+    brief = body.brief or snapshot.get("brief") or saved.get("brief")
+    master = (
+        body.master_path
+        or snapshot.get("master_plate")
+        or snapshot.get("deliverable")
+        or saved.get("deliverable")
+    )
     tracks = body.subject_tracks
     if tracks is None:
         tracks = snapshot.get("subject_tracks")
+    if tracks is None:
+        tracks = saved.get("subject_tracks")
     if not isinstance(script, dict) or not isinstance(brief, dict) or not isinstance(master, str):
         raise HTTPException(status_code=409, detail="成片母版或脚本还没准备好")
     try:
         Script.model_validate(script)
         Brief.model_validate(brief)
-        brand = _pick(body.brand_kit, snapshot, "brand_kit")
+        brand = body.brand_kit
+        if brand is None:
+            brand = snapshot.get("brand_kit")
+        if brand is None:
+            brand = saved.get("brand_kit")
         if brand is not None:
             BrandKit.model_validate(brand)
     except ValidationError as exc:

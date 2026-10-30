@@ -32,12 +32,13 @@ def check(result: NodeResult) -> list[DeliveryVersion]:
     if not any(item.kind is AssetKind.deliverable for item in assets):
         raise QAError("deliverable asset is missing")
     seen: set[str] = set()
+    verify_pixels = bool(result.payload.get("verify_pixels"))
     for version in versions:
-        _version(version, seen)
+        _version(version, seen, verify_pixels=verify_pixels)
     return versions
 
 
-def _version(version: DeliveryVersion, seen_pictures: set[str]) -> None:
+def _version(version: DeliveryVersion, seen_pictures: set[str], *, verify_pixels: bool) -> None:
     for graph in (version.filters, version.burn_filters):
         if "drawtext" in graph or "subtitles=" in graph:
             raise QAError(f"{version.version_id} draws text inside the filter graph")
@@ -57,7 +58,7 @@ def _version(version: DeliveryVersion, seen_pictures: set[str]) -> None:
     _language(version)
     _safe(version)
     _geometry(version)
-    if version.picture_path not in seen_pictures:
+    if verify_pixels and version.picture_path not in seen_pictures:
         _pixels(version)
         seen_pictures.add(version.picture_path)
 

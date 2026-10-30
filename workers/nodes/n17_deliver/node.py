@@ -299,6 +299,7 @@ def _execute(
             "languages": languages,
             "aspect_ratios": aspects,
             "durations_s": targets,
+            "verify_pixels": payload.verify_pixels,
         },
     )
 

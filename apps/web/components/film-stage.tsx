@@ -6,8 +6,23 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { apiUrl } from "@/lib/api";
+import { apiUrl, errorMessage } from "@/lib/api";
 import { readShots, type ProjectSnapshot, type ShotSummary } from "@/lib/progress";
+import {
+  aspectLabel,
+  defaultChoice,
+  downloadName,
+  durationLabel,
+  languageLabel,
+  pickVersion,
+  readVersions,
+  reconcile,
+  uniqueAspects,
+  uniqueDurations,
+  uniqueLanguages,
+  type FilmVersion,
+  type VersionChoice,
+} from "@/lib/versions";
 
 export function FilmStage({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
@@ -15,6 +30,10 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const [missing, setMissing] = useState(false);
   const [src, setSrc] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
+  const [versions, setVersions] = useState<FilmVersion[]>([]);
+  const [choice, setChoice] = useState<VersionChoice>({ aspect: "", language: "", duration: null });
+  const [exporting, setExporting] = useState(false);
+  const [versionNote, setVersionNote] = useState<string | null>(null);
 
   useEffect(() => {
     let closed = false;
@@ -52,17 +71,45 @@ export function FilmStage({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   const ready = snapshot?.status === "completed";
+  const selected = pickVersion(versions, choice);
+  const mediaPath = selected
+    ? selected.download_path
+    : ready
+      ? `/v1/projects/${encodeURIComponent(projectId)}/download`
+      : null;
 
   useEffect(() => {
     if (!ready) return;
+    let closed = false;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/versions`), {
+          signal: controller.signal,
+        });
+        if (!response.ok || closed) return;
+        const found = readVersions(await response.json());
+        if (closed) return;
+        setVersions(found);
+        if (found.length > 0) setChoice(defaultChoice(found));
+      } catch (caught) {
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+      }
+    })();
+    return () => {
+      closed = true;
+      controller.abort();
+    };
+  }, [projectId, ready]);
+
+  useEffect(() => {
+    if (!mediaPath) return;
     let closed = false;
     let objectUrl = "";
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/download`), {
-          signal: controller.signal,
-        });
+        const response = await fetch(apiUrl(mediaPath), { signal: controller.signal });
         if (!response.ok || closed) return;
         const blob = await response.blob();
         objectUrl = URL.createObjectURL(new Blob([blob], { type: blob.type || "video/mp4" }));
@@ -76,18 +123,19 @@ export function FilmStage({ projectId }: { projectId: string }) {
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [projectId, ready]);
+  }, [mediaPath]);
 
   async function downloadFilm() {
+    if (!mediaPath) return;
     setDownloadError(null);
     try {
-      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/download`));
+      const response = await fetch(apiUrl(mediaPath));
       if (!response.ok) throw new Error("下载没有成功");
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(new Blob([blob], { type: blob.type || "video/mp4" }));
       const anchor = document.createElement("a");
       anchor.href = objectUrl;
-      anchor.download = "master.mp4";
+      anchor.download = downloadName(selected);
       document.body.append(anchor);
       anchor.click();
       anchor.remove();
@@ -95,6 +143,33 @@ export function FilmStage({ projectId }: { projectId: string }) {
     } catch (caught) {
       setDownloadError(caught instanceof Error ? caught.message : "下载没有成功");
     }
+  }
+
+  async function exportVersions() {
+    setExporting(true);
+    setVersionNote(null);
+    try {
+      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/deliveries`), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          aspect_ratios: ["16:9", "9:16", "1:1"],
+          languages: ["zh", "en"],
+        }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const found = readVersions(await response.json());
+      setVersions(found);
+      if (found.length > 0) setChoice(defaultChoice(found));
+    } catch (caught) {
+      setVersionNote(caught instanceof Error ? caught.message : "导出没有成功");
+    } finally {
+      setExporting(false);
+    }
+  }
+
+  function choose(next: Partial<VersionChoice>) {
+    setChoice((current) => reconcile(versions, { ...current, ...next }));
   }
 
   if (missing) {
@@ -120,6 +195,11 @@ export function FilmStage({ projectId }: { projectId: string }) {
     );
   }
 
+  const aspects = uniqueAspects(versions);
+  const languages = uniqueLanguages(versions, choice.aspect);
+  const durations = uniqueDurations(versions, choice.aspect, choice.language);
+  const portrait = selected ? selected.height > selected.width : false;
+
   return (
     <div className="grid min-w-0 items-start gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.8fr)]">
       <div className="min-w-0">
@@ -131,7 +211,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
         <div className="mt-6 overflow-hidden rounded-lg border border-border bg-black">
           <video
             data-testid="film-player"
-            className="aspect-video w-full"
+            data-aspect={selected?.aspect_ratio ?? "master"}
+            className={portrait ? "mx-auto aspect-[9/16] max-h-[70vh]" : "aspect-video w-full"}
             controls
             playsInline
             src={src ?? undefined}
@@ -163,23 +244,44 @@ export function FilmStage({ projectId }: { projectId: string }) {
           </p>
         ) : null}
 
-        <div className="grid gap-2">
-          <Label htmlFor="version">版本</Label>
-          <select
-            id="version"
-            defaultValue="current"
-            aria-describedby="version-note"
-            className="h-11 w-full rounded-md border border-input bg-card px-3 text-base"
-          >
-            <option value="current">当前成片</option>
-            <option value="previous" disabled>
-              上一版（即将开放）
-            </option>
-          </select>
+        <fieldset className="grid gap-3">
+          <legend className="text-sm font-medium">版本</legend>
+          <VersionSelect
+            id="aspect"
+            label="比例"
+            value={choice.aspect}
+            disabled={aspects.length === 0}
+            options={aspects.map((item) => ({ value: item, label: aspectLabel(item) }))}
+            onChange={(value) => choose({ aspect: value })}
+          />
+          <VersionSelect
+            id="language"
+            label="语种"
+            value={choice.language}
+            disabled={languages.length === 0}
+            options={languages.map((item) => ({ value: item, label: languageLabel(item) }))}
+            onChange={(value) => choose({ language: value })}
+          />
+          <VersionSelect
+            id="duration"
+            label="时长"
+            value={choice.duration === null ? "" : String(choice.duration)}
+            disabled={durations.length === 0}
+            options={durations.map((item) => ({ value: String(item), label: durationLabel(item) }))}
+            onChange={(value) => choose({ duration: Number(value) })}
+          />
+          {versions.length === 0 ? (
+            <Button type="button" variant="outline" disabled={exporting} onClick={() => void exportVersions()}>
+              {exporting ? "正在导出" : "导出其他版本"}
+            </Button>
+          ) : null}
           <p id="version-note" className="text-sm text-muted-foreground">
-            版本切换会在改稿上线后启用。
+            {versionNote ??
+              (versions.length > 0
+                ? "切换比例、语种或时长会换一条成片。"
+                : "当前播放的是母版。导出后可以换比例、语种和时长。")}
           </p>
-        </div>
+        </fieldset>
 
         <div className="grid gap-2">
           <Label htmlFor="revision">改稿</Label>
@@ -189,6 +291,43 @@ export function FilmStage({ projectId }: { projectId: string }) {
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function VersionSelect({
+  id,
+  label,
+  value,
+  disabled,
+  options,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  disabled: boolean;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={id}>{label}</Label>
+      <select
+        id={id}
+        value={options.length === 0 ? "" : value}
+        disabled={disabled}
+        aria-describedby="version-note"
+        onChange={(event) => onChange(event.target.value)}
+        className="h-11 w-full rounded-md border border-input bg-card px-3 text-base disabled:opacity-60"
+      >
+        {options.length === 0 ? <option value="">当前成片</option> : null}
+        {options.map((item) => (
+          <option key={item.value} value={item.value}>
+            {item.label}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }

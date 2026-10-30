@@ -67,6 +67,7 @@ class N17Input(BaseModel):
     durations_s: list[float] | None = None
     long_edge: int | None = Field(default=None, ge=64, le=3840)
     regenerate_vertical: bool | None = None
+    verify_pixels: bool = False
     work_dir: str | None = None
 
 

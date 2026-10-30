@@ -81,6 +81,7 @@ def acceptance_request(
             "durations_s": [5],
             "long_edge": long_edge,
             "regenerate_vertical": regenerate_vertical,
+            "verify_pixels": True,
             "work_dir": str(work / "out"),
         },
     }
