@@ -107,13 +107,23 @@ export function InputStudio() {
     setBusy(true);
     setError(null);
     try {
-      const uploaded: { kind: string; uri: string; filename: string }[] = [];
+      const uploaded: { kind: string; upload_id: string; filename: string }[] = [];
       for (const item of files) {
         const body = new FormData();
         body.append("file", item.file, item.file.name);
         const response = await fetch(apiUrl("/v1/uploads"), { method: "POST", body });
         if (!response.ok) throw new Error(await errorMessage(response));
-        uploaded.push((await response.json()) as { kind: string; uri: string; filename: string });
+        const stored = (await response.json()) as {
+          kind?: string;
+          upload_id?: string;
+          filename?: string;
+        };
+        if (!stored.upload_id || !stored.kind) throw new Error("上传没有成功");
+        uploaded.push({
+          kind: stored.kind,
+          upload_id: stored.upload_id,
+          filename: stored.filename || item.file.name,
+        });
       }
       const response = await fetch(apiUrl("/v1/projects"), {
         method: "POST",

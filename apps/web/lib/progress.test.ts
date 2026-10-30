@@ -55,7 +55,17 @@ describe("shot progress", () => {
   });
 
   it("labels a link by its address and a picture by its file name", () => {
-    assert.equal(attachmentLabel({ kind: "url", uri: "https://example.com/a", filename: "" }), "https://example.com/a");
-    assert.equal(attachmentLabel({ kind: "image", uri: "/tmp/a.png", filename: "产品图.png" }), "产品图.png");
+    assert.equal(
+      attachmentLabel({ kind: "url", uri: "https://example.com/a", filename: "" }),
+      "https://example.com/a",
+    );
+    assert.equal(
+      attachmentLabel({ kind: "image", uri: "/tmp/a.png", filename: "产品图.png" }),
+      "产品图.png",
+    );
+    assert.equal(attachmentLabel({ kind: "image", uri: "/etc/passwd", filename: "" }), "图片");
+    assert.equal(attachmentLabel({ kind: "image", uri: "/tmp/product.png", filename: "/tmp/product.png" }), "图片");
+    assert.equal(attachmentLabel({ kind: "url", uri: "/etc/passwd", filename: "" }), "链接");
+    assert.equal(attachmentLabel({ kind: "pdf", uri: "/tmp/a.pdf", filename: "a.pdf" }), "a.pdf");
   });
 });

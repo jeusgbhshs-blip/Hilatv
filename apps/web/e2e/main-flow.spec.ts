@@ -46,7 +46,7 @@ test("one sentence becomes a playable download", async ({ page }) => {
   const request = await created;
   const body = request.postDataJSON() as {
     sentence: string;
-    attachments: { kind: string; filename?: string; uri: string }[];
+    attachments: { kind: string; filename?: string; uri?: string; upload_id?: string }[];
   };
   expect(body.sentence).toBe(SENTENCE);
   expect(body.attachments).toEqual(
@@ -55,6 +55,10 @@ test("one sentence becomes a playable download", async ({ page }) => {
       expect.objectContaining({ kind: "url", uri: link }),
     ]),
   );
+  const image = body.attachments.find((item) => item.kind === "image");
+  expect(image?.upload_id).toMatch(/^[a-f0-9]{32}$/);
+  expect(image?.uri).toBeUndefined();
+  expect(JSON.stringify(body)).not.toContain("/uploads/");
   await socketWait;
   await page.waitForURL(/\/projects\/[0-9a-f-]+$/);
 

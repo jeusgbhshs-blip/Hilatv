@@ -160,7 +160,10 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
           <h2 className="text-sm font-medium">已提交的素材</h2>
           <ul className="mt-2 grid gap-1">
             {attachments.map((item) => (
-              <li key={`${item.kind}:${item.uri}`} className="break-all text-sm text-muted-foreground">
+              <li
+                key={item.upload_id || item.filename || item.uri}
+                className="break-all text-sm text-muted-foreground"
+              >
                 {attachmentLabel(item)}
               </li>
             ))}

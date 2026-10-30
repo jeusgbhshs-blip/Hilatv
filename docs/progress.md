@@ -66,7 +66,7 @@
 
 - 仓库已经用 npm（`apps/web/package-lock.json`，CI 按这个文件缓存）。`make accept-t11` 跑 `npm run test:e2e`，不另起 pnpm workspace。issue 注释里的 `pnpm --filter web` 指的是同一条桌面加手机的 Playwright。包名是 `hilatv-web`，对不上 filter `web`。
 - 浏览器在设置了 `NEXT_PUBLIC_API_BASE` 时直连 API。没设置时，页面走同源 `/v1`，由 Next rewrite 转到 `HILATV_API_ORIGIN`。WebSocket 在设置了 base 时直连 API；浏览器对 WebSocket 不看 CORS。REST 的跨域来源由 `HILATV_WEB_ORIGINS` 决定，进程启动时读一次。
-- 图片和 PDF 经新增的 `POST /v1/uploads` 写到 `HILATV_PROJECT_DIR/uploads/`。创建项目时带上 N1 已有的 `AttachmentRef`（`kind` / `uri` / `filename`）。不新增表。链接只收 http 或 https。单文件默认不超过 8MB（`HILATV_UPLOAD_MAX_BYTES`）。
+- 图片和 PDF 经 `POST /v1/uploads` 写到 `HILATV_PROJECT_DIR/uploads/<id>/`。响应只给不透明的 `upload_id`，不给服务器路径。创建项目用这个 id；服务端解析并确认真实路径落在 `uploads/` 里（解开符号链接，拒绝 `..` 和其他路径），否则 422。交给 N1 的仍是解析后的本地路径。状态接口和进度页不展示服务器路径。链接只收 http 或 https。类型必须同时符合 MIME 和扩展名，拒绝 SVG。单文件默认不超过 8MB，按块读取，超出即停（`HILATV_UPLOAD_MAX_BYTES`）。不新增表。
 - 成片下载接口仍返回 `Content-Disposition: attachment`。播放器先把成片取成 blob 再交给 `<video>`，下载按钮再取一次并保存为 `master.mp4`。不做 Range。
 - 版本切换和改稿框只是占位，不调用重跑，也不改稿。方案卡、分镜预览、专家画布、企业后台不在本任务。五个用户状态用 T10 已有的 phase。镜头行显示 WebSocket 事件里的「第 N 镜：…」；断线后靠轮询快照补上。分镜出来之前页面写当前环节，不用转圈当唯一反馈。
 - 六个行业入口对应 `templates/industries` 的名称。点击只是填一句可改的示例，不单独调模型。

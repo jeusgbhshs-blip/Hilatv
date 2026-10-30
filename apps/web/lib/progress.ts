@@ -33,6 +33,7 @@ export type AttachmentView = {
   kind: string;
   uri: string;
   filename: string;
+  upload_id?: string;
 };
 
 export type ProjectSnapshot = {
@@ -94,13 +95,12 @@ export function readAttachments(value: unknown): AttachmentView[] {
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
-    if (typeof record.uri !== "string" || !record.uri) continue;
     const kind = typeof record.kind === "string" ? record.kind : "";
-    found.push({
-      kind,
-      uri: record.uri,
-      filename: typeof record.filename === "string" ? record.filename : "",
-    });
+    const uri = typeof record.uri === "string" ? record.uri : "";
+    const filename = typeof record.filename === "string" ? record.filename : "";
+    const uploadId = typeof record.upload_id === "string" ? record.upload_id : "";
+    if (!uri && !filename && !uploadId) continue;
+    found.push({ kind, uri, filename, upload_id: uploadId });
   }
   return found;
 }
@@ -157,7 +157,15 @@ export function projectStatus(snapshotStatus: string | undefined, events: Progre
   return status;
 }
 
+function safeFilename(name: string): string {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.includes("/") || trimmed.includes("\\") || trimmed.includes("..")) return "";
+  return trimmed;
+}
+
 export function attachmentLabel(item: AttachmentView): string {
-  if (item.kind === "url") return item.uri;
-  return item.filename || "图片";
+  const filename = safeFilename(item.filename);
+  if (item.kind === "url" && /^https?:\/\//i.test(item.uri)) return item.uri;
+  if (item.kind === "url") return filename || "链接";
+  return filename || (item.kind === "pdf" ? "PDF" : "图片");
 }
