@@ -112,6 +112,15 @@ def _execute(
         shot_id=request.shot_id,
         attempt=attempt,
     )
+    from workers.compliance.gate import open_delivery
+
+    open_delivery(
+        request.project_id,
+        payload,
+        request.payload,
+        gateway=gateway,
+        attempt=attempt,
+    )
     root = project_path(request.project_id, create=True).resolve()
     master = _contained_file(root, payload.master_path)
     info = probe(master)
@@ -167,6 +176,7 @@ def _execute(
                     gateway=gateway,
                     project_id=request.project_id,
                     attempt=attempt,
+                    enterprise_id=payload.enterprise_id,
                 ),
             )
     versions: list[DeliveryVersion] = []
@@ -231,6 +241,9 @@ def _execute(
                 height=out_h,
             )
             audios = _audios(takes, board)
+            soundtrack = _soundtrack(root, payload.audio_track)
+            if soundtrack is not None:
+                audios = [soundtrack, *audios]
             dest = work / "versions" / f"{_slug(aspect, duration)}_{language}.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
             _args, burn = burn_command(str(silent), audios, placed, str(dest), duration)
@@ -273,6 +286,16 @@ def _execute(
             )
     if prompts and NO_RENDERED_TEXT[:12] not in prompts[0] and "on-screen text" not in prompts[0]:
         raise QAError("localization prompt dropped the no-text constraint")
+    from workers.compliance.gate import close_delivery
+
+    compliance = close_delivery(
+        request.project_id,
+        payload,
+        versions,
+        gateway=gateway,
+        attempt=attempt,
+        root=root,
+    )
     log_event(
         "node_finished",
         project_id=request.project_id,
@@ -296,7 +319,12 @@ def _execute(
                 "subtitles": "render-layer PNG, Noto Sans CJK SC (OFL 1.1)",
                 "fonts": "Noto Sans CJK SC, SIL OFL 1.1",
                 "music": "not included in this export",
+                "materials_note": compliance["materials_note"],
+                "explicit_label": compliance["explicit_label"],
+                "implicit_label": compliance["implicit_label"],
+                "manual_review": compliance["manual_review"],
             },
+            "compliance": compliance,
             "languages": languages,
             "aspect_ratios": aspects,
             "durations_s": targets,
@@ -455,6 +483,15 @@ def _board(script: Script, kept: list[KeptShot]) -> Script:
     return script.model_copy(update={"shots": shots})
 
 
+def _soundtrack(root: Path, raw: str | None) -> tuple[str, float] | None:
+    if not raw:
+        return None
+    path = _contained(root, raw, label="audio track")
+    if not path.is_file():
+        raise QAError("audio track must stay inside the project directory")
+    return str(path), 0.0
+
+
 def _audios(takes: list[Any], script: Script) -> list[tuple[str, float]]:
     by_id = {item.shot_id: item for item in takes}
     rows: list[tuple[str, float]] = []
@@ -510,13 +547,13 @@ def _contained_dir(root: Path, raw: str | None) -> Path:
     return path
 
 
-def _contained(root: Path, raw: str) -> Path:
+def _contained(root: Path, raw: str, *, label: str = "master") -> Path:
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = root / path
     resolved = path.resolve()
     if not resolved.is_relative_to(root):
-        raise QAError("master must stay inside the project directory")
+        raise QAError(f"{label} must stay inside the project directory")
     return resolved
 
 

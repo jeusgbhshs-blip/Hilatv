@@ -83,4 +83,24 @@ def _make(node: str) -> Any:
     return _run
 
 
-FAKE_ACTIVITIES = [_make(node) for node in PIPELINE] + [mark_failed]
+@activity.defn(name="storyboard_sync")
+def storyboard_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    CALLS.append("storyboard_sync")
+    return {"patch": {}}
+
+
+@activity.defn(name="storyboard_expire")
+def storyboard_expire(payload: dict[str, Any]) -> dict[str, Any]:
+    from workers.workflow.storyboard import mark_expired
+
+    CALLS.append("storyboard_expire")
+    mark_expired(str(payload["project_id"]))
+    return {"patch": {}}
+
+
+FAKE_ACTIVITIES = [_make(node) for node in PIPELINE] + [
+    storyboard_sync,
+    storyboard_expire,
+    mark_failed,
+]

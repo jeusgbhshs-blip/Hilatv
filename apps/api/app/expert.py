@@ -9,9 +9,9 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from workers.expert.canvas import build_canvas, media_file
+from workers.expert.charge import BudgetExhausted
 from workers.expert.gates import GateError
 from workers.expert.rerun import rerun_span, save_timeline, select_candidate
-from workers.qa.budget_store import BudgetExhausted
 
 router = APIRouter()
 

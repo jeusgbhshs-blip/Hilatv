@@ -7,6 +7,7 @@ import uuid
 import pytest
 
 from workers.brand_kit.store import BrandRecord, save_record
+from workers.compliance.licences import builtin_records, delivery_block_reason
 from workers.expert.gates import (
     GateError,
     assert_ai_label,
@@ -17,7 +18,7 @@ from workers.expert.gates import (
     scrub_brand,
     voice_allowlist,
 )
-from workers.expert.licenses import LicenseError, require_license
+from workers.nodes.n12_music.schema import LicenseRecord
 from workers.nodes.runtime import placeholder_qa
 from workers.qa.scores import content_blocked
 from workers.schemas.asset import Candidate, QAReport, QAScores
@@ -91,7 +92,7 @@ def test_caller_consent_does_not_put_a_voice_on_the_allowlist(tmp_path, monkeypa
     assert scrubbed is not None
     assert scrubbed["people"] == []
     assert voice_allowlist(enterprise_id) == set()
-    with pytest.raises(GateError, match="授权名单"):
+    with pytest.raises(GateError, match="未归档声音授权"):
         consent_gate(enterprise_id, "clone-inline")
 
 
@@ -116,13 +117,12 @@ def test_ai_label_and_font_license_are_not_optional() -> None:
     with pytest.raises(GateError, match="AI生成"):
         assert_ai_label([{"kind": "badge", "text": "30 MPa"}])
     assert_ai_label([{"kind": "ai_label", "text": "AI生成"}])
-    records = enforce_fonts()
-    assert {item.name for item in records} == {
-        "NotoSansSC-Regular.otf",
-        "NotoSansSC-Bold.otf",
-    }
-    with pytest.raises(LicenseError, match="可商用授权"):
-        require_license("PiratedFont.otf", "font")
+    enforce_fonts()
+    fonts = [item for item in builtin_records() if item.kind == "font"]
+    assert fonts and all(isinstance(item, LicenseRecord) for item in fonts)
+    assert delivery_block_reason(fonts) == ""
+    broken = fonts[0].model_copy(update={"license": ""})
+    assert delivery_block_reason([broken])
 
 
 def _kit(*, consent: bool, voice_id: str) -> BrandKit:

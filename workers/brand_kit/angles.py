@@ -37,6 +37,7 @@ def complete_angles(
     project_id: str,
     attempt: int,
     product_id: str,
+    node: str = "n02_brand_kit",
 ) -> list[AnchorRef]:
     """Ask the image gateway for two anchor views. The prompt forbids drawn text."""
 
@@ -54,7 +55,7 @@ def complete_angles(
             seed=100 + index,
             shot_type="product",
             project_id=project_id,
-            node="n02_brand_kit",
+            node=node,
             shot_id=product_id,
             attempt=attempt,
         )

@@ -119,6 +119,10 @@ def _fill(
     batch = run_parallel(pending, work, workers=workers_for(len(pending)))
     for shot_id, value, exc in batch:
         if exc is not None:
+            from workers.brand_kit.people import ConsentError
+
+            if isinstance(exc, ConsentError):
+                raise exc
             log_event(
                 "node_shot_failed",
                 project_id=request.project_id,
@@ -151,6 +155,9 @@ def _shot(
     deadline.check()
     if shot.generation_mode is GenerationMode.motion_graphics:
         return []
+    from workers.compliance.consent_gate import assert_generation_allowed
+
+    assert_generation_allowed(shot, payload.enterprise_id)
     family = shot_family(shot)
     language = payload.script.language
     intended = intended_model(gateway, "image", family, language)

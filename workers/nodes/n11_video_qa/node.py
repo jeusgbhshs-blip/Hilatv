@@ -13,6 +13,7 @@ from workers.logging import log_event
 from workers.nodes.n11_video_qa.qa import QAError, check
 from workers.nodes.n11_video_qa.schema import N11Input, NodeRequest, NodeResult
 from workers.nodes.runtime import Deadline, candidate_uuid
+from workers.qa.budget_store import open_project_budget
 from workers.qa.director import decide
 from workers.qa.frames import SAMPLE_FPS, sample_frames, write_mp4
 from workers.qa.pixels import open_image
@@ -39,7 +40,7 @@ def run(
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     gateway = gateway if gateway is not None else _default_gateway()
-    budget = RetryBudget()
+    budget = open_project_budget(request.project_id)
     last_error: QAError | None = None
     for try_index in range(1, max_attempts + 1):
         try:

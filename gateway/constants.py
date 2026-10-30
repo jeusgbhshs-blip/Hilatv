@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-TASKS = frozenset({"llm", "image", "video", "tts", "asr", "music", "judge"})
+TASKS = frozenset(
+    {"llm", "image", "video", "tts", "asr", "music", "judge", "matte", "relight", "content_safety"}
+)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -16,6 +18,19 @@ VOLC_ASR_RESOURCE = "volc.bigasr.auc_turbo"
 # SPEC Brand Kit voice id mapped onto a documented Doubao voice. Override with VOLC_TTS_VOICE.
 DEFAULT_TTS_VOICE = "zh_male_M392_conversation_wvae_bigtts"
 TTS_VOICE_ALIASES = {"zh_male_steady": DEFAULT_TTS_VOICE}
+
+# Non-cloned narration voices. Consent checks allow only this set, plus a clone
+# released from the enterprise brand archive. Do not add ids from a request.
+# zh_female_steady is the stock female narration N18 selects. It is not a clone.
+BUILTIN_TTS_VOICES = frozenset(
+    {
+        "zh_male_steady",
+        "zh_female_steady",
+        DEFAULT_TTS_VOICE,
+        *TTS_VOICE_ALIASES.keys(),
+        *TTS_VOICE_ALIASES.values(),
+    }
+)
 
 # Image and video models must not paint copy. The render nodes overlay text.
 NO_RENDERED_TEXT = (

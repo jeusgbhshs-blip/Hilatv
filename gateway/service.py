@@ -158,6 +158,17 @@ class Gateway:
     def judge(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
         return self.execute("judge", prompt, **kwargs)
 
+    def matte(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
+        return self.execute("matte", prompt, **kwargs)
+
+    def relight(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
+        return self.execute("relight", prompt, **kwargs)
+
+    def content_safety(self, text: str, **kwargs: Any) -> dict[str, Any]:
+        params = dict(kwargs.pop("params", None) or {})
+        params.setdefault("stage", "input")
+        return self.execute("content_safety", text, params=params, **kwargs)
+
     def execute(
         self,
         task: str,
@@ -185,11 +196,18 @@ class Gateway:
             clean_params["image_sha256"] = hashlib.sha256(image_b64.encode("utf-8")).hexdigest()
         else:
             image_b64 = None
+        cutout_b64 = clean_params.pop("cutout_b64", None)
+        if isinstance(cutout_b64, str) and cutout_b64:
+            clean_params["cutout_sha256"] = hashlib.sha256(cutout_b64.encode("utf-8")).hexdigest()
+        else:
+            cutout_b64 = None
         if seed is None and clean_params.get("seed") is not None:
             seed = int(clean_params["seed"])
         route = self._with_overrides(self.routes.resolve(task, shot_type, language))
         clean_params["route_id"] = route.id
         candidates = self._candidates(route, task)
+        if task == "content_safety":
+            candidates = self._content_safety_candidates(candidates)
         billable = [(endpoint, adapter) for endpoint, adapter in candidates if adapter.billable]
         mode = "live" if billable else "mock"
         system_effective = system
@@ -237,6 +255,7 @@ class Gateway:
             shot_type=shot_type,
             language=language,
             image_b64=image_b64 if isinstance(image_b64, str) else None,
+            cutout_b64=cutout_b64 if isinstance(cutout_b64, str) else None,
         )
         started = time.perf_counter()
         cached = self.cache.get(cache_key)
@@ -278,6 +297,10 @@ class Gateway:
                         node=node,
                         shot_id=shot_id,
                         attempt=attempt,
+                    )
+                if task == "content_safety":
+                    raise GatewayError(
+                        "content safety unreviewed: budget blocked the live moderator"
                     )
                 return self._serve_mock(
                     base,
@@ -332,6 +355,26 @@ class Gateway:
                 return output
             raise GatewayError(f"all adapters failed for {task}") from last_error
 
+        local = next(
+            (
+                (endpoint, adapter)
+                for endpoint, adapter in candidates
+                if not adapter.billable and adapter.provider != "mock"
+            ),
+            None,
+        )
+        if local is not None:
+            endpoint, adapter = local
+            return self._serve_mock(
+                base,
+                adapter=adapter,
+                model=endpoint.model,
+                reason=None,
+                cache_key=cache_key,
+                model_cls=model_cls,
+                json_schema=json_schema,
+            )
+
         mock_endpoint = next(
             (endpoint for endpoint, adapter in candidates if not adapter.billable),
             None,
@@ -355,9 +398,15 @@ class Gateway:
         cache_key: str | None,
         model_cls: type[BaseModel] | None,
         json_schema: dict[str, Any] | None,
+        adapter: Adapter | None = None,
     ) -> dict[str, Any]:
-        adapter = self.registry["mock"]
-        invocation = replace(base, provider="mock", model=model, attempt=base.attempt or 1)
+        adapter = adapter or self.registry["mock"]
+        invocation = replace(
+            base,
+            provider=adapter.provider,
+            model=model,
+            attempt=base.attempt or 1,
+        )
         started = time.perf_counter()
         try:
             result = adapter.invoke(invocation)
@@ -365,7 +414,7 @@ class Gateway:
         except Exception as exc:
             self._log(
                 invocation,
-                provider="mock",
+                provider=adapter.provider,
                 model=model,
                 cost=money(0),
                 status="error",
@@ -377,8 +426,8 @@ class Gateway:
             raise GatewayError("mock output failed validation") from exc
         self._log(
             invocation,
-            provider="mock",
-            model=model,
+            provider=result.provider,
+            model=result.model,
             cost=money(0),
             status="ok",
             latency_ms=_ms(started),
@@ -389,10 +438,23 @@ class Gateway:
         if cache_key is not None and reason != "budget_exceeded":
             self.cache.set(
                 cache_key,
-                {"output": output, "provider": "mock", "model": model},
+                {"output": output, "provider": result.provider, "model": result.model},
                 self.cache_ttl_s,
             )
         return output
+
+    def _content_safety_candidates(
+        self, candidates: list[tuple[Endpoint, Adapter]]
+    ) -> list[tuple[Endpoint, Adapter]]:
+        """Live moderation never falls through to the mock adapter."""
+
+        live, _, _ = self.limits_fn()
+        if not live:
+            return candidates
+        live_only = [item for item in candidates if item[1].billable and item[1].provider != "mock"]
+        if not live_only:
+            raise GatewayError("content safety unreviewed: live moderator is not configured")
+        return live_only
 
     def _candidates(self, route: Route, task: str) -> list[tuple[Endpoint, Adapter]]:
         live, _, _ = self.limits_fn()
@@ -538,6 +600,11 @@ def music(prompt: str, **kwargs: Any) -> dict[str, Any]:
 def judge(prompt: str, **kwargs: Any) -> dict[str, Any]:
     gateway = kwargs.pop("gateway", None)
     return (gateway or get_gateway()).judge(prompt, **kwargs)
+
+
+def content_safety(text: str, **kwargs: Any) -> dict[str, Any]:
+    gateway = kwargs.pop("gateway", None)
+    return (gateway or get_gateway()).content_safety(text, **kwargs)
 
 
 def _prepare_prompt(task: str, prompt: str) -> tuple[str, str | None]:

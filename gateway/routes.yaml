@@ -122,6 +122,26 @@ routes:
     primary: {provider: mock, model: mock-music}
     fallbacks: []
 
+  # Local stand-ins for BiRefNet / RMBG-2.0 and IC-Light. No weights are downloaded.
+  # A missing local adapter falls through to the mock, which calls the same code.
+  - id: matte-default
+    task: matte
+    shot_type: "*"
+    language: "*"
+    timeout_s: 60
+    primary: {provider: local_matting, model: birefnet-rmbg-2.0-local}
+    fallbacks:
+      - {provider: mock, model: mock-matte}
+
+  - id: relight-default
+    task: relight
+    shot_type: "*"
+    language: "*"
+    timeout_s: 60
+    primary: {provider: local_relight, model: ic-light-local}
+    fallbacks:
+      - {provider: mock, model: mock-relight}
+
   # Two vision judges. Without a key, or with HILATV_LIVE left off, both fall through to mock.
   - id: judge-cross
     task: judge
@@ -140,3 +160,13 @@ routes:
     primary: {provider: qwen_vl, model: qwen-vl-max}
     fallbacks:
       - {provider: mock, model: mock-judge}
+
+  # Content safety. No mock fallback: live mode must not pass when this adapter is down.
+  # Mock mode still uses the mock adapter inside the gateway, and marks the result mock.
+  - id: content-safety-default
+    task: content_safety
+    shot_type: "*"
+    language: "*"
+    timeout_s: 30
+    primary: {provider: content_safety, model: content-security}
+    fallbacks: []

@@ -9,7 +9,7 @@ from PIL import Image
 
 from workers.media.raster import render_logo, render_overlay, same_pixels
 from workers.nodes.n14_packaging.node import run
-from workers.nodes.n14_packaging.qa import check
+from workers.nodes.n14_packaging.qa import QAError, check
 from workers.nodes.n14_packaging.schema import PackageElement
 
 
@@ -131,6 +131,25 @@ def test_badge_pixels_match_the_source_text(tmp_path: Path) -> None:
     spec = logo["spec"]
     redraw = render_logo(spec["size"], spec["primary"], spec["secondary"])
     assert same_pixels(Image.open(logo["png_path"]), redraw)
+
+
+def test_instruction_cannot_remove_the_ai_label(tmp_path: Path) -> None:
+    with pytest.raises(QAError, match="固定层"):
+        _run(tmp_path, instruction="去掉 AI 标识")
+    result = _run(tmp_path / "kept", intro="none")
+    elements = check(result)
+    assert any(item.kind == "ai_label" and item.text == "AI生成" for item in elements)
+
+
+def test_brand_logo_can_leave_only_the_ending_card(tmp_path: Path) -> None:
+    result = _run(tmp_path, brand_logo=False)
+    elements = check(result)
+    kinds = {item.kind for item in elements}
+    assert "outro_logo" in kinds
+    assert "outro_cta" in kinds
+    assert "intro_logo" not in kinds
+    assert "corner_logo" not in kinds
+    assert result.payload["brand_logo"] is False
 
 
 def test_corner_logo_can_be_omitted(tmp_path: Path) -> None:

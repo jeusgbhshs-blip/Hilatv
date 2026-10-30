@@ -22,7 +22,9 @@ LABELS = {
     "n05_storyboard": "分镜",
     "n06_voiceover": "配音",
     "n08_keyframe": "关键帧",
+    "n09_keyframe_qa": "关键帧质检",
     "n10_video": "视频",
+    "n12_music": "音乐",
     "n13_subtitle": "字幕",
     "n14_packaging": "包装",
     "n15_compose": "合成",
@@ -35,9 +37,12 @@ _EDGES = (
     ("n04_script", "n05_storyboard"),
     ("n05_storyboard", "n06_voiceover"),
     ("n06_voiceover", "n08_keyframe"),
-    ("n08_keyframe", "n10_video"),
+    ("n08_keyframe", "n09_keyframe_qa"),
+    ("n09_keyframe_qa", "n10_video"),
+    ("n10_video", "n12_music"),
     ("n10_video", "n13_subtitle"),
     ("n10_video", "n14_packaging"),
+    ("n12_music", "n15_compose"),
     ("n13_subtitle", "n15_compose"),
     ("n14_packaging", "n15_compose"),
 )
@@ -62,7 +67,7 @@ def build_canvas(project_id: str) -> dict[str, Any]:
         "budget": {
             "used": budget.used,
             "limit": budget.limit,
-            "remaining": budget.remaining,
+            "remaining": max(0, budget.limit - budget.used),
         },
         "nodes": [
             {

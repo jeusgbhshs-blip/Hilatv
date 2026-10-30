@@ -7,13 +7,18 @@ from pathlib import Path
 from typing import Any
 
 from workers.expert.canvas import build_canvas, load_timeline_dict
-from workers.expert.charge import reserve, span
-from workers.expert.gates import GateError, assert_ai_label, consent_gate, scrub_brand
+from workers.expert.charge import BudgetExhausted, reserve, span
+from workers.expert.gates import (
+    GateError,
+    assert_ai_label,
+    consent_gate,
+    refuse_label_bypass,
+    scrub_brand,
+)
 from workers.expert.invoke import invoke_node
 from workers.logging import log_event
 from workers.nodes.n15_compose.node import render_timeline
 from workers.nodes.n15_compose.schema import Timeline
-from workers.qa.budget_store import BudgetExhausted
 from workers.qa.scores import content_blocked
 from workers.schemas.asset import Candidate
 from workers.workflow.contract import PHASE, PIPELINE
@@ -60,7 +65,7 @@ def rerun_span(
     ``licensed`` are accepted so a caller can send them. They are not read.
     """
 
-    _ = (qa_passed, visual_reviewed, consent, skip_ai_label, licensed)
+    _ = (qa_passed, visual_reviewed, consent, licensed)
     if node not in PIPELINE:
         raise GateError("未知节点", status=400)
     snapshot = _snapshot(project_id)
@@ -81,6 +86,12 @@ def rerun_span(
     suffix = " ".join(prompt_suffix.split())
     if len(suffix) > 500:
         raise GateError("补充提示词过长")
+    refuse_label_bypass(
+        {
+            "prompt_suffix": suffix,
+            "omit_ai_label": True if skip_ai_label else False,
+        }
+    )
     charged = reserve(project_id, node)
     log_event(
         "expert_rerun",

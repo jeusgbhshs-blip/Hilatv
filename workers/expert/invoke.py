@@ -11,7 +11,6 @@ from workers.expert.gates import (
     enforce_fonts,
     enforce_review,
 )
-from workers.expert.licenses import LicenseError
 from workers.qa.service import review_shot
 from workers.schemas.asset import Candidate
 from workers.workflow.activities import node_timeout
@@ -43,8 +42,6 @@ def invoke_node(
         )
     except GateError:
         raise
-    except LicenseError as exc:
-        raise GateError(str(exc)) from exc
     except Exception as exc:
         raise GateError(f"{name} 失败：{exc}"[:400]) from exc
     if name in _REVIEW_NODE:
@@ -291,6 +288,25 @@ def _n08(**kwargs: Any) -> dict[str, Any]:
     return {"keyframes": rows}
 
 
+def _n09(**kwargs: Any) -> dict[str, Any]:
+    from workers.workflow.storyboard import StoryboardError, prepare_gate
+
+    gateway = kwargs["gateway"]
+    if gateway is None:
+        from gateway import get_gateway
+
+        gateway = get_gateway()
+    try:
+        return prepare_gate(
+            kwargs["project_id"],
+            kwargs["state"],
+            skip=True,
+            gateway=gateway,
+        )
+    except StoryboardError as exc:
+        raise GateError(str(exc), status=getattr(exc, "status", 422)) from exc
+
+
 def _n10(**kwargs: Any) -> dict[str, Any]:
     from workers.nodes.n10_video.node import run
 
@@ -318,6 +334,33 @@ def _n10(**kwargs: Any) -> dict[str, Any]:
     )
     rows = _merge(state.get("videos"), result.payload["candidates"], kwargs["shot_id"])
     return {"videos": rows}
+
+
+def _n12(**kwargs: Any) -> dict[str, Any]:
+    from workers.nodes.n12_music.node import run
+
+    state = kwargs["state"]
+    brief = state.get("brief") if isinstance(state.get("brief"), dict) else {}
+    result = _run(
+        "n12_music",
+        run,
+        {
+            "project_id": kwargs["project_id"],
+            "payload": {
+                "script": _require(state, "script"),
+                "voiceovers": state.get("voiceovers") or [],
+                "brief": state.get("brief"),
+                "mood": str(brief.get("style") or ""),
+                "work_dir": _work(kwargs["project_id"], "n12"),
+            },
+            "attempt": 1,
+        },
+        kwargs["gateway"],
+    )
+    return {
+        "audio_track": result.payload["audio_track"],
+        "licensing_summary": result.payload.get("licensing_summary") or {},
+    }
 
 
 def _n13(**kwargs: Any) -> dict[str, Any]:
@@ -389,6 +432,12 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
                 "cues": state.get("cues") or [],
                 "elements": state.get("elements") or [],
                 "videos": state.get("videos") or [],
+                "audio_track": state.get("audio_track"),
+                "licenses": (
+                    state["licensing_summary"].get("records") or []
+                    if isinstance(state.get("licensing_summary"), dict)
+                    else []
+                ),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
                 "intro_s": float(state.get("intro_s") or 0),
@@ -428,7 +477,9 @@ _RUNNERS = {
     "n05_storyboard": _n05,
     "n06_voiceover": _n06,
     "n08_keyframe": _n08,
+    "n09_keyframe_qa": _n09,
     "n10_video": _n10,
+    "n12_music": _n12,
     "n13_subtitle": _n13,
     "n14_packaging": _n14,
     "n15_compose": _n15,

@@ -8,11 +8,11 @@ from pathlib import Path
 import pytest
 
 from workers.expert.canvas import build_canvas
-from workers.expert.charge import generation_count, reserve
+from workers.expert.charge import BudgetExhausted, generation_count, reserve
 from workers.expert.gates import GateError
 from workers.expert.rerun import rerun_span, save_timeline, select_candidate
 from workers.expert.seed import build_film
-from workers.qa.budget_store import BudgetExhausted, open_project_budget
+from workers.qa.budget_store import open_project_budget
 from workers.schemas.asset import Candidate
 from workers.workflow.store import init_project, project_path, read_snapshot, save_node
 
@@ -55,6 +55,9 @@ def test_canvas_review_selection_and_rerun(tmp_path, monkeypatch) -> None:
 
     with pytest.raises(GateError, match="AI生成"):
         save_timeline("film1", {"overlays": [{"kind": "badge", "text": "30 MPa"}], "clips": []})
+    with pytest.raises(GateError, match="AI生成"):
+        rerun_span("film1", "n14_packaging", skip_ai_label=True)
+    assert open_project_budget("film1").used == 0
     assert build_canvas("film1")["timeline"]["ai_label"] is True
 
     master = Path(str(read_snapshot("film1")["deliverable"]))
@@ -82,7 +85,6 @@ def test_canvas_review_selection_and_rerun(tmp_path, monkeypatch) -> None:
         qa_passed=True,
         visual_reviewed=True,
         consent=True,
-        skip_ai_label=True,
         licensed=True,
     )
     assert result["charged"] == 2
@@ -146,7 +148,6 @@ def test_http_rerun_charges_and_does_not_mark_unreviewed_output(tmp_path, monkey
                 "qa_passed": True,
                 "visual_reviewed": True,
                 "consent": True,
-                "skip_ai_label": True,
                 "licensed": True,
             },
         )
@@ -171,7 +172,9 @@ def test_api_refuses_a_rerun_when_the_ledger_is_full(tmp_path, monkeypatch) -> N
 
     init_project("api1", sentence="预算", status="completed")
     save_node("api1", "n05_storyboard", {"script": {"shots": []}})
-    open_project_budget("api1").charge(1)
+    budget = open_project_budget("api1")
+    while budget.try_take():
+        pass
     with TestClient(app) as client:
         missing = client.get("/v1/projects/missing/canvas")
         assert missing.status_code == 404

@@ -7,11 +7,11 @@ import os
 from pathlib import Path
 
 from workers.expert.canvas import build_canvas
-from workers.expert.charge import reserve
+from workers.expert.charge import BudgetExhausted, reserve
 from workers.expert.rerun import select_candidate
 from workers.expert.seed import build_film
 from workers.media.trim import probe_duration_s
-from workers.qa.budget_store import BudgetExhausted, open_project_budget
+from workers.qa.budget_store import open_project_budget
 from workers.qa.settings import project_retry_cap
 from workers.workflow.store import init_project, project_path, read_snapshot
 
@@ -54,7 +54,8 @@ def measure(project_id: str) -> str:
     probe_id = "t19budget"
     init_project(probe_id, sentence="预算探针", status="completed")
     budget = open_project_budget(probe_id)
-    budget.charge(limit)
+    while budget.try_take():
+        pass
     try:
         reserve(probe_id, "n08_keyframe")
     except BudgetExhausted as exc:

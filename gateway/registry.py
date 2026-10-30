@@ -8,6 +8,8 @@ from collections.abc import Callable
 import httpx
 
 from gateway.adapters.base import Adapter
+from gateway.adapters.content_safety import ContentSafetyAdapter
+from gateway.adapters.local_vision import LocalMattingAdapter, LocalRelightAdapter
 from gateway.adapters.mock_adapter import MockAdapter
 from gateway.adapters.openai_compat import OpenAICompatAdapter
 from gateway.adapters.seedance import SeedanceAdapter
@@ -42,6 +44,8 @@ def build_registry(
         interval = float(raw)
     return {
         "mock": MockAdapter(store=media_store),
+        "local_matting": LocalMattingAdapter(),
+        "local_relight": LocalRelightAdapter(),
         "deepseek": OpenAICompatAdapter(
             provider="deepseek",
             base_url=os.getenv("DEEPSEEK_BASE_URL", DEEPSEEK_BASE_URL),
@@ -97,6 +101,11 @@ def build_registry(
             default_voice=os.getenv("VOLC_TTS_VOICE", DEFAULT_TTS_VOICE).strip()
             or DEFAULT_TTS_VOICE,
             store=media_store,
+            transport=transport,
+        ),
+        "content_safety": ContentSafetyAdapter(
+            base_url=os.getenv("CONTENT_SAFETY_BASE_URL", ""),
+            key_fn=lambda: os.getenv("CONTENT_SAFETY_API_KEY", ""),
             transport=transport,
         ),
         "volc_asr": VolcAsrAdapter(

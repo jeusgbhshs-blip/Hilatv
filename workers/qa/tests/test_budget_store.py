@@ -1,4 +1,4 @@
-"""The regeneration ledger only grows, and it is not part of the snapshot."""
+"""The regenerate counter is one file per project, shared by every shot."""
 
 from __future__ import annotations
 
@@ -6,41 +6,42 @@ import json
 
 import pytest
 
-from workers.qa.budget_store import BudgetExhausted, ledger_path, open_project_budget
-from workers.workflow.store import init_project, project_path, read_snapshot
+from workers.qa.budget_store import open_project_budget
+from workers.qa.settings import SettingsError
 
 
-def test_charge_is_increase_only_and_survives_a_snapshot_rollback(tmp_path, monkeypatch) -> None:
+def test_two_shots_share_one_counter(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
-    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
-    init_project("p1", sentence="探针", status="completed")
-    first = open_project_budget("p1")
-    assert first.used == 0
-    assert first.remaining == 4
-    first.charge(1)
-    second = open_project_budget("p1")
-    second.charge(1)
-    assert open_project_budget("p1").used == 2
-    snapshot = project_path("p1") / "project.json"
-    original = snapshot.read_text(encoding="utf-8")
-    assert "used" not in json.loads(original)
-    snapshot.write_text(original.replace("completed", "failed"), encoding="utf-8")
-    (project_path("p1") / "nodes").mkdir(exist_ok=True)
-    (project_path("p1") / "nodes" / "n08_keyframe.json").write_text("{}\n", encoding="utf-8")
-    assert open_project_budget("p1").used == 2
-    assert ledger_path("p1").parent.name == "_regen"
-    assert not str(ledger_path("p1")).startswith(str(project_path("p1")))
-    with pytest.raises(BudgetExhausted, match="已用完"):
-        open_project_budget("p1").charge(3)
-    assert open_project_budget("p1").used == 2
-    assert read_snapshot("p1")["status"] == "failed"
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "2")
+    first = open_project_budget("proj-a")
+    assert first.try_take() is True
+    second = open_project_budget("proj-a")
+    assert second.allow() is True
+    assert second.try_take() is True
+    third = open_project_budget("proj-a")
+    assert third.allow() is False
+    assert third.try_take() is False
+    other = open_project_budget("proj-b")
+    assert other.allow() is True
+    assert other.used == 0
 
 
-def test_a_stale_handle_cannot_lower_the_ledger(tmp_path, monkeypatch) -> None:
+def test_the_counter_only_increases(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "5")
-    stale = open_project_budget("p2")
-    other = open_project_budget("p2")
-    other.charge(2)
-    stale.charge(1)
-    assert open_project_budget("p2").used == 3
+    budget = open_project_budget("proj-up")
+    assert budget.try_take() is True
+    assert budget.try_take() is True
+    stored = json.loads((tmp_path / "proj-up" / "regen_budget.json").read_text(encoding="utf-8"))
+    assert stored["used"] == 2
+    assert stored["increase_only"] is True
+    again = open_project_budget("proj-up")
+    assert again.used == 2
+    assert again.try_take() is True
+    assert again.used == 3
+
+
+def test_project_id_cannot_escape_the_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    with pytest.raises(SettingsError):
+        open_project_budget("../outside")

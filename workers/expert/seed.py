@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from gateway.adapters.mock_adapter import MockAdapter
 from workers.expert.gates import enforce_review
 from workers.expert.invoke import invoke_node
 from workers.nodes.media_gateway import build_media_gateway
@@ -33,10 +34,14 @@ def build_film(project_id: str, *, gateway: Any | None = None) -> dict[str, Any]
         gateway_dir = root / "gateway"
         gateway_dir.mkdir(parents=True, exist_ok=True)
         gateway = build_media_gateway(gateway_dir)
+    voice_dir = root / "voice-gateway"
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    voice_gateway = build_media_gateway(voice_dir)
+    voice_gateway.registry["mock"] = MockAdapter(store=None)
     script = storyboard(
         shot(
             duration_s=1.0,
-            voiceover="",
+            voiceover="高压柱塞泵稳定运行。",
             on_screen_text=[{"text": "30 MPa", "style": "spec_badge", "in": 0.1, "out": 0.8}],
         )
     )
@@ -55,13 +60,21 @@ def build_film(project_id: str, *, gateway: Any | None = None) -> dict[str, Any]
         "sentence": "给我们的柱塞泵做个1秒特写",
     }
     state: dict[str, Any] = {"script": script, "completed": ["n05_storyboard"]}
-    for name in ("n08_keyframe", "n10_video", "n13_subtitle", "n14_packaging", "n15_compose"):
+    for name in (
+        "n06_voiceover",
+        "n08_keyframe",
+        "n10_video",
+        "n12_music",
+        "n13_subtitle",
+        "n14_packaging",
+        "n15_compose",
+    ):
         patch = invoke_node(
             name,
             project_id=project_id,
             state=state,
             snapshot=snapshot,
-            gateway=gateway,
+            gateway=voice_gateway if name == "n06_voiceover" else gateway,
         )
         if name == "n08_keyframe":
             patch["keyframes"] = _on_disk(

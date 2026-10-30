@@ -42,13 +42,16 @@ test("one sentence becomes a playable download", async ({ page }) => {
     predicate: (socket) => socket.url().includes("/v1/projects/") && socket.url().includes("/progress"),
     timeout: 240_000,
   });
+  await page.getByRole("radio", { name: "直接出片" }).check();
   await page.getByRole("button", { name: "开始生成" }).click();
   const request = await created;
   const body = request.postDataJSON() as {
     sentence: string;
     attachments: { kind: string; filename?: string; uri?: string; upload_id?: string }[];
+    skip_storyboard?: boolean;
   };
   expect(body.sentence).toBe(SENTENCE);
+  expect(body.skip_storyboard).toBe(true);
   expect(body.attachments).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "image", filename: "product.png" }),
@@ -96,8 +99,17 @@ test("one sentence becomes a playable download", async ({ page }) => {
   await expect(page.getByLabel("语种")).toBeVisible();
   await expect(page.getByLabel("时长")).toBeVisible();
   await expect(page.getByRole("button", { name: "导出其他版本" })).toBeVisible();
-  await expect(page.getByLabel("改稿")).toBeDisabled();
+  await expect(page.getByLabel("改稿版本")).toBeVisible();
+  await expect(page.getByRole("option", { name: /版本 1/ })).toBeEnabled();
+  const edit = page.getByLabel("改稿", { exact: true });
+  await expect(edit).toBeEnabled();
   await expect(page.getByRole("button", { name: "发送改稿" })).toBeDisabled();
+  await edit.fill("第二个镜头太暗");
+  await expect(page.getByRole("button", { name: "发送改稿" })).toBeEnabled();
+  await edit.fill("");
+  const shot = page.getByRole("button", { name: /第 \d+ 镜/ }).first();
+  await shot.click();
+  await expect(shot).toHaveAttribute("aria-pressed", "true");
   await expectNoHorizontalOverflow(page);
 
   const downloadPromise = page.waitForEvent("download");

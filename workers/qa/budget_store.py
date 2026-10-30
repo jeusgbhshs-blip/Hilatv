@@ -1,8 +1,12 @@
-"""Increase-only regeneration ledger for one project.
+"""The only project regen-budget API. Other tasks must call this module.
 
-Manual re-runs that generate media charge this counter. The file lives beside
-the project directory, never inside ``project.json``. Nothing in this module
-writes a smaller ``used`` value, so restoring a snapshot cannot refund a charge.
+``open_project_budget`` is the entry point. ``ProjectBudget.try_take`` and
+``consume`` spend one, and nothing in this module ever lowers the count.
+The value lives only in ``<project dir>/<project id>/regen_budget.json``.
+The file is locked and fsynced. It is not part of a project or version
+snapshot. Rolling a version back must not copy an older budget file over
+this one, and must not write a smaller ``used`` through any other store.
+T16 should call ``open_project_budget`` instead of keeping its own counter.
 """
 
 from __future__ import annotations
@@ -12,105 +16,106 @@ import json
 import os
 from pathlib import Path
 
-from workers.qa.settings import project_retry_cap
-from workers.workflow.store import project_root, valid_project_id
-
-
-class BudgetExhausted(RuntimeError):
-    """The project has no regeneration charges left."""
-
-    def __init__(self, project_id: str, used: int, limit: int) -> None:
-        self.project_id = project_id
-        self.used = used
-        self.limit = limit
-        super().__init__(f"项目重生次数已用完（已用 {used} / 上限 {limit}），不能再重跑生成节点")
-
-
-class ProjectBudget:
-    """The durable counter for one project. ``charge`` only increases it."""
-
-    def __init__(self, project_id: str, used: int, limit: int) -> None:
-        self.project_id = project_id
-        self.used = used
-        self.limit = limit
-
-    @property
-    def remaining(self) -> int:
-        return max(0, self.limit - self.used)
-
-    def charge(self, count: int = 1) -> int:
-        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-            raise ValueError("charge count must be an integer >= 1")
-        self.used = _charge(self.project_id, count)
-        self.limit = project_retry_cap()
-        return self.used
+from workers.qa.settings import RetryBudget, SettingsError, project_dir, project_retry_cap
 
 
 def open_project_budget(project_id: str) -> ProjectBudget:
-    """Load the ledger. A missing file means nothing has been charged yet."""
+    """Open the increase-only counter for one project. This is the shared API."""
 
-    if not valid_project_id(project_id):
-        raise ValueError("invalid project id")
-    return ProjectBudget(project_id, _read(project_id), project_retry_cap())
+    return ProjectBudget(project_id)
 
 
-def ledger_path(project_id: str) -> Path:
-    if not valid_project_id(project_id):
-        raise ValueError("invalid project id")
-    return project_root() / "_regen" / f"{project_id}.json"
+def project_folder(project_id: str) -> Path:
+    """Directory for one project, inside ``HILATV_PROJECT_DIR``."""
+
+    segment = _segment(project_id)
+    root = project_dir()
+    folder = (root / segment).resolve()
+    _inside(folder, root)
+    return folder
 
 
-def _charge(project_id: str, count: int) -> int:
-    path = ledger_path(project_id)
+class ProjectBudget(RetryBudget):
+    """``allow`` / ``consume`` read and write the project file."""
+
+    def __init__(self, project_id: str) -> None:
+        super().__init__()
+        self.project_id = _segment(project_id)
+        self.path = project_folder(self.project_id) / "regen_budget.json"
+        _inside(self.path, project_folder(self.project_id))
+        self.used = self._read_used()
+
+    def allow(self) -> bool:
+        self.limit = project_retry_cap()
+        self.used = self._read_used()
+        return self.used < self.limit
+
+    def consume(self) -> None:
+        self.try_take()
+
+    def try_take(self) -> bool:
+        """Spend one regen if the project still has one. False when the cap is met."""
+
+        taken, used = _update(self.path, limit=project_retry_cap(), take=True)
+        self.used = used
+        self.limit = project_retry_cap()
+        return taken
+
+    def _read_used(self) -> int:
+        taken, used = _update(self.path, limit=project_retry_cap(), take=False)
+        del taken
+        return used
+
+
+def _segment(project_id: str) -> str:
+    if (
+        not isinstance(project_id, str)
+        or not project_id
+        or project_id in {".", ".."}
+        or "/" in project_id
+        or "\\" in project_id
+    ):
+        raise SettingsError("project_id must be a single directory name")
+    return project_id
+
+
+def _inside(path: Path, root: Path) -> None:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError as exc:
+        raise SettingsError("regen budget path is outside the project directory") from exc
+
+
+def _update(path: Path, *, limit: int, take: bool) -> tuple[bool, int]:
     path.parent.mkdir(parents=True, exist_ok=True)
-    lock_path = path.with_suffix(".lock")
-    with lock_path.open("a+") as handle:
+    with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            current = _read_path(path)
-            limit = project_retry_cap()
-            if current + count > limit:
-                raise BudgetExhausted(project_id, current, limit)
-            updated = current + count
-            _write_at_least(path, updated, floor=current)
-            return max(updated, _read_path(path))
-        finally:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.seek(0)
+        previous = _parse(handle.read())
+        used = previous
+        taken = False
+        if take and used < limit:
+            used += 1
+            taken = True
+        if used < previous:
+            raise SettingsError("regen budget cannot decrease")
+        payload = json.dumps({"used": used, "limit": limit, "increase_only": True}) + "\n"
+        handle.seek(0)
+        handle.truncate()
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+        return taken, used
 
 
-def _read(project_id: str) -> int:
-    return _read_path(ledger_path(project_id))
-
-
-def _read_path(path: Path) -> int:
-    if not path.is_file():
+def _parse(raw: str) -> int:
+    text = raw.strip()
+    if not text:
         return 0
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"regen ledger {path.name} is unreadable") from exc
-    if not isinstance(data, dict):
-        raise ValueError(f"regen ledger {path.name} is unreadable")
-    used = data.get("used")
-    if isinstance(used, bool) or not isinstance(used, int) or used < 0:
-        raise ValueError(f"regen ledger {path.name} is unreadable")
+        used = int(json.loads(text)["used"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise SettingsError("regen budget file is unreadable") from exc
+    if used < 0:
+        raise SettingsError("regen budget file is unreadable")
     return used
-
-
-def _write_at_least(path: Path, used: int, *, floor: int) -> None:
-    """Write ``used`` only when it is not below the value already on disk."""
-
-    current = _read_path(path)
-    target = used if used >= current else current
-    if target < floor:
-        target = floor if floor >= current else current
-    if target < current:
-        return
-    _replace(path, target)
-
-
-def _replace(path: Path, used: int) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(json.dumps({"used": used}) + "\n", encoding="utf-8")
-    os.replace(temporary, path)

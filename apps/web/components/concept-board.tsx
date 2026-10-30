@@ -31,6 +31,7 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
   const [brandApplied, setBrandApplied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skipStoryboard, setSkipStoryboard] = useState(false);
 
   const choice = cards.length ? chooseCard(cards, picked) : null;
 
@@ -76,6 +77,7 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
           sentence: sentence.trim(),
           enterprise_id: rememberedEnterprise(),
           concept_selection: choice.id,
+          skip_storyboard: skipStoryboard,
         }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
@@ -152,6 +154,24 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
             <Button type="button" variant={choice?.auto ? "default" : "outline"} onClick={() => setPicked("你帮我选")}>
               你帮我选
             </Button>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="concept-storyboard"
+                checked={!skipStoryboard}
+                onChange={() => setSkipStoryboard(false)}
+              />
+              先看分镜
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="concept-storyboard"
+                checked={skipStoryboard}
+                onChange={() => setSkipStoryboard(true)}
+              />
+              直接出片
+            </label>
             <Button type="button" onClick={startFilm} disabled={busy || !choice}>
               用这个方向开始
             </Button>
