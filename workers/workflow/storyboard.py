@@ -16,13 +16,14 @@ from typing import Any
 
 from PIL import Image, UnidentifiedImageError
 
+from workers.compliance.moderation import classify, live_mode
 from workers.logging import log_event
 from workers.nodes.n06_voiceover.node import load_take
 from workers.qa.budget_store import open_project_budget
 from workers.qa.service import review_shot
 from workers.schemas.label_lock import LabelLocked, refuse_label_removal
 from workers.schemas.script import Script
-from workers.workflow.revise import _keyframes, _voice
+from workers.workflow.revise import _enterprise_id, _keyframes, _voice
 from workers.workflow.store import locked_project, project_path, publish, valid_project_id
 from workers.workflow.versions import atomic_write
 
@@ -149,7 +150,12 @@ def edit_voiceover(
         keyframes = _frame_list(state.get("keyframes"))
         brand = state.get("brand_kit") if isinstance(state.get("brand_kit"), dict) else None
         brief = state.get("brief") if isinstance(state.get("brief"), dict) else None
+        enterprise_id = _enterprise_id(snapshot)
         current = next(shot.voiceover for shot in script.shots if shot.shot_id == shot_id)
+        if spoken != current.strip():
+            snapshot["storyboard_editing"] = True
+            snapshot.pop("regen_used", None)
+            _write_snapshot(directory, snapshot)
     if spoken == current.strip():
         return _edit_body(
             project_id,
@@ -161,34 +167,50 @@ def edit_voiceover(
             blocked=False,
             voiceover=spoken,
         )
-    updated = script.model_copy(
-        update={
-            "shots": [
-                shot.model_copy(update={"voiceover": spoken}) if shot.shot_id == shot_id else shot
-                for shot in script.shots
-            ]
-        }
-    )
-    # Brief is omitted so one shot is not stretched to the whole film length.
-    updated, voiceovers = _voice(
-        project_id,
-        updated,
-        voiceovers,
-        [shot_id],
-        brand,
-        None,
-        gateway,
-        keep_duration=False,
-    )
-    nodes = ["n06_voiceover"]
-    blocked = False
-    budget = open_project_budget(project_id)
-    if budget.try_take():
-        keyframes = _keyframes(project_id, updated, keyframes, [shot_id], brand, brief, gateway)
-        nodes.extend(["n08_keyframe", "n09_keyframe_qa"])
-    else:
-        blocked = True
+    try:
+        # Charges for the new voice and the new frames, before TTS or pictures.
+        _charge_edit(project_id)
+        _moderate_narration(project_id, shot_id, spoken, gateway)
+        updated = script.model_copy(
+            update={
+                "shots": [
+                    (
+                        shot.model_copy(update={"voiceover": spoken})
+                        if shot.shot_id == shot_id
+                        else shot
+                    )
+                    for shot in script.shots
+                ]
+            }
+        )
+        # Brief is omitted so one shot is not stretched to the whole film length.
+        updated, voiceovers = _voice(
+            project_id,
+            updated,
+            voiceovers,
+            [shot_id],
+            brand,
+            None,
+            gateway,
+            keep_duration=False,
+            enterprise_id=enterprise_id,
+        )
+        nodes = ["n06_voiceover", "n08_keyframe", "n09_keyframe_qa"]
+        keyframes = _keyframes(
+            project_id,
+            updated,
+            keyframes,
+            [shot_id],
+            brand,
+            brief,
+            gateway,
+            enterprise_id=enterprise_id,
+        )
+    except Exception:
+        _clear_editing(project_id)
+        raise
     if _shot_prompts_contain(keyframes, shot_id, spoken):
+        _clear_editing(project_id)
         raise StoryboardError("旁白写进了画面提示词")
     reviews = _review_selected(project_id, updated, keyframes, gateway)
     with locked_project(project_id) as directory:
@@ -203,6 +225,7 @@ def edit_voiceover(
         snapshot["phase"] = "看分镜"
         snapshot["node"] = GATE_NODE
         snapshot["storyboard_gate"] = "hold"
+        snapshot["storyboard_editing"] = False
         snapshot.pop("regen_used", None)
         _write_snapshot(directory, snapshot)
         after = _hash_voices(directory)
@@ -216,7 +239,7 @@ def edit_voiceover(
         shot_id=shot_id,
         attempt=1,
         nodes=",".join(nodes),
-        blocked=blocked,
+        blocked=False,
     )
     return _edit_body(
         project_id,
@@ -225,9 +248,110 @@ def edit_voiceover(
         before=before,
         after=after,
         changed=True,
-        blocked=blocked,
+        blocked=False,
         voiceover=spoken,
     )
+
+
+def _charge_edit(project_id: str) -> None:
+    """Spend one regen for the new voice and one for the new frames, before TTS."""
+
+    budget = open_project_budget(project_id)
+    for _ in range(2):
+        if not budget.try_take():
+            raise StoryboardError("项目重生次数已到上限", status=422)
+
+
+def _moderate_narration(project_id: str, shot_id: str, text: str, gateway: Any) -> None:
+    """Run the edited line through content safety before any TTS call."""
+
+    errored = False
+    try:
+        safety = gateway.content_safety(
+            text,
+            project_id=project_id,
+            node=GATE_NODE,
+            shot_id=shot_id,
+            attempt=1,
+            params={"stage": "storyboard_narration"},
+        )
+    except Exception as exc:
+        safety = {"reviewed": False, "mock": False, "passed": False, "reason": str(exc)}
+        errored = True
+    if _narration_rejected(safety, errored):
+        raise StoryboardError("旁白没有通过内容审核", status=422)
+
+
+def _narration_rejected(safety: Any, errored: bool) -> bool:
+    """Live mode refuses mock, unreviewed, failed, and errored results.
+
+    Mock mode still calls the moderator. Only an explicit block stops the edit,
+    so a mock adapter can keep the storyboard path moving.
+    """
+
+    if live_mode():
+        if errored or not isinstance(safety, dict):
+            return True
+        if safety.get("mock") is True or safety.get("moderation") == "mock":
+            return True
+        if safety.get("reviewed") is not True or safety.get("passed") is not True:
+            return True
+        return False
+    if errored or not isinstance(safety, dict):
+        return False
+    return classify(safety) == "blocked"
+
+
+def _clear_editing(project_id: str) -> None:
+    with locked_project(project_id) as directory:
+        snapshot = _read_snapshot(directory, project_id)
+        if snapshot.get("storyboard_editing") is not True:
+            return
+        snapshot["storyboard_editing"] = False
+        snapshot.pop("regen_used", None)
+        _write_snapshot(directory, snapshot)
+
+
+def claim_continue(project_id: str) -> str:
+    """Mark the pause released. Refuses while an edit still holds the project."""
+
+    if not valid_project_id(project_id):
+        raise StoryboardError("项目不存在", status=404)
+    with locked_project(project_id) as directory:
+        snapshot = _read_snapshot(directory, project_id)
+        if snapshot.get("storyboard_editing") is True:
+            raise StoryboardError("分镜正在保存", status=409)
+        if snapshot.get("status") != "paused" or snapshot.get("storyboard_gate") != "hold":
+            raise StoryboardError("现在没有在等分镜确认", status=409)
+        workflow_id = snapshot.get("workflow_id")
+        if not isinstance(workflow_id, str) or not workflow_id.strip():
+            workflow_id = project_id
+        snapshot["status"] = "running"
+        snapshot["phase"] = "生成中"
+        snapshot["node"] = "n10_video"
+        snapshot["message"] = "正在生成视频"
+        snapshot.pop("regen_used", None)
+        _write_snapshot(directory, snapshot)
+        return workflow_id
+
+
+def mark_expired(project_id: str) -> None:
+    """The storyboard wait ended. Do not start video."""
+
+    if not valid_project_id(project_id):
+        return
+    with locked_project(project_id) as directory:
+        if not (directory / "project.json").is_file():
+            return
+        snapshot = _read_snapshot(directory, project_id)
+        snapshot["status"] = "timed_out"
+        snapshot["cancellable"] = True
+        snapshot["phase"] = "看分镜"
+        snapshot["node"] = GATE_NODE
+        snapshot["storyboard_gate"] = "timed_out"
+        snapshot["message"] = "分镜确认超时，已停止，不会自动出片"
+        snapshot.pop("regen_used", None)
+        _write_snapshot(directory, snapshot)
 
 
 def frame_file(project_id: str, shot_id: str) -> Path | None:

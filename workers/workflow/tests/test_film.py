@@ -31,6 +31,11 @@ def test_storyboard_gate_waits_for_release(tmp_path, monkeypatch) -> None:
     asyncio.run(_storyboard_gate())
 
 
+def test_storyboard_timeout_does_not_produce(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    asyncio.run(_storyboard_timeout())
+
+
 def test_skip_storyboard_runs_through(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     asyncio.run(_skip_storyboard())
@@ -148,6 +153,7 @@ async def _storyboard_gate() -> None:
             project_id="board1",
             sentence="给我们的柱塞泵做个15秒宣传片",
             skip_storyboard=False,
+            storyboard_wait_s=0,
         )
         init_project(
             "board1",
@@ -187,6 +193,45 @@ async def _storyboard_gate() -> None:
         assert CALLS.count("n09_keyframe_qa") == 1
         assert CALLS.count("n10_video") == 1
         assert "storyboard_sync" in CALLS
+    finally:
+        await env.shutdown()
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+async def _storyboard_timeout() -> None:
+    from temporalio.testing import WorkflowEnvironment
+
+    reset()
+    env = await WorkflowEnvironment.start_time_skipping()
+    executor = ThreadPoolExecutor(max_workers=8)
+    try:
+        request = make_request(
+            project_id="boardwait",
+            sentence="给我们的柱塞泵做个15秒宣传片",
+            skip_storyboard=False,
+            storyboard_wait_s=30,
+        )
+        init_project(
+            "boardwait",
+            sentence=request["sentence"],
+            work_dir=request["work_dir"],
+            skip_storyboard=False,
+        )
+        worker = build_worker(env.client, executor, FAKE_ACTIVITIES)
+        async with worker:
+            handle = await env.client.start_workflow(
+                ProduceFilm.run,
+                request,
+                id="boardwait",
+                task_queue=task_queue(),
+            )
+            result = await handle.result()
+        assert result.get("status") == "timed_out"
+        assert result.get("cancellable") is True
+        assert result.get("deliverable") is None
+        assert "n10_video" not in CALLS
+        assert "n15_compose" not in CALLS
+        assert "storyboard_expire" in CALLS
     finally:
         await env.shutdown()
         executor.shutdown(wait=False, cancel_futures=True)

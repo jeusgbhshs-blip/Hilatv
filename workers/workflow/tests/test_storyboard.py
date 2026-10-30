@@ -147,11 +147,11 @@ def test_edit_rewrites_one_voice_file_and_keeps_the_other(tmp_path, monkeypatch)
     fresh = gateway.store.list_logs(project_id=project_id)[seq:]
     assert fresh
     assert {row["shot_id"] for row in fresh} == {"S01"}
-    assert {row["task"] for row in fresh} <= {"tts", "asr", "image", "judge"}
+    assert {row["task"] for row in fresh} <= {"tts", "asr", "image", "judge", "content_safety"}
     snapshot = json.loads((directory / "project.json").read_text(encoding="utf-8"))
     assert "regen_used" not in snapshot
     budget = json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))
-    assert budget["used"] == 1
+    assert budget["used"] == 2
     cards = snapshot["storyboard"]
     assert all(card["visual_reviewed"] is False for card in cards)
     assert all(card["frame_url"] is None for card in cards)
@@ -262,3 +262,167 @@ def test_edit_api_rejects_a_missing_project_and_extra_fields(tmp_path, monkeypat
         json={"voiceover": "改一句旁白", "remove_ai_label": True},
     )
     assert extra.status_code == 422
+
+
+def _hold(project_id: str, *, enterprise_id: str | None = None) -> Path:
+    init_project(
+        project_id,
+        sentence="看分镜",
+        skip_storyboard=False,
+        enterprise_id=enterprise_id,
+    )
+    directory = project_path(project_id)
+    script = _script("先看这台柱塞泵。", "请来厂里看设备。")
+    _write_node(directory, "n06_voiceover", {"script": script, "voiceovers": []})
+    folder = directory / "storyboard"
+    for shot_id, payload in (("S01", b"voice-s01"), ("S02", b"voice-s02")):
+        target = folder / shot_id
+        target.mkdir(parents=True)
+        (target / "voice.wav").write_bytes(payload)
+    snapshot = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+    snapshot["status"] = "paused"
+    snapshot["storyboard_gate"] = "hold"
+    atomic_write(
+        directory / "project.json",
+        (json.dumps(snapshot, ensure_ascii=False) + "\n").encode(),
+    )
+    return directory
+
+
+def test_live_unreviewed_narration_leaves_script_and_wav(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    gateway = _gateway(tmp_path)
+    directory = _hold("livemod")
+    script_path = directory / "nodes" / "n06_voiceover.json"
+    wav = directory / "storyboard" / "S01" / "voice.wav"
+    before_script = _sha(script_path)
+    before_wav = _sha(wav)
+
+    def unavailable(*_args, **_kwargs):
+        raise RuntimeError("content safety unreviewed: live moderator is not configured")
+
+    gateway.content_safety = unavailable
+    with pytest.raises(StoryboardError) as caught:
+        edit_voiceover("livemod", "S01", "先看这台柱塞泵。改过", gateway=gateway)
+    assert caught.value.status == 422
+    assert _sha(script_path) == before_script
+    assert _sha(wav) == before_wav
+
+    def mocked(*_args, **_kwargs):
+        return {"mock": True, "moderation": "mock", "reviewed": False, "passed": True}
+
+    gateway.content_safety = mocked
+    with pytest.raises(StoryboardError) as caught:
+        edit_voiceover("livemod", "S01", "先看这台柱塞泵。再改", gateway=gateway)
+    assert caught.value.status == 422
+    assert _sha(script_path) == before_script
+    assert _sha(wav) == before_wav
+
+
+def test_exhausted_budget_rejects_before_tts(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    gateway = _gateway(tmp_path)
+    directory = _hold("nobudget")
+    atomic_write(
+        directory / "regen_budget.json",
+        (json.dumps({"used": 12, "limit": 12, "increase_only": True}) + "\n").encode(),
+    )
+    script_path = directory / "nodes" / "n06_voiceover.json"
+    before_script = _sha(script_path)
+    calls: list[str] = []
+
+    def forbidden(*_args, **_kwargs):
+        calls.append("tts")
+        raise AssertionError("tts must not run")
+
+    gateway.tts = forbidden
+    with pytest.raises(StoryboardError) as caught:
+        edit_voiceover("nobudget", "S01", "先看这台柱塞泵。改过", gateway=gateway)
+    assert caught.value.status == 422
+    assert calls == []
+    assert _sha(script_path) == before_script
+    tts_logs = [
+        row for row in gateway.store.list_logs(project_id="nobudget") if row["task"] == "tts"
+    ]
+    assert tts_logs == []
+
+
+def test_archived_cloned_voice_survives_a_narration_edit(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_BRAND_DIR", str(tmp_path / "brands"))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    from workers.brand_kit.store import BrandRecord, save_record
+    from workers.schemas.brand import BrandKit
+
+    gateway = _gateway(tmp_path)
+    enterprise_id = "11111111-1111-4111-8111-111111111111"
+    raw = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "schemas"
+            / "tests"
+            / "fixtures"
+            / "brand_kit.json"
+        ).read_text(encoding="utf-8")
+    )
+    raw["voice"]["tts_voice"] = "clone-boss-1"
+    raw["people"][0]["consent"] = True
+    raw["people"][0]["role"] = "老板"
+    raw["people"][0]["voice_id"] = "clone-boss-1"
+    kit = BrandKit.model_validate(raw).model_dump(mode="json")
+    save_record(BrandRecord(enterprise_id=enterprise_id, brand_kit=kit))
+    project_id = "clonevoice"
+    script = _script("先看这台柱塞泵。", "请来厂里看设备。")
+    script["shots"][0]["purpose"] = "人物出镜"
+    script["shots"][0]["subject_refs"] = ["person:老板"]
+    script["shots"][0]["generation_mode"] = "reference_to_video"
+    voice = run_voice(
+        {
+            "project_id": project_id,
+            "payload": {"script": script, "brand_kit": kit, "enterprise_id": enterprise_id},
+        },
+        gateway=gateway,
+    )
+    frames = run_frames(
+        {
+            "project_id": project_id,
+            "payload": {
+                "script": voice.payload["script"],
+                "brand_kit": kit,
+                "enterprise_id": enterprise_id,
+                "keyframe_candidates": 3,
+            },
+        },
+        gateway=gateway,
+    )
+    init_project(project_id, sentence="看分镜", skip_storyboard=False, enterprise_id=enterprise_id)
+    directory = project_path(project_id)
+    _write_node(
+        directory,
+        "n06_voiceover",
+        {
+            "script": voice.payload["script"],
+            "voiceovers": voice.payload["voiceovers"],
+            "brand_kit": kit,
+        },
+    )
+    _write_node(directory, "n08_keyframe", {"keyframes": frames.payload["candidates"]})
+    snapshot = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+    snapshot["status"] = "paused"
+    snapshot["storyboard_gate"] = "hold"
+    snapshot["enterprise_id"] = enterprise_id
+    atomic_write(
+        directory / "project.json",
+        (json.dumps(snapshot, ensure_ascii=False) + "\n").encode(),
+    )
+    edited = "先看这台柱塞泵。档案里的声音还在"
+    result = edit_voiceover(project_id, "S01", edited, gateway=gateway)
+    assert result["nodes"][0] == "n06_voiceover"
+    saved = json.loads((directory / "nodes" / "n06_voiceover.json").read_text(encoding="utf-8"))
+    spoken = next(
+        shot["voiceover"] for shot in saved["script"]["shots"] if shot["shot_id"] == "S01"
+    )
+    assert spoken == edited
+    assert saved["voiceovers"][0]["voice"] == "clone-boss-1"

@@ -28,11 +28,11 @@ from workers.workflow.store import (
     project_root,
     read_events,
     read_snapshot,
-    update_snapshot,
     valid_project_id,
 )
 from workers.workflow.storyboard import (
     StoryboardError,
+    claim_continue,
     edit_voiceover,
     frame_file,
     public_cards,
@@ -420,18 +420,11 @@ def project_revision(project_id: str, body: ReviseProject) -> dict[str, Any]:
 
 @router.post("/v1/projects/{project_id}/storyboard/continue")
 async def continue_storyboard(project_id: str) -> dict[str, str]:
-    snapshot = _snapshot_or_404(project_id)
-    if snapshot.get("status") != "paused" or snapshot.get("storyboard_gate") != "hold":
-        raise HTTPException(status_code=409, detail="现在没有在等分镜确认")
-    workflow_id = str(snapshot.get("workflow_id") or project_id)
+    try:
+        workflow_id = claim_continue(project_id)
+    except StoryboardError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     await release_film(workflow_id)
-    update_snapshot(
-        project_id,
-        status="running",
-        phase="生成中",
-        node="n10_video",
-        message="正在生成视频",
-    )
     return {"project_id": project_id, "status": "running"}
 
 

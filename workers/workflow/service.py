@@ -19,6 +19,20 @@ from workers.workflow.runtime import (
 from workers.workflow.store import init_project, project_path, update_snapshot
 
 
+def _storyboard_wait(value: int | None) -> int:
+    """How long the cards stay open. ``0`` waits until the user continues."""
+
+    if value is not None:
+        return value
+    raw = os.getenv("HILATV_STORYBOARD_WAIT_S", "").strip()
+    if not raw:
+        return 86400
+    try:
+        return int(raw)
+    except ValueError:
+        return 86400
+
+
 def candidate_count(env_name: str) -> int:
     raw = os.getenv(env_name, "3").strip() or "3"
     try:
@@ -44,6 +58,7 @@ def make_request(
     enterprise_id: str | None = None,
     concept_selection: str | None = None,
     skip_storyboard: bool | None = None,
+    storyboard_wait_s: int | None = None,
 ) -> dict[str, Any]:
     return {
         "project_id": project_id,
@@ -70,6 +85,7 @@ def make_request(
         "concept_selection": concept_selection,
         # Omitted means 直接出片. The product page sends false when it wants the cards.
         "skip_storyboard": True if skip_storyboard is None else bool(skip_storyboard),
+        "storyboard_wait_s": _storyboard_wait(storyboard_wait_s),
     }
 
 

@@ -40,6 +40,15 @@ _PUBLIC = (
 )
 
 
+def _storyboard_timeout(request: dict[str, Any]) -> timedelta | None:
+    """Positive seconds wait for the cards. Zero or missing means no timer."""
+
+    raw = request.get("storyboard_wait_s")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return timedelta(seconds=raw)
+
+
 def _retry(attempts: int) -> RetryPolicy:
     return RetryPolicy(
         initial_interval=timedelta(seconds=1),
@@ -85,6 +94,7 @@ def _view(
 class ProduceFilm:
     def __init__(self) -> None:
         self._release = False
+        self._storyboard_expired = False
         self._status: dict[str, Any] = {}
 
     @workflow.run
@@ -103,6 +113,15 @@ class ProduceFilm:
         except ActivityError as exc:
             await self._fail(request, exc)
             raise
+        if self._storyboard_expired:
+            self._status = _view(request, STORYBOARD_GATE, state, status="timed_out", paused=False)
+            return {
+                "project_id": request["project_id"],
+                "deliverable": None,
+                "status": "timed_out",
+                "cancellable": True,
+                "completed": list(state.get("completed") or []),
+            }
         self._status = _view(request, FINAL_NODE, state, status="completed", paused=False)
         return {
             "project_id": request["project_id"],
@@ -133,6 +152,8 @@ class ProduceFilm:
             state = _merge(state, patch, node)
             if node == STORYBOARD_GATE and request.get("skip_storyboard") is not True:
                 state = await self._confirm_storyboard(request, state)
+                if self._storyboard_expired:
+                    return state
         peers = [node for node in PEERS if PIPELINE.index(node) >= start_index]
         if peers:
             patches = await asyncio.gather(*(self._call(node, request, state) for node in peers))
@@ -181,7 +202,23 @@ class ProduceFilm:
         """
 
         self._status = _view(request, STORYBOARD_GATE, state, status="paused", paused=True)
-        await workflow.wait_condition(lambda: self._release)
+        timeout = _storyboard_timeout(request)
+        try:
+            await workflow.wait_condition(lambda: self._release, timeout=timeout)
+        except TimeoutError:
+            self._storyboard_expired = True
+            await workflow.execute_activity(
+                "storyboard_expire",
+                {
+                    "project_id": request["project_id"],
+                    "request": _public(request),
+                    "state": state,
+                },
+                start_to_close_timeout=timedelta(seconds=30),
+                retry_policy=_retry(1),
+            )
+            self._status = _view(request, STORYBOARD_GATE, state, status="timed_out", paused=False)
+            return state
         self._release = False
         result = await workflow.execute_activity(
             "storyboard_sync",

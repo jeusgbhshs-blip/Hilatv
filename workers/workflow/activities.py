@@ -392,6 +392,16 @@ def storyboard_sync(payload: dict[str, Any]) -> dict[str, Any]:
     return {"patch": sync_patch(_project(payload))}
 
 
+@activity.defn(name="storyboard_expire")
+def storyboard_expire(payload: dict[str, Any]) -> dict[str, Any]:
+    """The card wait timed out. Leave the film unproduced and cancellable."""
+
+    from workers.workflow.storyboard import mark_expired
+
+    mark_expired(_project(payload))
+    return {"patch": {}}
+
+
 @activity.defn(name="n10_video")
 def n10_video(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n10_video")
@@ -568,6 +578,7 @@ ACTIVITIES = [
     n08_keyframe,
     n09_keyframe_qa,
     storyboard_sync,
+    storyboard_expire,
     n10_video,
     n12_music,
     n13_subtitle,

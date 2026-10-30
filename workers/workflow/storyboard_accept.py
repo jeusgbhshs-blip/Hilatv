@@ -106,10 +106,14 @@ async def _preview(client: httpx.AsyncClient) -> None:
     if MARKER in prompts:
         raise SystemExit("narration marker entered a keyframe prompt")
     fresh = gateway.store.list_logs(project_id=project_id)[seq:]
-    if not fresh or {row.get("shot_id") for row in fresh} != {shot_id}:
+    fresh_shots = {row.get("shot_id") for row in fresh if row.get("task") != "content_safety"}
+    if not fresh or fresh_shots != {shot_id}:
         raise SystemExit(f"downstream calls were not limited to {shot_id}: {fresh}")
-    if _budget_used(directory) != budget_before + 1:
-        raise SystemExit("regen budget did not increase by one")
+    safety = [row for row in fresh if row.get("task") == "content_safety"]
+    if not safety or {row.get("shot_id") for row in safety} != {shot_id}:
+        raise SystemExit("narration was not sent through content safety")
+    if _budget_used(directory) != budget_before + 2:
+        raise SystemExit("regen budget did not charge the voice and the frames")
     snapshot = json.loads((directory / "project.json").read_text(encoding="utf-8"))
     if "regen_used" in snapshot:
         raise SystemExit("regen count was stored on the snapshot")

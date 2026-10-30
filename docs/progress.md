@@ -232,7 +232,10 @@
 - 这一步的 N9 只调用 `review_shot` 记下 `visual_reviewed`，不调用导演决策，也不扣重生次数。Mock 关键帧过不了质检；如果在这里按未通过去重生，会把 N8 选中的帧清掉，后面的图生视频没有首帧，还会在用户还没看卡片时花掉项目重生额度。完整的 N9 重生循环仍留在 `workers/nodes/n09_keyframe_qa`，给单独调用。
 - 卡片上的旁白由前端画。改字写回 Script，只重跑该镜的 N6，并经 T16 的 `_voice` / `_keyframes` 重做该镜画面。不把旁白或画面字写进图像、视频提示词。其他镜头的配音文件不打开重写。
 - 画面能不能当预览：`mock://`、http(s)、项目目录外的路径、打不开的文件，以及整张只有一种颜色的色块，都是 `unavailable`，不给图片地址。`visual_reviewed` 只有预览可用且 `review_shot` 的该字段为 true 时才是 true。Mock 下关键帧像素记「未测」。
-- 改旁白若要重生该镜关键帧，先 `open_project_budget.try_take()`。额度用完就只更新配音，不调用图像模型。次数只在 `regen_budget.json`，不写入 `project.json`。配音本身不另扣一次。
+- 改旁白先连扣两次 `open_project_budget.try_take()`（新配音一次、新关键帧一次），都在 TTS 之前。任一次失败就整次拒绝，不改脚本、不调用 TTS、不重生画面。次数只在 `regen_budget.json`，不写入 `project.json`。
+- 改过的旁白在 TTS 之前走内容审核。`HILATV_LIVE=1` 时，未评审、mock 或报错都是 422，不落任何文件。mock 模式仍会调用审核；只有明确拦截才拒绝。
+- 分镜等待默认 86400 秒（`HILATV_STORYBOARD_WAIT_S`）。超时把项目标成 `timed_out` 且 `cancellable`，不自动往下出片。
+- 配音和关键帧重跑带上项目记录里的 `enterprise_id`，不读请求体。这样档案里已授权的克隆声线和人物才能过 T20 的同意校验。`revise.py` 同样从快照读取，对应 #52。
 - 这一步不改时长去贴整片 Brief。该镜时长跟新的配音走，其他镜时长不动。总长可能因此和 Brief 有偏差，成片仍由后面的 N15 按脚本时长剪。
 - 「AI生成」是页面上单独的一块，不在旁白框里，请求体多一个字段会被拒绝。旁白如果是在要求去掉这个标识，走 T20 的 `refuse_label_removal`，不写入脚本。继续出片之后 N14 仍会叠上这一行。
 - 不新增表，也不新增环境变量。Alembic head 仍是 `t03_gateway_0002`。人物、链接抓取、客户图片都不经过这条编辑接口。
