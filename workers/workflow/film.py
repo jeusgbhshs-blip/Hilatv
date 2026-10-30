@@ -27,6 +27,8 @@ _PUBLIC = (
     "keyframe_candidates",
     "video_candidates",
     "fail_nodes",
+    "enterprise_id",
+    "concept_selection",
 )
 
 

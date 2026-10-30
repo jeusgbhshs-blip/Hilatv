@@ -69,11 +69,41 @@ def _read(directory: Path, project_id: str) -> dict[str, Any]:
 
 
 def _write(directory: Path, snapshot: dict[str, Any]) -> None:
-    path = directory / "project.json"
-    temporary = directory / ".project.json.tmp"
-    payload = json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n"
-    temporary.write_text(payload, encoding="utf-8")
-    os.replace(temporary, path)
+    _atomic_text(
+        directory / "project.json",
+        json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n",
+    )
+
+
+def _atomic_text(path: Path, text: str) -> None:
+    """Replace ``path`` with a complete document.
+
+    ``Path.write_text`` truncates the destination first. A status read in
+    another thread can then observe an empty file. Write a sibling temp file,
+    fsync it, ``os.replace`` it, then fsync the directory so the new name is
+    durable. Readers see the previous document or the new one.
+    """
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    tmp = Path(tmp_name)
+    replaced = False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        replaced = True
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        if not replaced:
+            tmp.unlink(missing_ok=True)
+        raise
 
 
 def init_project(project_id: str, **fields: Any) -> dict[str, Any]:
@@ -112,7 +142,29 @@ def read_snapshot(project_id: str) -> dict[str, Any] | None:
     path = project_root() / project_id / "project.json"
     if not path.is_file():
         return None
-    return json.loads(path.read_text(encoding="utf-8"))
+    last_error: json.JSONDecodeError | None = None
+    for _ in range(8):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return None
+        if not text.strip():
+            last_error = json.JSONDecodeError("Expecting value", text, 0)
+            time.sleep(0.01)
+            continue
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            last_error = exc
+            time.sleep(0.01)
+            continue
+        if isinstance(data, dict):
+            return data
+        last_error = json.JSONDecodeError("Expecting object", text, 0)
+        time.sleep(0.01)
+    if last_error is not None:
+        raise last_error
+    return None
 
 
 def publish(project_id: str, event: dict[str, Any]) -> dict[str, Any]:
@@ -193,10 +245,7 @@ def save_node(project_id: str, node: str, patch: dict[str, Any]) -> None:
     with _lock(project_id) as directory:
         folder = directory / "nodes"
         folder.mkdir(exist_ok=True)
-        (folder / f"{node}.json").write_text(
-            json.dumps(patch, ensure_ascii=False) + "\n",
-            encoding="utf-8",
-        )
+        _atomic_text(folder / f"{node}.json", json.dumps(patch, ensure_ascii=False) + "\n")
 
 
 def load_checkpoint(project_id: str) -> dict[str, Any]:

@@ -44,6 +44,8 @@ where = ["."]
 include = ["gateway*", "workers*", "eval*"]
 
 [tool.setuptools.package-data]
+"workers.brand_kit" = ["prompts/*.j2"]
+"workers.nodes.n03_concept" = ["prompts/*.j2"]
 "workers.nodes.n01_brief" = ["prompts/*.j2"]
 "workers.nodes.n04_script" = ["prompts/*.j2"]
 "workers.nodes.n05_storyboard" = ["prompts/*.j2"]
@@ -56,13 +58,16 @@ include = ["gateway*", "workers*", "eval*"]
 "workers.nodes.n17_deliver" = ["prompts/*.j2"]
 "workers.schemas" = ["json_schema/*.json"]
 gateway = ["routes.yaml", "pricing.yaml"]
+eval = ["prompts/*.j2", "briefs/*.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = [
   "tests",
   "apps/api/tests",
   "gateway/tests",
+  "workers/brand_kit/tests",
   "workers/nodes/n01_brief/tests",
+  "workers/nodes/n03_concept/tests",
   "workers/nodes/n04_script/tests",
   "workers/nodes/n05_storyboard/tests",
   "workers/nodes/n06_voiceover/tests",

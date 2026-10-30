@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from app.logging import log_event
 from workers.nodes.n01_brief.schema import AttachmentRef
-from workers.schemas.brand import BrandKit
+from workers.workflow.brand import BrandReadError, resolve_brand_kit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.service import start_film
 from workers.workflow.store import (
@@ -47,6 +47,8 @@ class CreateProject(BaseModel):
     sentence: str = Field(min_length=1, max_length=4000)
     brand_kit: dict[str, Any] | None = None
     brand_id: str | None = None
+    enterprise_id: str | None = None
+    concept_selection: str | None = Field(default=None, max_length=80)
     attachments: list[dict[str, Any]] = Field(default_factory=list)
 
 
@@ -54,14 +56,30 @@ class RerunProject(BaseModel):
     node: str = Field(min_length=1)
 
 
-def _checked(body: CreateProject) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+def brand_for_request(body: CreateProject, *, project_id: str) -> dict[str, Any] | None:
+    """Inline kit is for this project only and is never written into the archive.
+
+    TODO(auth): enterprise_id is client-supplied and unauthenticated until the auth task.
+    """
+
+    if body.brand_id and not body.enterprise_id:
+        raise HTTPException(status_code=422, detail="按 brand_id 查询必须带 enterprise_id")
     try:
-        kit = None
-        if body.brand_kit is not None:
-            kit = BrandKit.model_validate(body.brand_kit).model_dump(mode="json")
-    except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=exc.errors()) from exc
-    return kit, [_bind_attachment(item) for item in body.attachments]
+        if body.enterprise_id:
+            uuid.UUID(body.enterprise_id)
+        return resolve_brand_kit(
+            inline=body.brand_kit,
+            brand_id=body.brand_id,
+            enterprise_id=body.enterprise_id,
+            project_id=project_id,
+            attempt=1,
+        )
+    except (ValidationError, BrandReadError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail="品牌资料无效") from exc
+
+
+def _checked(body: CreateProject) -> list[dict[str, Any]]:
+    return [_bind_attachment(item) for item in body.attachments]
 
 
 def _invalid_attachment() -> HTTPException:
@@ -259,13 +277,17 @@ async def upload_asset(file: UploadFile = File()) -> dict[str, str]:
 
 @router.post("/v1/projects")
 async def create_project(body: CreateProject) -> JSONResponse:
-    kit, attachments = _checked(body)
+    attachments = _checked(body)
     project_id = str(uuid.uuid4())
+    loaded = brand_for_request(body, project_id=project_id)
+    kit = loaded if body.brand_kit is not None else None
     workflow_id = await start_film(
         project_id=project_id,
         sentence=body.sentence,
         brand_kit=kit,
         brand_id=body.brand_id,
+        enterprise_id=body.enterprise_id,
+        concept_selection=body.concept_selection,
         attachments=attachments,
     )
     return JSONResponse(
@@ -300,6 +322,8 @@ async def rerun_project(project_id: str, body: RerunProject) -> JSONResponse:
         sentence=str(snapshot.get("sentence") or ""),
         brand_kit=snapshot.get("brand_kit"),
         brand_id=snapshot.get("brand_id"),
+        enterprise_id=snapshot.get("enterprise_id"),
+        concept_selection=snapshot.get("concept_selection"),
         attachments=snapshot.get("attachments") or [],
         keyframe_candidates=snapshot.get("keyframe_candidates"),
         video_candidates=snapshot.get("video_candidates"),
