@@ -262,11 +262,12 @@ def _charge_edit(project_id: str) -> None:
 
     needed = 2
     budget = open_project_budget(project_id)
-    budget.allow()
-    if budget.used + needed > budget.limit:
+    # Same fit check as try_take_n: the pair must fit before the first take.
+    if not budget.can_take(needed):
         raise StoryboardError("项目重生次数已到上限", status=422)
     for _ in range(needed):
         if not budget.try_take():
+            # A take that already landed stays. This counter never decreases.
             raise StoryboardError("项目重生次数已到上限", status=422)
 
 

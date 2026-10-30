@@ -41,6 +41,51 @@ def test_the_counter_only_increases(tmp_path, monkeypatch: pytest.MonkeyPatch) -
     assert again.used == 3
 
 
+def test_can_take_refuses_before_spending(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "2")
+    budget = open_project_budget("proj-fit")
+    assert budget.try_take() is True
+    assert budget.can_take(1) is True
+    assert budget.can_take(2) is False
+    assert budget.used == 1
+    assert budget.try_take_n(2) is False
+    assert budget.used == 1
+
+
+def test_try_take_n_spends_all_or_nothing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "3")
+    budget = open_project_budget("proj-n")
+    assert budget.try_take_n(2) is True
+    assert budget.used == 2
+    assert budget.try_take_n(2) is False
+    assert budget.used == 2
+    stored = json.loads((tmp_path / "proj-n" / "regen_budget.json").read_text(encoding="utf-8"))
+    assert stored["used"] == 2
+
+
+def test_try_take_n_does_not_double_charge(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import threading
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "2")
+    start = threading.Barrier(2)
+    results: list[bool] = []
+
+    def worker() -> None:
+        start.wait()
+        results.append(open_project_budget("proj-race").try_take_n(2))
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sorted(results) == [False, True]
+    assert open_project_budget("proj-race").used == 2
+
+
 def test_project_id_cannot_escape_the_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     with pytest.raises(SettingsError):

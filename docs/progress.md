@@ -27,6 +27,7 @@
 | T19 | 专家模式画布 | T10, T11, T12 | 🔵 | [cursor/t19-expert-canvas-7ff6](https://github.com/jeusgbhshs-blip/Hilatv/pull/55) | 验收中。重跑计次走 `open_project_budget`。假设见下方 |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
+| T22 | N16 成片终审 | T12, T20 | 🔵 | [cursor/t22-n16-final-review-1cd2](https://github.com/jeusgbhshs-blip/Hilatv/pull/58) | 验收中。mock 硬伤拦截 47/47。VLM 实帧与 ASR 听写未测。假设见下方 |
 | T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
@@ -43,8 +44,8 @@
 | 图像 Key（如 Seedream） | T04, T08, T13 | mock |
 | 视频 Key（如 Seedance / 火山方舟） | T04, T08 | mock |
 | 豆包/火山 TTS Key（公司已有） | T04, T07 | mock |
-| 豆包/火山 ASR Key | T07 | mock |
-| VLM 评审 Key | T12 | mock |
+| 豆包/火山 ASR Key | T07, T22 | mock |
+| VLM 评审 Key | T12, T22 | mock |
 | 内容安全服务 Key | T20 | mock |
 | 音乐 Key（Mureka / Suno，须先确认商用授权） | T21 | mock。未购买曲库 |
 | 预算上限 `HILATV_BUDGET_CNY` / `HILATV_DAILY_BUDGET_CNY` | 网关 | 未设置（= 不允许 live） |
@@ -78,9 +79,9 @@
 -->
 
 ### 2026-10-30
-- 正在做什么：把 main `43d2401`（SEC-54，PR #56）并进旁白预算分支。分镜改字仍先核对会话企业；不够付两次重生仍一次不扣。无 Key，`HILATV_LIVE` 关闭。
-- 合并了哪些：无。PR #57 未合并。
-- 需要提供什么：无。
+- 合并了哪些：已并入 main `398be89`（T23 旁白预算 #57）和 `43d2401`（SEC-54 #56）
+- 正在做什么：T22 成片终审。live 下证据不足或有硬伤就停在 `needs_human_review` 并清掉母版。重生用 `try_take_n`，整批不够就一次不扣，和旁白改字的「不够付两次就一次不扣」同一条规则。无 Key，`HILATV_LIVE` 关闭
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
 
 ### 2026-10-30
 - 正在做什么：T23 旁白改字的回归。账本只剩 1 次时，改旁白要付两次，旧实现先扣掉那 1 次再拒绝。现已改为不够付两次就一次不扣；第二次 `try_take` 失败时已记下的次数不退。项目不改脚本、不配音、不出片。无 Key，`HILATV_LIVE` 关闭。
@@ -117,6 +118,20 @@
 - 故障注入是 `HILATV_FAIL_VIDEO_SHOTS`（`*` 或镜头 id）。只让 mock 视频适配器失败，图像和配音不受影响。没有新的重试计数器。
 - 端到端验收用 ffprobe / ffmpeg 解成片。Mock 关键帧是纯色，Ken Burns 的帧差在这条流程上记为未测。Live VLM 是否看过这些帧也记为未测。
 - 不新增数据库迁移。Alembic head 仍是 `t03_gateway_0002`。
+
+## T22 假设
+
+- 硬伤拦截沿用 T12 的像素规则和同一套坏图（代码绘制，不是客户照片）。`make accept-t22`：47/47，拦截率 1.0，阈值 0.9；干净对照 6/6 放行、决策为空、不扣重生次数；视频形变 4/4。mock 下 `visual_reviewed` 全是 false，所以这 47 次不是 VLM 看过画面。live VLM 分数记未测。
+- 品牌是否齐全只看 N14 的 `elements`：Logo 是 `intro_logo` / `outro_logo` / `corner_logo`（或 kind 以 `_logo` 结尾），CTA 是 kind 里带 `cta`。两边都要有。缺一则问题清单写 `missing_logo` 或 `missing_cta`，不重生视频。验收片不把 Logo、CTA、「AI生成」烧进像素，免得和 T12 的笔画检测缠在一起。正式成片若已经烧录这些叠层，笔画规则可能把角标当成多余文字。这次不用遮罩去藏，留作缺口。
+- 合规不另写规则。调用 `workers.nodes.n16_review`（极限词、内容安全、授权、肖像）。`HILATV_LIVE=1` 时 mock 或未完成的内容安全照 T20 阻断。缺「AI生成」不放行。`omit_ai_label` 和「去掉 AI 标识」直接拒绝。
+- 钩子和叙事的 VLM 分在 mock 下记未测。结构上：成片镜头都在脚本里且顺序一致；首镜有目的或旁白。对不上就不放行，也不当视频硬伤去重生。
+- mock ASR 回显 `reference_text`（缺省是脚本旁白）。听到的声音和旁白是否一致记未测。成片没有音轨时写一段静音再调用 gateway `asr`，仍然算调用过。`HILATV_LIVE=1` 且 ASR 结果仍是 mock，视为没听过，不放行。
+- 有内容硬伤才生成 `DirectorDecision`，`target.shot_id` 只有这一镜，节点是 `N10`。产品形变、人脸、闪烁走 `switch_model`，其他硬伤走 `regenerate`。敏感内容走 `ask_user`，不扣次数。满 3 次走 AI fallback。`changes.source` 固定 `ai_generated`，不写补拍、实拍或客户素材。要重生的镜头数一次交给 `try_take_n`。和 T23 的旁白改字一样：整批放不进剩余次数就一次都不扣。已经记下的次数不退。没有第二本账。
+- 只有每一镜 `visual_reviewed is True` 才把总分当成 VLM 分。否则 `vlm_total` 写「未测」，规则分仅供参考（干净画面约 8.6），`quality_pass` 不是 true。`HILATV_LIVE=1` 时，ASR、整片 judge、单镜评审任一失败，或 judge 没看过画面，或仍有硬伤，都写入 `needs_human_review` 并清掉 `deliverable`。已有母版也不能交付，本企业的 deliveries 返回 409。硬伤决策仍然只指向受影响的镜头，但 live 下不会在暂停之外放行。
+- 一次终审要重生的镜头先在 `locked_project` 里数清，再调用 `open_project_budget.try_take_n`。额度不够整批就一次都不扣，并暂停。N10 自己不扣这本账，所以一镜只扣一次。Logo / CTA 的像素是否在画面上，mock 和未看过帧的 live 都记「未测」，live 不能靠 elements 当成已经看见。
+- `enterprise_id` 只从项目快照读。请求体里的同名字段在校验前丢掉。单独重跑的命令要求登录会话，并用 SEC-54 的 `project_for` 核对项目属于该企业；对不上时和接口一样当作项目不存在（HTTP 交付是 404，命令行退出码 2，文案「项目不存在」）。本任务没有新的 HTTP 路由。
+- N16 不进 T10 的 `PIPELINE`。调用方单独跑 `n16_final_review`。无硬伤且 mock 下结构、品牌、合规都通过时 `release` 为 true，不改写项目为 completed，也不扣重生次数。
+- 不新增表，也不新增 Python 依赖。Alembic head 仍是 `t03_gateway_0002`。
 
 ## T21 假设
 
