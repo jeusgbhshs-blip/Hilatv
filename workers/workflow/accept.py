@@ -48,6 +48,7 @@ def main() -> int:
             text=True,
             timeout=600,
             check=False,
+            env=env,
         )
         sys.stdout.write(released.stdout)
         sys.stderr.write(released.stderr)
