@@ -24,7 +24,7 @@
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ✅ | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 已合并（70e1553）。改稿历史走 `/revisions`。假设见下方 |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。比例、语种、时长仍走 `/versions`。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ✅ | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 已合并（bbe69f9）。只有 `visual_reviewed is True` 算已评审。假设见下方 |
-| T19 | 专家模式画布 | T10, T11, T12 | 🔵 | cursor/t19-expert-canvas-7ff6 | 验收中。重跑计次走 `open_project_budget`。假设见下方 |
+| T19 | 专家模式画布 | T10, T11, T12 | 🔵 | [cursor/t19-expert-canvas-7ff6](https://github.com/jeusgbhshs-blip/Hilatv/pull/55) | 验收中。重跑计次走 `open_project_budget`。假设见下方 |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
 | T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
