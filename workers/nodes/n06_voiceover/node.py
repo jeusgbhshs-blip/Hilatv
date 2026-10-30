@@ -107,6 +107,13 @@ def _execute(
     brand = payload.brand_kit
     base = brand.voice.speed if brand is not None else DEFAULT_SPEED
     voice = brand.voice.tts_voice if brand is not None else DEFAULT_VOICE
+    from workers.brand_kit.people import ConsentError
+    from workers.compliance.consent_gate import assert_voice_allowed
+
+    try:
+        assert_voice_allowed(voice, payload.enterprise_id, brand)
+    except ConsentError as exc:
+        raise QAError(str(exc), retryable=False) from exc
     plans = plan_prosody(script, base)
     lexicon = load_lexicon()
     target = float(payload.brief.duration_s) if payload.brief is not None else None

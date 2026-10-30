@@ -126,3 +126,4 @@ class Timeline(BaseModel):
     audio: list[AudioClip]
     overlays: list[OverlayItem]
     work_dir: str
+    produce_ids: dict[str, str] = Field(default_factory=dict)

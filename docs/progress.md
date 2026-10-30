@@ -21,11 +21,11 @@
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ✅ | [cursor/t13-anchors-composite-f261](https://github.com/jeusgbhshs-blip/Hilatv/pull/47) | 已合并（d326c69）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T14 | 降级方案 6.10 | T12, T13 | 🔵 | [cursor/t14-fallback-plan-bd74](https://github.com/jeusgbhshs-blip/Hilatv/pull/50) | 验收中。产品负责人把 SPEC 第 3、4 级换成继续用 AI 生成。假设见下方 |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ✅ | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 已合并（5e15a75）。假设见下方 |
-| T16 | N18 对话改稿 + 版本管理 | T10, T12 | 🔵 | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 验收中。改稿历史走 `/revisions`，不占用 T17 的 `/versions`。假设见下方 |
+| T16 | N18 对话改稿 + 版本管理 | T10, T12 | ✅ | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 已合并（70e1553）。改稿历史走 `/revisions`。假设见下方 |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。比例、语种、时长仍走 `/versions`。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ✅ | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 已合并（bbe69f9）。只有 `visual_reviewed is True` 算已评审。假设见下方 |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
-| T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
+| T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
@@ -56,6 +56,15 @@
 
 - 导出并发上限只在单个 API 进程里计数（`apps/api/app/deliveries.py` 的 `_EXPORTS_IN_FLIGHT` 和线程锁，环境变量 `HILATV_N17_EXPORT_SLOTS`，默认 2）。多 worker 时每个进程各算各的，总并发会按进程数放大。上多进程之前要换成跨进程锁（Redis 或数据库）。
 
+## 上线前合规（未做，待 song / 法务）
+
+- 用户协议文本：若将来按《人工智能生成合成内容标识办法》第九条提供无显式标识文件，须在协议里写明用户的标识义务和使用责任，并留存提供对象日志不少于六个月。当前产品拒绝去掉标识，这条协议还没写。
+- 生成式人工智能服务备案或安全评估：上线前咨询山东省 / 青岛市网信部门，确认要办的手续。本仓库不代办。
+- 安全事件处置机制：还没有事件分级、上报路径和值班约定。
+- 日志留存不少于 6 个月：调用日志和标识相关日志的保留期还没按这个下限落地。
+- 内容安全厂商、接口和单价（`content-security` 在 `gateway/pricing.yaml` 里只是占位）待 song 确认后才能打开 live。
+- 服务提供者编码 `HILATV_CONTENT_PRODUCER`、隐式标识 HMAC 密钥，以及短于 2 秒的成片是否允许导出（`HILATV_AI_LABEL_MIN_S`），待 song 确认。
+
 ## 每日日志
 
 <!-- 模板：
@@ -79,7 +88,7 @@
 - Mock 评审不会把 `visual_reviewed` 设为 true。因此无 Key 时第 ② 级不会被选中。验收里的第 ② 级测试在进程内打开 `HILATV_LIVE=1`，用一个不联网的假评审返回完整分数。`make accept-t14` 的端到端流程保持 `HILATV_LIVE=0`。
 - 有内容硬伤的成片先走 T12 的 `run_shot_loop`（每镜最多 3 次，项目花费只走预算文件）。没有可审像素的镜头不再空转这 3 次，直接进入上面的阶梯，第 ① 级仍是一次计费的再生。
 - 动态图形镜头不调用视频模型，直接做第 ④ 级。画面上的字只来自渲染层的文字卡片，不画进镜头文件。没有抠图时主体是一块由模型颜色推导的图形，交付记录写 `subject=generated_shape`，不假装是产品照片。
-- 不使用纯色底板代替失败镜头。N15 只有在没有 `shot_clips` 时才保留原来的纯色底板，给尚未走到导演的旧测试用。T14 的成片每个镜头都有真实片段。片头片尾仍是包装用的短板。
+- 不使用纯色底板代替失败镜头。`HILATV_LIVE=1` 时 N15 没有镜头文件就拒绝画纯色底板。Mock 仍可保留底板，时间轴上 `placeholder` 为 true，结果里记在 `placeholder_shots`。T14 的成片每个镜头都有真实片段。片头片尾仍是包装用的短板。
 - 人物照片不读。抠图只来自产品的 `cutouts`，或对项目目录里的产品照片走网关 `matte`。`http` 链接经 SEC-01 的 `fetch_bytes`。解析后落在项目目录外的路径不读。
 - 故障注入是 `HILATV_FAIL_VIDEO_SHOTS`（`*` 或镜头 id）。只让 mock 视频适配器失败，图像和配音不受影响。没有新的重试计数器。
 - 端到端验收用 ffprobe / ffmpeg 解成片。Mock 关键帧是纯色，Ken Burns 的帧差在这条流程上记为未测。Live VLM 是否看过这些帧也记为未测。
@@ -100,6 +109,19 @@
 
 - T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5，并调用已合并的 T12 `review_shot`。mock 没有画面，镜头标为未评审。T12 导入不到时记 `review_error`，不再用网关单独打分。报告分开写「管线和报告结构」和「质量是否达标」。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后，`--mode live` 才会让视觉评审看实帧
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络
+- T20：合规标识、内容审核和素材授权说明。无内容安全 Key，`make accept-t20` 走 mock。内容安全厂商、服务提供者编码和 HMAC 密钥待 song 确认
+
+## T20 假设
+
+- 显式标识用角标「AI生成」（含「AI」和「生成」）。依据《人工智能生成合成内容标识办法》第四条第四项：视频在起始画面的适当位置添加显著提示标识；第五条：文件元数据写入内容属性、服务提供者名称或编码、内容编号。办法成文 2025-03-07，国家网信办 2025-03-14 公布（国信办通字〔2025〕2号），2025-09-01 施行。文本：https://www.gov.cn/zhengce/zhengceku/202503/content_7014286.htm 。字高按墨迹包围盒量，不少于画面短边的 5%（GB 45438-2025 §5.4），从第一帧起停留不少于 2 秒。短于 `HILATV_AI_LABEL_MIN_S`（默认 2）的成片拒绝导出，是否放宽待 song 确认。
+- 隐式标识按 GB 45438-2025 附录 E 和 TC260 视频实践指南，用 ffmpeg `-metadata AIGC` 加 `-movflags use_metadata_tags` 写入 `moov.udta.meta`。七个字段是 Label、ContentProducer、ProduceID、ReservedCode1、ContentPropagator、PropagateID、ReservedCode2。ContentProducer 读 `HILATV_CONTENT_PRODUCER`（占位 `PENDING-SONG-CONFIRM`，待 song 确认，不用产品名 HiLatv）。每次渲染新建 ProduceID。ReservedCode1 是这些字段的 HMAC；mock 用测试密钥，live 没有 `HILATV_AIGC_HMAC_KEY` 就拒绝签名。
+- 推断：不实现办法第九条的「无显式标识导出」。改稿指令「去掉 AI 标识」、`omit_ai_label` 之类的开关、以及 N18 的 `RevisionDirective` 都会被拒绝。N15 即使收到一份没有角标的元素表，也会自己再画一层。
+- 内容安全是网关任务 `content_safety`。无 Key 或 `HILATV_LIVE` 关闭时走 mock，费用记 0。mock 在文本含 `HILATV_UNSAFE_SAMPLE` 时判定不通过。推断：live adapter 向 `{CONTENT_SAFETY_BASE_URL}/moderate` 发送 `{"text","stage"}`，这只是占位，不是某一家云厂商的正式协议。
+- 输入审查在编码前，输出审查在成片写入之后。任一次不通过都不会把结果当成交付。极限词沿用品牌 `banned_words`，没有品牌表时用广告法默认表（「最」是子串，可能命中「最后」这类词，这是现有 `find_banned_words` 的行为）。医疗、食品、金融是关键词标记，不单独阻断文件。行业模板上的 `manual_review`（目前只有政企为 true）同样只打人工审核标记，不阻断。
+- 人物和克隆声只从 `enterprise_id` 对应的品牌档案取出，再经 `people_for_use` / `release_kit`。请求里的 `brand_archived` 和自报 `consent=true` 不作数。旁白 `voice_id` 只允许两处：网关服务端内置表 `BUILTIN_TTS_VOICES`（`zh_male_steady`、`zh_female_steady`、以及豆包映射 `zh_male_M392_conversation_wvae_bigtts`），或该企业档案里已经放出的克隆声。请求资料里有没有这个人，都不参与判断。表外且档案没有的 `voice_id` 拒绝。`zh_female_steady` 是 N18 的库存女声，不是克隆。
+- 授权记录只用 main 上 N12 的 `LicenseRecord` / `LicensingSummary`（`workers/nodes/n12_music/schema.py`），没有第二套类。T20 只把 `kind` 扩成也包含 `font` 和 `voice`，给字体和库存旁白用。缺来源、许可、证明、到期或使用范围时，沿用 N12 的 `incomplete_reason` 阻断。`expires_on` 为 `none` 表示不到期；ISO 日期早于今天（上海时区，当天仍有效）也阻断。`HILATV_LIVE=1` 时拒绝 `hilatv-test-` 来源和 `CC0-1.0` 测试曲库许可，与 N12 相同。
+- 素材说明写在项目目录 `compliance/materials-and-licences.txt`，路径由服务端生成。客户给的绝对路径必须落在项目目录内。http(s) 证明默认只做 SSRF 分类，不下载；`HILATV_FETCH_LICENCE_PROOF=1` 时才经 SEC-01 的 `fetch_bytes` 拉取。
+- 不新增 Alembic revision，head 仍是 `t03_gateway_0002`。备案登记和私有化部署不在本任务。
 
 ## T18 假设
 

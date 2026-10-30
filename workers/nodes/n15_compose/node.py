@@ -58,6 +58,12 @@ def run(
 ) -> NodeResult:
     request = NodeRequest.model_validate(raw)
     N15Input.model_validate(request.payload)
+    from workers.schemas.label_lock import LabelLocked, walk_label_edits
+
+    try:
+        walk_label_edits(request.payload)
+    except LabelLocked as exc:
+        raise QAError(str(exc), retryable=False) from exc
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     _ = gateway
@@ -255,6 +261,7 @@ def _timeline(
         duration_s=round(cursor, 3),
         clips=clips,
         audio=audio,
+        produce_ids={name: uuid.uuid4().hex for name in ("master", "nosub", "novo")},
         overlays=overlays,
         work_dir=str(work),
     )
@@ -496,8 +503,59 @@ def _overlays(
         "outro_cta": 5,
         "ai_label": 6,
     }
+    items = _with_locked_label(items, work, width, height, intro_s, payload)
     items.sort(key=lambda item: order.get(item.kind, 9))
     return items
+
+
+def _with_locked_label(
+    items: list[OverlayItem],
+    work: Path,
+    width: int,
+    height: int,
+    intro_s: float,
+    payload: N15Input,
+) -> list[OverlayItem]:
+    """Drop a caller-supplied mark and burn the canonical one for the whole film."""
+
+    from workers.media.packaging import ai_label_text
+    from workers.media.raster import render_overlay, save_png
+
+    kept = [item for item in items if item.kind != "ai_label"]
+    board = sum(float(shot.duration_s) for shot in payload.script.shots)
+    end = max(intro_s + board + float(payload.outro_s), 0.04)
+    for item in kept:
+        end = max(end, float(item.end_s))
+    text = ai_label_text()
+    font_size = max(28, round(min(width, height) * 0.06))
+    spec = {
+        "text": text,
+        "weight": "bold",
+        "font_size": font_size,
+        "fill": "#FFFFFF",
+        "background": "#111111",
+        "padding": 4,
+        "radius": 4,
+        "stroke": 0,
+    }
+    image = render_overlay(**spec)
+    path = work / "ai_label.png"
+    save_png(image, path)
+    margin = max(8, round(min(width, height) * 0.04))
+    kept.append(
+        OverlayItem(
+            kind="ai_label",
+            path=str(path),
+            text=text,
+            start_s=0.0,
+            end_s=round(end, 3),
+            x=margin,
+            y=margin,
+            anchor="topleft",
+            spec=spec,
+        )
+    )
+    return kept
 
 
 def _gains(src: tuple[int, int, int], target: tuple[int, int, int]) -> tuple[float, float, float]:

@@ -3,6 +3,7 @@
 from gateway.service import (
     Gateway,
     asr,
+    content_safety,
     generate_image,
     generate_text,
     generate_video,
@@ -16,6 +17,7 @@ from gateway.service import (
 __all__ = [
     "Gateway",
     "asr",
+    "content_safety",
     "generate_image",
     "generate_text",
     "generate_video",
