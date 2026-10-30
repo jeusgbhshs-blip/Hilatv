@@ -72,6 +72,6 @@ def test_pairwise_agreement_and_a_full_set_is_gated(tmp_path) -> None:
     assert calibration_status(manifest=full)["status"] == "pass"
 
 
-def test_n16_is_reserved() -> None:
-    with pytest.raises(NotImplementedError):
+def test_n16_review_needs_a_brief_and_a_script() -> None:
+    with pytest.raises(ValueError, match="brief"):
         review_film({"project_id": "p"})

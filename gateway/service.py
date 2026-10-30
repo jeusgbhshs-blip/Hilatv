@@ -164,6 +164,11 @@ class Gateway:
     def relight(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
         return self.execute("relight", prompt, **kwargs)
 
+    def content_safety(self, text: str, **kwargs: Any) -> dict[str, Any]:
+        params = dict(kwargs.pop("params", None) or {})
+        params.setdefault("stage", "input")
+        return self.execute("content_safety", text, params=params, **kwargs)
+
     def execute(
         self,
         task: str,
@@ -201,6 +206,8 @@ class Gateway:
         route = self._with_overrides(self.routes.resolve(task, shot_type, language))
         clean_params["route_id"] = route.id
         candidates = self._candidates(route, task)
+        if task == "content_safety":
+            candidates = self._content_safety_candidates(candidates)
         billable = [(endpoint, adapter) for endpoint, adapter in candidates if adapter.billable]
         mode = "live" if billable else "mock"
         system_effective = system
@@ -290,6 +297,10 @@ class Gateway:
                         node=node,
                         shot_id=shot_id,
                         attempt=attempt,
+                    )
+                if task == "content_safety":
+                    raise GatewayError(
+                        "content safety unreviewed: budget blocked the live moderator"
                     )
                 return self._serve_mock(
                     base,
@@ -431,6 +442,19 @@ class Gateway:
                 self.cache_ttl_s,
             )
         return output
+
+    def _content_safety_candidates(
+        self, candidates: list[tuple[Endpoint, Adapter]]
+    ) -> list[tuple[Endpoint, Adapter]]:
+        """Live moderation never falls through to the mock adapter."""
+
+        live, _, _ = self.limits_fn()
+        if not live:
+            return candidates
+        live_only = [item for item in candidates if item[1].billable and item[1].provider != "mock"]
+        if not live_only:
+            raise GatewayError("content safety unreviewed: live moderator is not configured")
+        return live_only
 
     def _candidates(self, route: Route, task: str) -> list[tuple[Endpoint, Adapter]]:
         live, _, _ = self.limits_fn()
@@ -576,6 +600,11 @@ def music(prompt: str, **kwargs: Any) -> dict[str, Any]:
 def judge(prompt: str, **kwargs: Any) -> dict[str, Any]:
     gateway = kwargs.pop("gateway", None)
     return (gateway or get_gateway()).judge(prompt, **kwargs)
+
+
+def content_safety(text: str, **kwargs: Any) -> dict[str, Any]:
+    gateway = kwargs.pop("gateway", None)
+    return (gateway or get_gateway()).content_safety(text, **kwargs)
 
 
 def _prepare_prompt(task: str, prompt: str) -> tuple[str, str | None]:

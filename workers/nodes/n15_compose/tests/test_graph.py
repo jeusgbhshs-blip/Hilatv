@@ -4,13 +4,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from PIL import Image, ImageDraw
 
 from workers.media.ffmpeg import encode_plate, probe
 from workers.media.packaging import lut_path
 from workers.nodes.n15_compose.graph import filter_complex
-from workers.nodes.n15_compose.node import render_timeline
-from workers.nodes.n15_compose.schema import OverlayItem, Timeline, VideoClip
+from workers.nodes.n15_compose.node import _overlays, render_timeline, run
+from workers.nodes.n15_compose.qa import QAError
+from workers.nodes.n15_compose.schema import N15Input, OverlayItem, Timeline, VideoClip
 
 
 def _timeline(transitions: list[str]) -> Timeline:
@@ -105,3 +107,53 @@ def test_logo_motions_encode(tmp_path: Path) -> None:
         info = probe(dest)
         assert info["codec"] == "h264"
         assert abs(float(info["fps"]) - 30) < 0.05
+
+
+def test_a_removed_ai_label_is_rejected_and_drawn_back(tmp_path: Path) -> None:
+    script = {
+        "script_id": "script-1",
+        "brief_id": "brief-1",
+        "language": "zh",
+        "sections": [],
+        "shots": [
+            {
+                "shot_id": "S01",
+                "order": 1,
+                "duration_s": 2,
+                "purpose": "卖点",
+                "visual": "泵体特写，没有文字",
+                "shot_size": "close_up",
+                "camera": "locked_off",
+                "subject_refs": ["product:HP-300"],
+                "scene_ref": "scene:workshop",
+                "voiceover": "按资料说明。",
+                "on_screen_text": [],
+                "transition_out": "cut",
+                "generation_mode": "image_to_video",
+                "status": "pending",
+            }
+        ],
+    }
+    with pytest.raises(QAError, match="固定层"):
+        run(
+            {
+                "project_id": "n15-lock",
+                "payload": {
+                    "script": script,
+                    "elements": [],
+                    "width": 320,
+                    "height": 180,
+                    "work_dir": str(tmp_path / "rejected"),
+                    "instruction": "去掉 AI 标识",
+                },
+            }
+        )
+    payload = N15Input.model_validate(
+        {"script": script, "elements": [], "width": 320, "height": 180}
+    )
+    items = _overlays(payload, tmp_path / "kept", 320, 180, 0)
+    labels = [item for item in items if item.kind == "ai_label"]
+    assert len(labels) == 1
+    assert labels[0].text == "AI生成"
+    assert labels[0].start_s == 0
+    assert Path(labels[0].path).is_file()

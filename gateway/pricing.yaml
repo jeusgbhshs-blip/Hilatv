@@ -67,6 +67,13 @@ models:
   mock-judge:
     input_per_million: "0"
     output_per_million: "0"
+  mock-content-safety:
+    input_per_million: "0"
+    output_per_million: "0"
+  # Placeholder price. 待 song 确认厂商和单价后再改。不是发票。
+  content-security:
+    input_per_million: "1"
+    output_per_million: "1"
   doubao-seedream-4-0-250828:
     unit: image
     per_image: "0.20"

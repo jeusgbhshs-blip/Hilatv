@@ -32,6 +32,7 @@ class N6Input(BaseModel):
     script: Script
     brand_kit: BrandKit | None = None
     brief: Brief | None = None
+    enterprise_id: str | None = None
 
 
 class WordStamp(BaseModel):
