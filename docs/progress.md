@@ -15,14 +15,14 @@
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ✅ | [t07-n6-voiceover](https://github.com/jeusgbhshs-blip/Hilatv/pull/27) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ✅ | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ✅ | [t09-render](https://github.com/jeusgbhshs-blip/Hilatv/pull/29) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | 🔵 | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ✅ | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
-| T17 | 多比例、多语种导出 | T06, T09, T10 | ⬜ | – | |
+| T17 | 多比例、多语种导出 | T06, T09, T10 | 🔵 | cursor/t17-multi-export-9a5c | 后端：重构图、中英配音字幕、版本 API。成片页切换等 T11，不关 issue。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
@@ -58,9 +58,24 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：T09（PR #29，无新迁移）
-- 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
+- 合并了哪些：T09（PR #29，无新迁移）、T10（PR #30，无新迁移）
+- 正在做什么：T17 后端。16:9 母版重构到 9:16 / 1:1，中英配音和字幕，版本 API。成片页的切换留给 T11，这次不改 `apps/web`。无 Key，`make accept-t17` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+
+## T17 假设
+
+- N17 不进 T10 的 `PIPELINE`。那条链路仍停在 `n15_compose`。成片页在母版就绪后调用 `POST /v1/projects/{id}/deliveries`。导出在这次请求里做完，不另起 Temporal。
+- 母版是没有烧字的 16:9（`master_plate`）。主体框由调用方传入，视觉追踪留给 T12。某个镜头没有框时，用居中的 0.2×0.4，这个框放得进 9:16 裁切。
+- 主体能放进目标窗口时，按主体中心裁切，框沿直线移动。主体比窗口更宽或更高时，整幅母版缩小放进画面（contain），空出来的地方用去色模糊填充，这样主体不会被裁掉。`HILATV_N17_REGENERATE=1` 时，竖版改为经网关要一张竖版底图再把母版叠上去；1:1 仍用模糊填充。底图提示词带「无文字」。
+- 输出长边默认等于母版长边。`long_edge` 或 `HILATV_N17_LONG_EDGE` 可以改小。验收用 320。
+- 语种默认中文和英文，再加 Brief 里的其他语种。本地化先走网关 LLM。Mock 交回空草稿，就用 N4 的规则作者按资料重写，不是逐句翻译。英文句子里可以嵌资料里的中文产品名。配音和 ASR 仍走现有 gateway `tts` / `asr`，不新接 ElevenLabs。画面时长锁在母版上；旁白更长就用 atempo 压进镜头。
+- 字幕走 N13。卖点卡、字幕和「AI生成」都是 PNG，落在各平台安全区的并集里。滤镜图里没有 drawtext。
+- 时长默认出整段母版。Brief 超过 15 秒且平台含抖音 / TikTok / 视频号时，再出一条 15 秒：保留开头和结尾，去掉中间放不下的镜头。要求的时长比母版还长时，就出母版本身。验收片子是 2 秒（两镜各 1 秒），Brief 时长是 5 秒，所以只有一个时长版本。
+- 每个版本都是带配音和烧录文字的成片。N15 的无字幕、无配音文件不按版本再导一份。
+- 不新增表。版本写在项目目录的 `deliveries.json`。Alembic head 仍是 `t03_gateway_0002`。
+- 分享链接是 `/v1/shares/{token}`，不登录。不发布到抖音、视频号或 YouTube。
+- 主体是否出画：验收片在母版上叠一块红矩形（不是字）。检出的红框要和计划框对得上。镜头交界的两帧不参与比对。
+- 成片页的比例、语种、时长切换留给 T11。这次不改 `apps/web`，因此 PR 写 `Refs #17`，不写 `Closes`。
 
 ## T10 假设
 

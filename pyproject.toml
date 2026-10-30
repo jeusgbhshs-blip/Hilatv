@@ -49,6 +49,7 @@ include = ["gateway*", "workers*", "eval*"]
 "workers.nodes.n06_voiceover" = ["lexicon.yaml"]
 "workers.nodes.n08_keyframe" = ["prompts/*.j2"]
 "workers.nodes.n10_video" = ["prompts/*.j2"]
+"workers.nodes.n17_deliver" = ["prompts/*.j2"]
 "workers.schemas" = ["json_schema/*.json"]
 gateway = ["routes.yaml", "pricing.yaml"]
 
@@ -66,6 +67,7 @@ testpaths = [
   "workers/nodes/n13_subtitle/tests",
   "workers/nodes/n14_packaging/tests",
   "workers/nodes/n15_compose/tests",
+  "workers/nodes/n17_deliver/tests",
   "workers/schemas/tests",
   "workers/workflow/tests",
   "eval/tests",

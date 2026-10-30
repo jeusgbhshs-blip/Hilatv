@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.deliveries import router as delivery_router
 from app.logging import log_event
 from app.projects import router
 from app.settings import get_settings
@@ -18,6 +19,7 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="HiLatv API", version="0.1.0", lifespan=_lifespan)
 app.include_router(router)
+app.include_router(delivery_router)
 
 
 @app.get("/health")
