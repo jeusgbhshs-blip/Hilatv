@@ -430,8 +430,11 @@ def test_one_remaining_regen_refuses_without_charging(tmp_path, monkeypatch) -> 
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "2")
     monkeypatch.setenv("HILATV_LIVE", "0")
+    from workers.identity.session import open_session
+
+    owner = open_session()
     project_id = "oneleft"
-    directory = _hold(project_id)
+    directory = _hold(project_id, enterprise_id=owner.enterprise_id)
     _seed_budget(directory, 1)
     version_id = _plant_lower_budget(directory)
     seen = _watch_budget(monkeypatch)
@@ -446,7 +449,25 @@ def test_one_remaining_regen_refuses_without_charging(tmp_path, monkeypatch) -> 
     from gateway.service import reset_gateway
 
     try:
-        with TestClient(app) as client:
+        with TestClient(app) as anon:
+            bare = anon.post(
+                f"/v1/projects/{project_id}/storyboard/S01",
+                json={"voiceover": "先看这台柱塞泵。改过一句"},
+            )
+        assert bare.status_code == 401
+        assert bare.json()["detail"] == "需要登录"
+        stranger = open_session()
+        with TestClient(app, headers={"Authorization": f"Bearer {stranger.token}"}) as other:
+            hidden = other.post(
+                f"/v1/projects/{project_id}/storyboard/S01",
+                json={"voiceover": "先看这台柱塞泵。改过一句"},
+            )
+        assert hidden.status_code == 404
+        assert hidden.json()["detail"] == "项目不存在"
+        assert (
+            json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))["used"] == 1
+        )
+        with TestClient(app, headers={"Authorization": f"Bearer {owner.token}"}) as client:
             refused = client.post(
                 f"/v1/projects/{project_id}/storyboard/S01",
                 json={"voiceover": "先看这台柱塞泵。改过一句"},
@@ -485,8 +506,11 @@ def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
     monkeypatch.setenv("HILATV_LIVE", "0")
+    from workers.identity.session import open_session
+
+    owner = open_session()
     project_id = "takefail"
-    directory = _hold(project_id)
+    directory = _hold(project_id, enterprise_id=owner.enterprise_id)
     _seed_budget(directory, 1)
     version_id = _plant_lower_budget(directory)
     seen = _watch_budget(monkeypatch)
@@ -513,7 +537,26 @@ def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch
     from gateway.service import reset_gateway
 
     try:
-        with TestClient(app) as client:
+        with TestClient(app) as anon:
+            bare = anon.post(
+                f"/v1/projects/{project_id}/storyboard/S01",
+                json={"voiceover": "先看这台柱塞泵。改过一句"},
+            )
+        assert bare.status_code == 401
+        assert bare.json()["detail"] == "需要登录"
+        stranger = open_session()
+        with TestClient(app, headers={"Authorization": f"Bearer {stranger.token}"}) as other:
+            hidden = other.post(
+                f"/v1/projects/{project_id}/storyboard/S01",
+                json={"voiceover": "先看这台柱塞泵。改过一句"},
+            )
+        assert hidden.status_code == 404
+        assert hidden.json()["detail"] == "项目不存在"
+        assert second_fails.calls == 0
+        assert (
+            json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))["used"] == 1
+        )
+        with TestClient(app, headers={"Authorization": f"Bearer {owner.token}"}) as client:
             refused = client.post(
                 f"/v1/projects/{project_id}/storyboard/S01",
                 json={"voiceover": "先看这台柱塞泵。改过一句"},
