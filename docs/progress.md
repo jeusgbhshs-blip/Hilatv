@@ -27,7 +27,7 @@
 | T19 | 专家模式画布 | T10, T11, T12 | 🔵 | [cursor/t19-expert-canvas-7ff6](https://github.com/jeusgbhshs-blip/Hilatv/pull/55) | 验收中。重跑计次走 `open_project_budget`。假设见下方 |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
-| T21-F1 | 画面切点对齐音乐节拍 | T21 | 🔵 | cursor/t21-f1-cut-align-7fd8 | 验收中。N12 对齐时长写入 T10 时间线。成片切点在 N15 mp4 上测量。假设见下方 |
+| T21-F1 | 画面切点对齐音乐节拍 | T21 | 🔵 | [cursor/t21-f1-cut-align-7fd8](https://github.com/jeusgbhshs-blip/Hilatv/pull/61) | 验收中。N12 对齐时长写入 T10 时间线。成片切点在 N15 mp4 上测量。假设见下方 |
 | T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
