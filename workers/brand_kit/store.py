@@ -174,6 +174,54 @@ def export_record(record: BrandRecord) -> dict[str, Any]:
     }
 
 
+def released_view(enterprise_id: str, brand_id: str | None = None) -> dict[str, Any] | None:
+    """Archive view for a later node. People have already been filtered.
+
+    Callers must not read ``load_record`` and then use ``people`` themselves.
+    """
+
+    if brand_id and not enterprise_id:
+        raise BrandReadError("brand_id lookup requires enterprise_id")
+    if not enterprise_id:
+        return None
+    record = load_by_brand_id(brand_id, enterprise_id) if brand_id else load_record(enterprise_id)
+    if record is None:
+        return None
+    return export_record(record)
+
+
+def append_anchors(enterprise_id: str, anchors: list[dict[str, Any]]) -> None:
+    """Add anchors whose bytes live in this enterprise's brand directory."""
+
+    record = load_record(enterprise_id)
+    if record is None:
+        return
+    merged = [item for item in record.anchors if isinstance(item, dict)]
+    keys = {_anchor_key(item) for item in merged}
+    for item in anchors:
+        if not isinstance(item, dict):
+            continue
+        uri = str(item.get("uri") or "")
+        if read_asset(uri, enterprise_id=enterprise_id) is None:
+            continue
+        key = _anchor_key(item)
+        if key in keys:
+            continue
+        merged.append(item)
+        keys.add(key)
+    save_record(record.model_copy(update={"anchors": merged}))
+
+
+def _anchor_key(item: dict[str, Any]) -> tuple[str, str, str, str, str]:
+    return (
+        str(item.get("kind") or ""),
+        str(item.get("view") or ""),
+        str(item.get("product_id") or ""),
+        str(item.get("person_id") or ""),
+        str(item.get("scene_ref") or item.get("shot_id") or ""),
+    )
+
+
 def _parse_uri(uri: str) -> tuple[str, str] | None:
     prefix = "brand://"
     if not isinstance(uri, str) or not uri.startswith(prefix):

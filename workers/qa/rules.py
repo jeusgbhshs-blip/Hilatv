@@ -483,3 +483,9 @@ def _face_grid(image: Image.Image | None) -> list[float] | None:
         counts[slot] += 1
         grid[slot] += luma_at(buf, width, x, y) / 255
     return [grid[i] / counts[i] if counts[i] else 0.0 for i in range(n * n)]
+
+
+def face_embedding(image: Image.Image) -> list[float] | None:
+    """8×8 skin-luma grid. This is the face vector N11 compares at cosine 0.75."""
+
+    return _face_grid(image)
