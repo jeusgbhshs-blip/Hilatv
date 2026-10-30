@@ -18,3 +18,6 @@ def test_library_covers_the_sample_move() -> None:
         assert "text" in lowered or "文字" in preset.negative_fragment
         assert "logo" in lowered or "Logo" in preset.negative_fragment
         assert not any(ch.isdigit() for ch in preset.prompt_fragment)
+        assert preset.status == "试用"
+        assert preset.formal is False
+        assert preset.tested_runs == 0

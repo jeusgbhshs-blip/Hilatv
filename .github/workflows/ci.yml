@@ -69,10 +69,16 @@ jobs:
 
       - name: Web lint and build
         working-directory: apps/web
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
         run: |
           npm ci
           npm run lint
+          npm run test:unit
           npm run build
+
+      - name: Accept T11
+        run: make accept-t11
 
   compose:
     runs-on: ubuntu-latest

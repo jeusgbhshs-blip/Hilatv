@@ -1,7 +1,8 @@
 industry: ecommerce
 label: 电商零售
+manual_review: false
 narrative:
-  - 三秒钩子
+  - 3秒钩子
   - 使用场景
   - 卖点
   - 促销
@@ -32,8 +33,9 @@ forbidden:
   - 编造销量和评价
   - 画面内生成的文字、Logo、价格或电话
 requirements:
-  - 竖屏优先
+  - 9:16 优先
   - 节奏快
+  - 批量 SKU
   - 同一风格可批量套 SKU
 video_types:
   - id: hero_video
@@ -58,3 +60,39 @@ keywords:
   - {text: 拼多多, weight: 4}
   - {text: 直播间, weight: 3}
 clarify_question: 这条片做主图视频，还是做带货短视频？
+shot_plan:
+  - {beat: 3秒钩子, preset: snap_push}
+  - {beat: 使用场景, preset: handheld_follow}
+  - {beat: 卖点, preset: detail_drift}
+  - {beat: 促销, preset: locked_off}
+  - {beat: 下单, preset: locked_off}
+narrative_structures:
+  - id: spec_default
+    label: 带货主结构
+    beats:
+      - 3秒钩子
+      - 使用场景
+      - 卖点
+      - 促销
+      - 下单
+  - id: contrast
+    label: 反差种草
+    beats:
+      - 使用反差
+      - 上手画面
+      - 一个卖点
+      - 下单
+  - id: lifestyle
+    label: 生活片段
+    beats:
+      - 日常片段
+      - 产品入画
+      - 卖点
+      - 店铺
+  - id: hero_sku
+    label: 主图批量
+    beats:
+      - 产品入画
+      - 核心卖点
+      - 使用一下
+      - 价格位

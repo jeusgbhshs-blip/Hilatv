@@ -70,7 +70,10 @@ def _read(directory: Path, project_id: str) -> dict[str, Any]:
 
 def _write(directory: Path, snapshot: dict[str, Any]) -> None:
     path = directory / "project.json"
-    path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary = directory / ".project.json.tmp"
+    payload = json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n"
+    temporary.write_text(payload, encoding="utf-8")
+    os.replace(temporary, path)
 
 
 def init_project(project_id: str, **fields: Any) -> dict[str, Any]:

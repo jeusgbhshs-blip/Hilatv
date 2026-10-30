@@ -15,8 +15,8 @@
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ✅ | [t07-n6-voiceover](https://github.com/jeusgbhshs-blip/Hilatv/pull/27) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ✅ | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ✅ | [t09-render](https://github.com/jeusgbhshs-blip/Hilatv/pull/29) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | 🔵 | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
+| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ✅ | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T11 | 前端：输入页、进度页、成片页 | T10 | 🔵 | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | 🔵 | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
@@ -26,6 +26,7 @@
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
+| T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | 🔵 | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 验收中。预设全部「试用」，未做 20 次实测。假设见下方 |
 
 状态：⬜ 未开始 · 🟡 开发中 · 🔵 验收中 · ✅ 已合并 · ⛔ 阻塞
 
@@ -58,9 +59,9 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：T09（PR #29，无新迁移）。T10 仍在验收
-- 正在做什么：T12 N9/N11 质检和导演决策循环。无 Key，`make accept-t12` 走本地规则和 mock judge。埋入坏图拦截率 47/47。200 张人工打分图仍待团队提供。Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图
+- 合并了哪些：T09（PR #29，无新迁移）、T10（PR #30，无新迁移）。main 现为 `66306cc`（含 T11、T25）
+- 正在做什么：T12 N9/N11 质检和导演决策循环，已合入最新 main。无 Key，`make accept-t12` 走本地规则和 mock judge。埋入坏图拦截率 47/47，质检未校准（0/200）。T11 输入页、进度页、成片页。T25 补电商、本地生活、教育、政企模板和镜头预设（全部「试用」）。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测
 
 ## T12 假设
 
@@ -75,11 +76,34 @@
 - 通过线是总分 ≥ 7.5 且 `hard_fail` 为空。低于 7.5、又不是模型类硬伤，决策是 `regenerate`。产品形变、人脸、闪烁走 `switch_model`。`sensitive` 走 `ask_user`。第 3 次仍失败走 `fallback`，`max_attempts_left` 为 0。降级方案的执行留给 T14，这里只出决策。`max_attempts_left = 3 - attempt`，attempt 从 1 计。
 - 导演会经 `gateway.generate_text` 问一次。模型必须给出能通过 DirectorDecision 的 JSON，并且不能把失败镜头改成通过，也不能把次数上限抬高。Mock 不返回合法决策，所以无 Key 时用上面这条规则。
 - T10 的 ProduceFilm 测试要求管线里还没有 N9/N11。这次不改那条管线，也不改 PR #31 的分支。单镜循环在 `workers.qa.loop.run_shot_loop`：每次只返回一个决策，由调用方执行重生。
-- 拦截率用的坏图是 Pillow 现画的，不是照片，也不是真人脸。平涂车间底，中间一块金属色矩形当产品；促销词和电话用仓库里的思源黑体画上去；乱码是随机笔画；形变是同一块相对锚点做剪切、收腰或鼓包；崩坏脸是椭圆上三只眼睛；另外有黑边、角落周期线、被裁切的主体、过小主体，以及长边只有 96px 的小图。视频是 4fps、8 帧：连续两帧（0.5 秒）形变，或单独一帧白闪。6 个干净对照（5 张图加 1 段视频）必须通过，不放进拦截率的分母。
+- 拦截率用的坏图是 Pillow 现画的，不是照片，也不是真人脸。平涂车间底，中间一块金属色矩形当产品；促销词和电话用仓库里的思源黑体画上去；乱码是随机笔画；形变是同一块相对锚点做剪切、收腰或鼓包；崩坏脸是椭圆上三只眼睛；另外有黑边、角落周期线、被裁切的主体、过小主体，以及长边只有 96px 的小图。视频是 4fps、8 帧：连续两帧（0.5 秒）形变，或单独一帧白闪。6 个干净对照（5 张图加 1 段视频）不能被标成内容硬伤，也不放进拦截率的分母。Mock 下它们的 `visual_reviewed` 仍是 false。
 - 200 张人工打分图不在仓库。校准读 `workers/qa/calibration/manifest.json`。文件不在，或不足 200 张，状态是 `pending_team`。满 200 张之后，排序一致率低于 80% 才会让验收失败。
 - N16 只留 `workers.qa.final.review_film`。调用会抛 `NotImplementedError`。
 - 画面上的字、Logo、价格、电话仍然只由后期叠加。重生决策的 `changes` 带上现有的无文字负面约束。
 - 同一个镜头的候选逐张评审，避免网关日志并发写。
+
+## T11 假设
+
+- 仓库已经用 npm（`apps/web/package-lock.json`，CI 按这个文件缓存）。`make accept-t11` 跑 `npm run test:e2e`，不另起 pnpm workspace。issue 注释里的 `pnpm --filter web` 指的是同一条桌面加手机的 Playwright。包名是 `hilatv-web`，对不上 filter `web`。
+- 浏览器在设置了 `NEXT_PUBLIC_API_BASE` 时直连 API。没设置时，页面走同源 `/v1`，由 Next rewrite 转到 `HILATV_API_ORIGIN`。WebSocket 在设置了 base 时直连 API；浏览器对 WebSocket 不看 CORS。REST 的跨域来源由 `HILATV_WEB_ORIGINS` 决定，进程启动时读一次。
+- 图片和 PDF 经 `POST /v1/uploads` 写到 `HILATV_PROJECT_DIR/uploads/<id>/`。响应只给不透明的 `upload_id`，不给服务器路径。创建项目用这个 id；服务端解析并确认真实路径落在 `uploads/` 里（解开符号链接，拒绝 `..` 和其他路径），否则 422。交给 N1 的仍是解析后的本地路径。状态接口和进度页不展示服务器路径。链接只收 http 或 https。类型必须同时符合 MIME 和扩展名，拒绝 SVG。单文件默认不超过 8MB，按块读取，超出即停（`HILATV_UPLOAD_MAX_BYTES`）。不新增表。
+- 成片下载接口仍返回 `Content-Disposition: attachment`。播放器先把成片取成 blob 再交给 `<video>`，下载按钮再取一次并保存为 `master.mp4`。不做 Range。
+- 版本切换和改稿框只是占位，不调用重跑，也不改稿。方案卡、分镜预览、专家画布、企业后台不在本任务。五个用户状态用 T10 已有的 phase。镜头行显示 WebSocket 事件里的「第 N 镜：…」；断线后靠轮询快照补上。分镜出来之前页面写当前环节，不用转圈当唯一反馈。
+- 六个行业入口对应 `templates/industries` 的名称。点击只是填一句可改的示例，不单独调模型。
+- 画面上的字、Logo、价格、电话仍然只由 N13/N14/N15 叠加。前端不调用模型，也不绕过 gateway。
+- `make accept-t11` 用一句 15 秒中文宣传片，画布 320×180，并清掉对象存储变量，这样 mock 不连 MinIO。桌面 1440×900、手机 390×844 各跑一遍。手机视口用 Chromium 模拟触摸和手机 UA，不另装 WebKit。
+- shadcn/ui 是复制进 `apps/web/components/ui` 的组件。不引入 React Flow。新依赖登记在 `docs/licenses.md`。
+
+## T25 假设
+
+- T05 已经放了 6 份行业默认值表。本任务不改这些默认时长、平台、关键词和视频类型，避免 N1 选行业的结果变掉。补上的是 `shot_plan`、3–5 套 `narrative_structures`，以及每份模板上的 `manual_review`。`narrative` 仍是 SPEC 第 7 章表格里的默认结构；变体留给以后的 N3，本任务不实现 N3。
+- 表格里的措辞和 YAML 用了可核对的别名：制造业「工厂与检测 / 行动号召」对应「工厂/检测 / CTA」，外贸的「优势」对应「优势（价格/交期/MOQ）」，电商钩子写成「3秒钩子」。
+- `manual_review` 只定义在行业模板上。政企为 true，其余为 false。N1 加载时会拒绝缺这个标记的政企模板，也不会让其他行业打开它。Brief 不新增字段，出片也不在这里拦截。T20 以后读这个字段。
+- 镜头预设增加 `status`、`formal`、`tested_runs`。本批全部是「试用」、`formal: false`、`tested_runs: 0`。没有成功率数字，因为没有实测。模型不接受「正式」或非 0 的实测次数，所以不能只改 YAML 就把预设送进正式库。
+- 为了让现有加载器读得下这些字段，N1 的行业模型和 N5 的预设模型各加了上述字段。没有改 N15、前端和 `workers/qa`。
+- 新增运镜提示词是自写英文短句，负面约束包含无文字、无 Logo、无价格、无电话。推荐模型名仍是库里已有的 seedance / kling / wan，不新增 adapter，也不调用模型。
+- 电商批量出片仍是 T24。模板只保留「批量 SKU」这条要求。教育模板写明数字人讲解可选，这里不接数字人。
+- 不新增环境变量，也不新增依赖。验收强制走 mock 网关，不看 `HILATV_LIVE`。
 
 ## T10 假设
 

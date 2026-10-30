@@ -28,6 +28,25 @@ class Keyword(BaseModel):
     weight: int = Field(ge=1)
 
 
+class ShotCue(BaseModel):
+    """One beat of the default structure, and the trial camera preset it uses."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    beat: str = Field(min_length=1)
+    preset: str = Field(min_length=1)
+
+
+class NarrativeStructure(BaseModel):
+    """One of the 3–5 structures N3 can offer. The default matches chapter 7."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    beats: list[str] = Field(min_length=2)
+
+
 class VideoTypeSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -59,6 +78,9 @@ class IndustryTemplate(BaseModel):
     default_video_type: str = Field(min_length=1)
     keywords: list[Keyword] = Field(min_length=1)
     clarify_question: str = ""
+    manual_review: bool
+    shot_plan: list[ShotCue] = Field(min_length=1)
+    narrative_structures: list[NarrativeStructure] = Field(min_length=3, max_length=5)
 
     @property
     def style_default(self) -> str:
@@ -97,8 +119,24 @@ def load_industries() -> dict[str, IndustryTemplate]:
             raise ValueError(f"{industry} needs a clarify question")
         if not aspects_match(template.platforms, template.aspect_ratios):
             raise ValueError(f"{industry} default platforms and aspects do not match")
+        audit_template(industry, template)
         found[industry] = template
     return found
+
+
+def audit_template(industry: str, template: IndustryTemplate) -> None:
+    if industry == "public_sector":
+        if not template.manual_review:
+            raise ValueError("public_sector requires manual_review")
+    elif template.manual_review:
+        raise ValueError(f"{industry} must not set manual_review")
+    if [row.beat for row in template.shot_plan] != template.narrative:
+        raise ValueError(f"{industry} shot plan does not follow the narrative")
+    ids = [item.id for item in template.narrative_structures]
+    if len(ids) != len(set(ids)):
+        raise ValueError(f"{industry} narrative structure ids repeat")
+    if not any(item.beats == template.narrative for item in template.narrative_structures):
+        raise ValueError(f"{industry} is missing a structure that matches the default narrative")
 
 
 def reset_industries() -> None:
