@@ -19,7 +19,7 @@
 | T11 | 前端：输入页、进度页、成片页 | T10 | ✅ | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 已合并（9c7e524）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ✅ | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 已合并（7a7725f）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ✅ | [cursor/t13-anchors-composite-f261](https://github.com/jeusgbhshs-blip/Hilatv/pull/47) | 已合并（d326c69）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T14 | 降级方案 6.10 | T12, T13 | 🔵 | [cursor/t14-fallback-plan-bd74](https://github.com/jeusgbhshs-blip/Hilatv/pull/) | 验收中。产品负责人把 SPEC 第 3、4 级换成继续用 AI 生成。假设见下方 |
+| T14 | 降级方案 6.10 | T12, T13 | 🔵 | [cursor/t14-fallback-plan-bd74](https://github.com/jeusgbhshs-blip/Hilatv/pull/50) | 验收中。产品负责人把 SPEC 第 3、4 级换成继续用 AI 生成。假设见下方 |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ✅ | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 已合并（5e15a75）。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | 🔵 | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 验收中。改稿历史走 `/revisions`，不占用 T17 的 `/versions`。假设见下方 |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。比例、语种、时长仍走 `/versions`。假设见下方 |
