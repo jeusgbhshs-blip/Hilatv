@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { apiUrl, errorMessage } from "@/lib/api";
+import { apiFetch, apiUrl, ensureSession, errorMessage, withSession } from "@/lib/api";
 import { cardMedia, type StoryboardCard } from "@/lib/storyboard";
 
 export function StoryboardStrip({
@@ -19,6 +19,11 @@ export function StoryboardStrip({
   const [dirty, setDirty] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [token, setToken] = useState("");
+
+  useEffect(() => {
+    void ensureSession().then(setToken).catch(() => setToken(""));
+  }, []);
 
   useEffect(() => {
     setDrafts((current) => {
@@ -39,8 +44,8 @@ export function StoryboardStrip({
     setBusy(shotId);
     setError(null);
     try {
-      const response = await fetch(
-        apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/storyboard/${encodeURIComponent(shotId)}`),
+      const response = await apiFetch(
+        `/v1/projects/${encodeURIComponent(projectId)}/storyboard/${encodeURIComponent(shotId)}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -61,8 +66,8 @@ export function StoryboardStrip({
     setBusy("continue");
     setError(null);
     try {
-      const response = await fetch(
-        apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/storyboard/continue`),
+      const response = await apiFetch(
+        `/v1/projects/${encodeURIComponent(projectId)}/storyboard/continue`,
         { method: "POST" },
       );
       if (!response.ok) throw new Error(await errorMessage(response));
@@ -106,7 +111,7 @@ export function StoryboardStrip({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img
                     data-testid="storyboard-frame"
-                    src={apiUrl(card.frame_url)}
+                    src={token ? withSession(apiUrl(card.frame_url), token) : undefined}
                     alt=""
                     className="h-full w-full rounded-md object-cover"
                   />

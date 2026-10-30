@@ -7,9 +7,8 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { apiUrl, errorMessage } from "@/lib/api";
+import { apiFetch, errorMessage } from "@/lib/api";
 import { INDUSTRIES } from "@/lib/industries";
-import { rememberedEnterprise } from "@/lib/selection";
 
 type Preview = { logo?: string; mono_white?: string; mono_black?: string };
 
@@ -74,11 +73,10 @@ export function BrandDesk() {
       const people = role.trim()
         ? [{ role: role.trim(), consent, voice_id: consent ? voiceId.trim() || null : null }]
         : [];
-      const response = await fetch(apiUrl("/v1/brands"), {
+      const response = await apiFetch("/v1/brands", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          enterprise_id: rememberedEnterprise(),
           company_name: company.trim(),
           industry,
           logo_b64: await asBase64(logo),

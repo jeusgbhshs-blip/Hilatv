@@ -134,10 +134,31 @@ class Gateway:
             params["duration_s"] = duration_s
         return self.execute("video", prompt, params=params, **kwargs)
 
-    def tts(self, text: str, *, voice: str | None = None, **kwargs: Any) -> dict[str, Any]:
+    def tts(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        consent_token: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         params = dict(kwargs.pop("params", None) or {})
         if voice is not None:
             params["voice"] = voice
+        if consent_token is None:
+            raw = params.pop("consent_token", None)
+            consent_token = raw if isinstance(raw, str) else None
+        else:
+            params.pop("consent_token", None)
+        enterprise_id = kwargs.pop("enterprise_id", None)
+        if enterprise_id is None:
+            raw_enterprise = params.pop("enterprise_id", None)
+            enterprise_id = raw_enterprise if isinstance(raw_enterprise, str) else ""
+        else:
+            params.pop("enterprise_id", None)
+        if consent_token is not None:
+            params["consent_token"] = consent_token
+        params["_voice_enterprise"] = enterprise_id if isinstance(enterprise_id, str) else ""
         return self.execute("tts", text, params=params, **kwargs)
 
     def asr(self, audio_uri: str, **kwargs: Any) -> dict[str, Any]:
@@ -188,9 +209,21 @@ class Gateway:
     ) -> dict[str, Any]:
         if task not in TASKS:
             raise GatewayError(f"unknown task: {task}")
+        raw_params = dict(params or {})
+        if task == "tts":
+            token = raw_params.pop("consent_token", None)
+            voice_value = raw_params.get("voice")
+            enterprise_value = raw_params.pop("_voice_enterprise", None)
+            if enterprise_value is None:
+                enterprise_value = raw_params.pop("enterprise_id", None)
+            _require_voice_consent(
+                token if isinstance(token, str) else None,
+                voice_value,
+                enterprise_value if isinstance(enterprise_value, str) else "",
+            )
         model_cls, json_schema, schema_name = normalize_schema(schema)
         prompt, negative = _prepare_prompt(task, prompt)
-        clean_params = _public_params(dict(params or {}))
+        clean_params = _public_params(raw_params)
         image_b64 = clean_params.pop("image_b64", None)
         if isinstance(image_b64, str) and image_b64:
             clean_params["image_sha256"] = hashlib.sha256(image_b64.encode("utf-8")).hexdigest()
@@ -613,6 +646,16 @@ def _prepare_prompt(task: str, prompt: str) -> tuple[str, str | None]:
     if NO_RENDERED_TEXT in prompt:
         return prompt, NO_RENDERED_TEXT
     return f"{prompt}\n\nNegative: {NO_RENDERED_TEXT}", NO_RENDERED_TEXT
+
+
+def _require_voice_consent(token: str | None, voice: object, enterprise_id: str) -> None:
+    from workers.compliance.voice_token import VoiceConsentError, verify_voice_token
+
+    spoken = voice if isinstance(voice, str) else None
+    try:
+        verify_voice_token(token, spoken, enterprise_id or None)
+    except VoiceConsentError as exc:
+        raise GatewayError(str(exc)) from exc
 
 
 def _public_params(params: dict[str, Any]) -> dict[str, Any]:

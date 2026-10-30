@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.identity import owned_project, require_frame_identity, require_identity
 from workers.expert.canvas import build_canvas, media_file
 from workers.expert.charge import BudgetExhausted
 from workers.expert.gates import GateError
 from workers.expert.rerun import rerun_span, save_timeline, select_candidate
+from workers.identity.session import Identity
 
 router = APIRouter()
 
@@ -63,8 +65,16 @@ def _gate(exc: GateError) -> HTTPException:
     return HTTPException(status_code=exc.status, detail=str(exc))
 
 
+def _owned(project_id: str, identity: Identity) -> None:
+    owned_project(project_id, identity)
+
+
 @router.get("/v1/projects/{project_id}/canvas")
-def project_canvas(project_id: str) -> dict:
+def project_canvas(
+    project_id: str,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
     try:
         return build_canvas(project_id)
     except GateError as exc:
@@ -72,7 +82,12 @@ def project_canvas(project_id: str) -> dict:
 
 
 @router.post("/v1/projects/{project_id}/expert/rerun")
-def project_rerun_node(project_id: str, body: ExpertRerun) -> dict:
+def project_rerun_node(
+    project_id: str,
+    body: ExpertRerun,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
     try:
         return rerun_span(
             project_id,
@@ -93,7 +108,12 @@ def project_rerun_node(project_id: str, body: ExpertRerun) -> dict:
 
 
 @router.post("/v1/projects/{project_id}/expert/select")
-def project_select(project_id: str, body: ExpertSelect) -> dict:
+def project_select(
+    project_id: str,
+    body: ExpertSelect,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
     try:
         return select_candidate(
             project_id,
@@ -108,7 +128,12 @@ def project_select(project_id: str, body: ExpertSelect) -> dict:
 
 
 @router.post("/v1/projects/{project_id}/expert/timeline")
-def project_timeline(project_id: str, body: TimelineEdit) -> dict:
+def project_timeline(
+    project_id: str,
+    body: TimelineEdit,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
     try:
         return save_timeline(project_id, body.model_dump())
     except GateError as exc:
@@ -116,7 +141,12 @@ def project_timeline(project_id: str, body: TimelineEdit) -> dict:
 
 
 @router.get("/v1/projects/{project_id}/expert/media/{candidate_id}")
-def project_media(project_id: str, candidate_id: str) -> FileResponse:
+def project_media(
+    project_id: str,
+    candidate_id: str,
+    identity: Identity = Depends(require_frame_identity),
+) -> FileResponse:
+    _owned(project_id, identity)
     path = media_file(project_id, candidate_id)
     if path is None:
         raise HTTPException(status_code=404, detail="没有可看的画面")

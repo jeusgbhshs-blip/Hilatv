@@ -87,7 +87,14 @@ def test_modalities_return_mock_payloads(tmp_path) -> None:
     gateway = build_gateway(tmp_path, routes=mock_llm_routes())
     image = gateway.generate_image("产品特写", seed=3, shot_type="close_up")
     video = gateway.generate_video("产品旋转", seed=3)
-    speech = gateway.tts("三十兆帕", voice="zh_male_steady", seed=3)
+    from workers.compliance.consent_gate import issue_tts_consent
+
+    speech = gateway.tts(
+        "三十兆帕",
+        voice="zh_male_steady",
+        seed=3,
+        consent_token=issue_tts_consent("zh_male_steady", None),
+    )
     transcript = gateway.asr("oss://clip.wav", language="zh")
     track = gateway.music("稳重工业", duration_s=12, seed=3)
     review = gateway.judge("这个镜头合格吗", seed=3)

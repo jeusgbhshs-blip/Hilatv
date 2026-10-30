@@ -73,7 +73,19 @@ echo "== pytest expert canvas =="
   -q --tb=short
 
 echo "== measured film =="
+export HILATV_SESSION_SECRET="${HILATV_SESSION_SECRET:-t19-accept-session}"
 "$PYTHON" -m workers.expert.accept
+HILATV_E2E_SESSION="$("$PYTHON" - <<'PY'
+from workers.identity.session import open_session
+from workers.workflow.store import update_snapshot
+import os
+
+ident = open_session()
+update_snapshot(os.environ.get("HILATV_EXPERT_PROJECT", "t19expert"), enterprise_id=ident.enterprise_id)
+print(ident.token, end="")
+PY
+)"
+export HILATV_E2E_SESSION
 
 cd "$ROOT/apps/web"
 if [[ ! -d node_modules/@playwright/test || ! -d node_modules/@xyflow/react ]]; then

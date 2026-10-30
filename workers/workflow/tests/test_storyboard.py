@@ -244,11 +244,13 @@ def test_public_cards_drop_a_forced_review_flag() -> None:
 def test_edit_api_rejects_a_missing_project_and_extra_fields(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     from app.main import app
+    from workers.identity.session import open_session
 
-    client = TestClient(app)
+    ident = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
     missing = client.post("/v1/projects/missing/storyboard/S01", json={"voiceover": "改一句旁白"})
     assert missing.status_code == 404
-    init_project("held", sentence="一句", skip_storyboard=False)
+    init_project("held", sentence="一句", skip_storyboard=False, enterprise_id=ident.enterprise_id)
     directory = project_path("held")
     snapshot = json.loads((directory / "project.json").read_text(encoding="utf-8"))
     snapshot["status"] = "paused"

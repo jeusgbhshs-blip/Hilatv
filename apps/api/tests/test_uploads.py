@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from app.main import WEB_ORIGINS, app
+from workers.identity.session import open_session
 from workers.workflow.store import init_project
 
 PNG = base64.b64decode(
@@ -16,16 +17,21 @@ PNG = base64.b64decode(
 SVG = b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
 
 
+def _client() -> TestClient:
+    ident = open_session()
+    return TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+
+
 def _files_under(root: Path) -> list[Path]:
     folder = root / "uploads"
     if not folder.exists():
         return []
-    return [path for path in folder.rglob("*") if path.is_file()]
+    return [path for path in folder.rglob("*") if path.is_file() and not path.name.startswith(".")]
 
 
 def test_upload_image_returns_an_id_not_a_path(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
-    client = TestClient(app)
+    client = _client()
     stored = client.post("/v1/uploads", files={"file": ("产品图.png", PNG, "image/png")})
     assert stored.status_code == 200
     body = stored.json()
@@ -53,7 +59,7 @@ def _upload(client: TestClient, name: str, payload: bytes, content_type: str):
 
 def test_upload_requires_matching_mime_and_extension(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
-    client = TestClient(app)
+    client = _client()
     assert _upload(client, "logo.svg", SVG, "image/svg+xml").status_code == 415
     assert _upload(client, "logo.svg", PNG, "image/png").status_code == 415
     assert _upload(client, "logo.png", PNG, "image/svg+xml").status_code == 415
@@ -71,7 +77,7 @@ def test_upload_requires_matching_mime_and_extension(tmp_path, monkeypatch) -> N
 def test_upload_respects_size_limit_while_streaming(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_UPLOAD_MAX_BYTES", "4")
-    client = TestClient(app)
+    client = _client()
     response = client.post("/v1/uploads", files={"file": ("product.png", b"12345", "image/png")})
     assert response.status_code == 413
     assert _files_under(tmp_path) == []
@@ -87,11 +93,12 @@ def test_create_rejects_server_paths_and_accepts_upload_id(tmp_path, monkeypatch
             kwargs["project_id"],
             sentence=kwargs["sentence"],
             attachments=kwargs["attachments"],
+            enterprise_id=kwargs.get("enterprise_id"),
         )
         return "wf-test"
 
     monkeypatch.setattr("app.projects.start_film", fake_start_film)
-    client = TestClient(app)
+    client = _client()
     stored = client.post("/v1/uploads", files={"file": ("product.png", PNG, "image/png")})
     assert stored.status_code == 200
     upload_id = stored.json()["upload_id"]
@@ -171,11 +178,13 @@ def test_symlink_outside_uploads_is_rejected(tmp_path, monkeypatch) -> None:
         return "wf-test"
 
     monkeypatch.setattr("app.projects.start_film", fake_start_film)
-    client = TestClient(app)
+    client = _client()
     stored = client.post("/v1/uploads", files={"file": ("product.png", PNG, "image/png")})
     upload_id = stored.json()["upload_id"]
     folder = tmp_path / "uploads" / upload_id
-    stored_file = next(path for path in folder.iterdir() if path.is_file())
+    stored_file = next(
+        path for path in folder.iterdir() if path.is_file() and not path.name.startswith(".")
+    )
     stored_file.unlink()
     secret = tmp_path / "secret.txt"
     secret.write_text("secret")
@@ -191,9 +200,11 @@ def test_symlink_outside_uploads_is_rejected(tmp_path, monkeypatch) -> None:
 
 def test_status_hides_a_stored_server_path(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    ident = open_session()
     init_project(
         "t11paths",
         sentence="做一条片子",
+        enterprise_id=ident.enterprise_id,
         attachments=[
             {
                 "kind": "image",
@@ -203,7 +214,7 @@ def test_status_hides_a_stored_server_path(tmp_path, monkeypatch) -> None:
             }
         ],
     )
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
     response = client.get("/v1/projects/t11paths")
     assert response.status_code == 200
     assert "/etc/passwd" not in response.text
@@ -214,7 +225,7 @@ def test_status_hides_a_stored_server_path(tmp_path, monkeypatch) -> None:
 
 def test_cors_reflects_the_web_origin() -> None:
     origin = WEB_ORIGINS[0]
-    client = TestClient(app)
+    client = _client()
     allowed = client.get("/health", headers={"Origin": origin})
     assert allowed.headers["access-control-allow-origin"] == origin
     blocked = client.get("/health", headers={"Origin": "http://evil.example"})

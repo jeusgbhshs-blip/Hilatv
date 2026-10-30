@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 
 import { StoryboardStrip } from "@/components/storyboard-strip";
 import { Button } from "@/components/ui/button";
-import { apiUrl, wsUrl } from "@/lib/api";
+import { apiFetch, ensureSession, withSession, wsUrl } from "@/lib/api";
 import { readCards, type StoryboardCard } from "@/lib/storyboard";
 import {
   attachmentLabel,
@@ -35,12 +35,12 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
 
   useEffect(() => {
     let closed = false;
+    let socket: WebSocket | null = null;
     const controller = new AbortController();
-    const socket = new WebSocket(wsUrl(`/v1/projects/${encodeURIComponent(projectId)}/progress`));
 
     async function pull() {
       try {
-        const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}`), {
+        const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}`, {
           signal: controller.signal,
         });
         if (closed) return;
@@ -66,7 +66,15 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
       void pull();
     }, 700);
 
-    socket.onmessage = (message) => {
+    void ensureSession().then((token) => {
+      if (closed || !token) return;
+      socket = new WebSocket(
+        withSession(wsUrl(`/v1/projects/${encodeURIComponent(projectId)}/progress`), token),
+      );
+      socket.onmessage = onSocket;
+    });
+
+    function onSocket(message: MessageEvent) {
       let data: ProgressEvent;
       try {
         data = JSON.parse(String(message.data)) as ProgressEvent;
@@ -79,13 +87,13 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
       }
       setEvents((current) => mergeEvents(current, [data]));
       if (data.status === "completed" || data.status === "failed") void pull();
-    };
+    }
 
     return () => {
       closed = true;
       controller.abort();
       window.clearInterval(timer);
-      socket.close();
+      socket?.close();
     };
   }, [projectId, tick]);
 
@@ -190,7 +198,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
             size="lg"
             className="w-full sm:w-auto"
             onClick={() => {
-              void fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`), {
+              void apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`, {
                 method: "POST",
               });
             }}

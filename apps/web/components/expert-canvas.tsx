@@ -12,7 +12,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Button } from "@/components/ui/button";
-import { apiUrl, errorMessage } from "@/lib/api";
+import { apiFetch, apiUrl, ensureSession, errorMessage, withSession } from "@/lib/api";
 import {
   candidateCount,
   candidatesFor,
@@ -54,9 +54,14 @@ export function ExpertCanvas({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState(false);
   const [suffix, setSuffix] = useState("");
   const [timelineText, setTimelineText] = useState("");
+  const [token, setToken] = useState("");
+
+  useEffect(() => {
+    void ensureSession().then(setToken).catch(() => setToken(""));
+  }, []);
 
   const load = useCallback(async () => {
-    const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/canvas`));
+    const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/canvas`);
     if (response.status === 404) {
       setMissing(true);
       return;
@@ -113,7 +118,7 @@ export function ExpertCanvas({ projectId }: { projectId: string }) {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/expert/rerun`), {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/expert/rerun`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ node: active, prompt_suffix: suffix }),
@@ -144,7 +149,7 @@ export function ExpertCanvas({ projectId }: { projectId: string }) {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/expert/select`), {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/expert/select`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -175,7 +180,7 @@ export function ExpertCanvas({ projectId }: { projectId: string }) {
         setError("时间轴不是合法 JSON");
         return;
       }
-      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/expert/timeline`), {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/expert/timeline`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(parsed),
@@ -317,7 +322,7 @@ export function ExpertCanvas({ projectId }: { projectId: string }) {
                             candidate.frame === "video" || active === "n10_video" ? (
                               <video
                                 className="mt-2 max-h-40 w-full rounded bg-black"
-                                src={apiUrl(candidate.media_url)}
+                                src={token ? withSession(apiUrl(candidate.media_url), token) : undefined}
                                 controls
                                 playsInline
                               />
@@ -325,7 +330,7 @@ export function ExpertCanvas({ projectId }: { projectId: string }) {
                               // eslint-disable-next-line @next/next/no-img-element
                               <img
                                 className="mt-2 max-h-40 w-full rounded object-contain"
-                                src={apiUrl(candidate.media_url)}
+                                src={token ? withSession(apiUrl(candidate.media_url), token) : undefined}
                                 alt=""
                               />
                             )

@@ -165,8 +165,12 @@ def test_http_rerun_charges_and_does_not_mark_unreviewed_output(tmp_path, monkey
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from workers.identity.session import open_session
 
-    with TestClient(app) as client:
+    ident = open_session()
+    update_snapshot("httpfilm", enterprise_id=ident.enterprise_id)
+    headers = {"Authorization": f"Bearer {ident.token}"}
+    with TestClient(app, headers=headers) as client:
         response = client.post(
             "/v1/projects/httpfilm/expert/rerun",
             json={
@@ -224,8 +228,10 @@ def test_api_refuses_a_rerun_when_the_ledger_is_full(tmp_path, monkeypatch) -> N
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from workers.identity.session import open_session
 
-    init_project("api1", sentence="预算", status="completed")
+    ident = open_session()
+    init_project("api1", sentence="预算", status="completed", enterprise_id=ident.enterprise_id)
     save_node(
         "api1",
         "n05_storyboard",
@@ -240,7 +246,8 @@ def test_api_refuses_a_rerun_when_the_ledger_is_full(tmp_path, monkeypatch) -> N
     budget = open_project_budget("api1")
     while budget.try_take():
         pass
-    with TestClient(app) as client:
+    headers = {"Authorization": f"Bearer {ident.token}"}
+    with TestClient(app, headers=headers) as client:
         missing = client.get("/v1/projects/missing/canvas")
         assert missing.status_code == 404
         canvas = client.get("/v1/projects/api1/canvas")
@@ -373,3 +380,36 @@ def test_concurrent_reruns_cannot_both_charge(tmp_path, monkeypatch) -> None:
     assert not second.is_alive()
     assert open_project_budget("race").used == 1
     assert isinstance(done["b"], BudgetExhausted)
+
+
+def test_selection_and_timeline_refuse_while_running(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_RENDER_WIDTH", "320")
+    monkeypatch.setenv("HILATV_RENDER_HEIGHT", "180")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    build_film("busy")
+    node = project_path("busy") / "nodes" / "n10_video.json"
+    before_node = node.read_bytes()
+    before_snapshot = (project_path("busy") / "project.json").read_bytes()
+    update_snapshot("busy", status="running")
+    video = build_canvas("busy")["shots"][0]["videos"][0]
+    with pytest.raises(GateError, match="仍在运行") as selected:
+        select_candidate("busy", "n10_video", "S01", video["candidate_id"])
+    assert selected.value.status == 409
+    with pytest.raises(GateError, match="仍在运行") as saved:
+        save_timeline("busy", {"overlays": [{"text": "AI生成"}], "clips": []})
+    assert saved.value.status == 409
+    update_snapshot("busy", status="completed")
+    assert node.read_bytes() == before_node
+    stored = json.loads((project_path("busy") / "project.json").read_text(encoding="utf-8"))
+    assert stored["status"] == "completed"
+    assert stored["deliverable"] == json.loads(before_snapshot)["deliverable"]
+
+
+def test_mock_uri_is_not_a_project_file(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    from workers.expert.rerun import _review_of_path
+
+    with pytest.raises(GateError, match="路径不在项目目录内") as caught:
+        _review_of_path({}, "mock://not-a-project-file")
+    assert caught.value.status == 422
