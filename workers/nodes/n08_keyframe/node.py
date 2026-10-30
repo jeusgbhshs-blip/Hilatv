@@ -25,6 +25,7 @@ from workers.nodes.runtime import (
     placeholder_qa,
     run_parallel,
     variant_seeds,
+    with_prompt_suffix,
     workers_for,
 )
 from workers.nodes.shot_meta import describe, motion_strength, needs_end_frame, shot_family
@@ -169,13 +170,16 @@ def _shot(
     built: list[Candidate] = []
     for frame in frames:
         camera = _camera_line(preset, frame)
-        prompt = render_keyframe(
-            model=intended,
-            camera=camera,
-            subject=subject,
-            scene=scene,
-            style=style,
-            negative=negative,
+        prompt = with_prompt_suffix(
+            render_keyframe(
+                model=intended,
+                camera=camera,
+                subject=subject,
+                scene=scene,
+                style=style,
+                negative=negative,
+            ),
+            payload.prompt_suffix,
         )
         for seed in seeds:
             deadline.check()

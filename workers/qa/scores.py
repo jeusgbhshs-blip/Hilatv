@@ -200,6 +200,15 @@ def apply_findings(
     )
 
 
+CONTENT_SAFETY = frozenset({"sensitive"})
+
+
+def content_blocked(report: QAReport) -> bool:
+    """A content-safety hard fail is not allowed into the master."""
+
+    return any(code in CONTENT_SAFETY for code in report.hard_fail)
+
+
 def is_quality_pass(report: QAReport) -> bool:
     """A calibrated pass. Mock judges and unreviewable shots never qualify."""
 

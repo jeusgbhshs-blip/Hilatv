@@ -29,6 +29,7 @@ from workers.nodes.runtime import (
     read_bytes,
     run_parallel,
     variant_seeds,
+    with_prompt_suffix,
     workers_for,
 )
 from workers.nodes.shot_meta import describe, motion_strength, shot_family
@@ -172,15 +173,18 @@ def _shot(
     )
     negative = negative_text(preset.negative_fragment if preset else "")
     camera = _camera_line(preset, motion)
-    prompt = render_video(
-        model=intended,
-        camera=camera,
-        subject=subject,
-        scene=scene,
-        style=style,
-        motion=motion,
-        negative=negative,
-        closing=closing is not None,
+    prompt = with_prompt_suffix(
+        render_video(
+            model=intended,
+            camera=camera,
+            subject=subject,
+            scene=scene,
+            style=style,
+            motion=motion,
+            negative=negative,
+            closing=closing is not None,
+        ),
+        payload.prompt_suffix,
     )
     generation = best_generation_s(shot.duration_s, margin=margin_s())
     ratio = _ratio(payload)

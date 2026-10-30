@@ -24,7 +24,7 @@
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | 🔵 | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 重构图、中英配音字幕、版本 API，成片页可切换比例、语种、时长。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | 🔵 | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 验收中。已合并 main `7a7725f`。只有 `visual_reviewed is True` 算已评审。假设见下方 |
-| T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
+| T19 | 专家模式画布 | T10, T11, T12 | 🔵 | cursor/t19-expert-canvas-7ff6 | 验收中。无新迁移。假设见下方 |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
@@ -64,10 +64,25 @@
 -->
 
 ### 2026-10-30
+- 正在做什么：T19 专家模式画布。查看每镜关键帧、视频候选和质检结论，手动重跑该节点及下游。重生次数记在 `workers.qa.budget_store`，不进项目快照。无 Key，`HILATV_LIVE` 关闭。
 - 合并了哪些：T09（PR #29，无新迁移）
 - 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
 - T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5，并调用已合并的 T12 `review_shot`。mock 没有画面，镜头标为未评审。T12 导入不到时记 `review_error`，不再用网关单独打分。报告分开写「管线和报告结构」和「质量是否达标」。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后，`--mode live` 才会让视觉评审看实帧
+
+## T19 假设
+
+- 专家画布读项目目录里已经落盘的节点结果。关键帧在 `keyframes`，视频在 `videos`，都是第 5 章的 `Candidate`。评分用候选上的 `QAReport`。`qa_passed` 只有 `visual_reviewed is True` 且 `is_quality_pass` 为真时才是真。Mock 评审看过文件也不会把 `visual_reviewed` 写成 true，验收里这一项记「未测」。
+- 手动重跑走 `POST /v1/projects/{id}/expert/rerun`，从该节点跑到下游（含 N13、N14、N15），不重跑上游。会生成画面、视频或配音的节点是 `n06_voiceover`、`n08_keyframe`、`n10_video`。一次重跑按这个跨度里有几个生成节点，向 `workers.qa.budget_store.open_project_budget` 加几次。账本在项目目录旁边的 `_regen/{id}.json`，不写进 `project.json`。没有减少的接口。把快照或节点文件改回去，次数也不会降。次数不够时接口 409，文案是「项目重生次数已用完」。
+- 原有的 `POST /v1/projects/{id}/rerun`（从该节点重跑整条下游，走 Temporal）也走同一个 `reserve`，避免另一条入口不计次。
+- 导演循环里的 `RetryBudget` 仍是 T12 的进程内计数，不落盘。专家模式的手动重跑不另设计数器，只用上面的账本。两条计数还没有加总，等 T13 把导演次数也接到这个账本。
+- 请求体里的 `qa_passed`、`visual_reviewed`、`consent`、`skip_ai_label`、`licensed` 可以出现，服务端不读。重跑结果先过 `review_shot`，再由 `enforce_review` 原样留下 `visual_reviewed`。内容安全硬伤（`sensitive`）不能被选进成片，N15 也不会把这种候选当成镜头底。
+- 人物和克隆声音只认品牌档案。`enterprise_id` 来自项目快照，不信请求体。`people_for_use` / `release_kit` 的档案结果才进重跑。档案里没有的 `voice_id`，`consent_gate` 直接拒绝。
+- 「AI生成」由 N14 画进包装，N15 叠到时间轴上。保存时间轴时如果提交的叠层里没有这四个字，拒绝保存，也不重渲染。字体只认 `LicenseRecord` 里的思源黑体 / Noto Sans SC 两个文件，不认 `licensed: true`。
+- 选用另一条已经落在项目目录里的视频候选时，只重跑 N15，不计重生次数。成片像素以重渲染后的 `master.mp4` 哈希为准。Mock 没有对象存储时，重跑产生的 `mock://` 不能当底片，N15 仍用色板，这种情况不把哈希变化当成选片生效。
+- 补充提示词会接到 N8 或 N10 的提示词后面，并再次加上无文字约束。画面上的字、Logo、价格、电话仍只由后期叠加。
+- 不新增表。Alembic head 仍是 `t03_gateway_0002`。无密钥，`HILATV_LIVE` 保持关闭。
+- 前端用 `@xyflow/react` 12.8.6（MIT）。节点外观是自写的。手机和桌面都靠页面滚动看完整张图，节点不缩小到点不中。
 
 ## T18 假设
 

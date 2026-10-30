@@ -171,11 +171,16 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         </div>
       ) : null}
 
-      {status === "completed" ? (
-        <Button asChild size="lg" className="w-full sm:w-auto">
-          <Link href={`/projects/${projectId}/film`}>观看成片</Link>
+      <div className="flex flex-wrap gap-3">
+        <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
+          <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
         </Button>
-      ) : null}
+        {status === "completed" ? (
+          <Button asChild size="lg" className="w-full sm:w-auto">
+            <Link href={`/projects/${projectId}/film`}>观看成片</Link>
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

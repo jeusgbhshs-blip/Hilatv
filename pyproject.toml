@@ -75,6 +75,7 @@ testpaths = [
   "workers/nodes/n09_keyframe_qa/tests",
   "workers/nodes/n11_video_qa/tests",
   "workers/qa/tests",
+  "workers/expert/tests",
   "workers/nodes/n13_subtitle/tests",
   "workers/nodes/n14_packaging/tests",
   "workers/nodes/n15_compose/tests",

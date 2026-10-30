@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from workers.nodes.n06_voiceover.schema import ShotVoiceover
 from workers.nodes.n13_subtitle.schema import SubtitleCue
 from workers.nodes.n14_packaging.schema import PackageElement
+from workers.schemas.asset import Candidate
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
 from workers.schemas.script import Script
@@ -34,6 +35,7 @@ class N15Input(BaseModel):
     voiceovers: list[ShotVoiceover] = Field(default_factory=list)
     cues: list[SubtitleCue] = Field(default_factory=list)
     elements: list[PackageElement] = Field(default_factory=list)
+    videos: list[Candidate] = Field(default_factory=list)
     brand_kit: BrandKit | None = None
     brief: Brief | None = None
     intro_s: float = Field(default=0, ge=0)

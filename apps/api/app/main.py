@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.brands import router as brand_router
 from app.deliveries import router as delivery_router
+from app.expert import router as expert_router
 from app.logging import log_event
 from app.projects import router
 from app.settings import get_settings
@@ -40,6 +41,7 @@ app.add_middleware(
 app.include_router(router)
 app.include_router(brand_router)
 app.include_router(delivery_router)
+app.include_router(expert_router)
 
 
 @app.get("/health")

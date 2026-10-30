@@ -37,3 +37,4 @@ class N10Input(BaseModel):
     style_anchor: AnchorHint | None = None
     video_candidates: int = Field(default=4, ge=3, le=8)
     enterprise_id: str | None = None
+    prompt_suffix: str = ""

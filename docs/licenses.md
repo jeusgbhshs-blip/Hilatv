@@ -45,7 +45,8 @@
 | lucide-react | 0.x | ISC | 输入页上传图标 |
 | shadcn/ui | 组件源码在 `apps/web/components/ui` | MIT | 按钮、输入、文本域、标签、卡片、徽章。不是运行时依赖 |
 | Playwright | 1.x（`@playwright/test`） | Apache-2.0 | T11 桌面与手机视口 E2E |
+| @xyflow/react | 12.8.6 | MIT | T19 专家模式节点画布。界面是自写节点，不用第三方画布素材 |
 
-尚未引入、因此未登记：React Flow（`@xyflow/react`）、Remotion、厂商模型 SDK、boto3、MinIO Python SDK。对象存储走自写的 SigV4 HTTP 客户端。
+尚未引入、因此未登记：Remotion、厂商模型 SDK、boto3、MinIO Python SDK。对象存储走自写的 SigV4 HTTP 客户端。
 
 MinIO 说明：Docker Hub 上的 `minio/minio` 目前无法匿名拉取，`dl.min.io` 返回 HTTP 410。T01 改用仍包含官方 MinIO 服务端的 Bitnami 构建，并固定版本标签。

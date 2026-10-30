@@ -15,7 +15,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from app.logging import log_event
+from workers.expert.charge import reserve
 from workers.nodes.n01_brief.schema import AttachmentRef
+from workers.qa.budget_store import BudgetExhausted
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.service import start_film
@@ -317,6 +319,10 @@ async def rerun_project(project_id: str, body: RerunProject) -> JSONResponse:
         ]
         if missing:
             raise HTTPException(status_code=409, detail=f"缺少上游结果：{missing[0]}")
+    try:
+        reserve(project_id, body.node)
+    except BudgetExhausted as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     workflow_id = await start_film(
         project_id=project_id,
         sentence=str(snapshot.get("sentence") or ""),

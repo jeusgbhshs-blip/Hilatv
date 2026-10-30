@@ -38,7 +38,9 @@ from workers.nodes.n15_compose.schema import (
     VideoClip,
 )
 from workers.nodes.runtime import Deadline
-from workers.schemas.asset import Asset, AssetKind
+from workers.qa.pixels import MediaLoad, resolve_project_file
+from workers.qa.scores import content_blocked
+from workers.schemas.asset import Asset, AssetKind, Candidate
 
 NODE = "n15_compose"
 ASSET_NS = uuid.UUID("6f1c0a1e-7b2d-4e5a-9c31-0c0a6e6e0715")
@@ -193,12 +195,17 @@ def _timeline(
         frames = max(1, int(round(duration * FPS)))
         duration = frames / FPS
         gains = _gains(rgb, target)
-        plate = work / "plates" / f"{clip_id}.mp4"
-        encode_plate(plate, rgb=rgb, width=width, height=height, frames=frames, fps=FPS)
+        media = _candidate_plate(payload.videos, clip_id)
+        if media is None:
+            plate = work / "plates" / f"{clip_id}.mp4"
+            encode_plate(plate, rgb=rgb, width=width, height=height, frames=frames, fps=FPS)
+            path = str(plate)
+        else:
+            path = str(media)
         clips.append(
             VideoClip(
                 clip_id=clip_id,
-                path=str(plate),
+                path=path,
                 duration_s=duration,
                 start_s=round(cursor, 3),
                 transition_out=transition,
@@ -339,6 +346,23 @@ def _overlays(
     }
     items.sort(key=lambda item: order.get(item.kind, 9))
     return items
+
+
+def _candidate_plate(videos: list[Candidate], shot_id: str) -> Path | None:
+    """Use a selected video only when it is a real file and not a safety fail."""
+
+    if shot_id in {"intro", "outro"}:
+        return None
+    for item in videos:
+        if item.shot_id != shot_id or not item.selected or content_blocked(item.qa):
+            continue
+        located = resolve_project_file(Path(item.uri))
+        if isinstance(located, MediaLoad) or not located.is_file():
+            continue
+        if located.suffix.lower() not in {".mp4", ".mov", ".webm"}:
+            continue
+        return located
+    return None
 
 
 def _gains(src: tuple[int, int, int], target: tuple[int, int, int]) -> tuple[float, float, float]:
