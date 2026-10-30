@@ -20,6 +20,7 @@
 | redis-py | ≥ 5.2 | MIT | 网关响应缓存 |
 | jsonschema | ≥ 4.23 | MIT | 字典形式 JSON Schema 校验 |
 | pypdf | ≥ 5.1 | BSD-3-Clause | N1 从 PDF / 画册抽取文本 |
+| Pillow | ≥ 10.4 | HPND | N13–N15 把字幕、徽章、CTA、Logo 画成 PNG。画面文字不交给图像模型 |
 | fakeredis | ≥ 2.26 | MIT | 缓存单元测试（开发依赖） |
 | Ruff | ≥ 0.8 | MIT | Python lint / format |
 | SQLAlchemy | ≥ 2.0.36 | MIT | 迁移与数据库类型 |
@@ -33,7 +34,8 @@
 | Temporal server | `temporalio/auto-setup:1.29.1` | MIT | 工作流 |
 | Temporal UI | `temporalio/ui:2.34.0` | MIT | 工作流界面 |
 | Temporal development-sql dynamic config | 与 `temporalio/docker-compose` 中同名文件一致 | MIT | 让 auto-setup 在 Postgres 上启动 |
-| FFmpeg | 系统包（开发机 / CI `apt install ffmpeg`；编码器 libx264） | LGPL / GPL（取决于发行版编译选项；libx264 为 GPL） | mock 视频样例编码；T04 验收时解码 PNG / MP4 / WAV；N10 用 ffprobe 量时长并用 libx264 裁到镜头时长。未作为 Python 依赖链接进进程 |
+| FFmpeg | 系统包（开发机 / CI `apt install ffmpeg`；编码器 libx264） | LGPL / GPL（取决于发行版编译选项；libx264 为 GPL） | mock 视频样例编码；T04 验收时解码 PNG / MP4 / WAV；N10 用 ffprobe 量时长并用 libx264 裁到镜头时长；N15 用 libx264 合成 H.264，并用 lut3d / overlay 做调色和后期叠字。未作为 Python 依赖链接进进程 |
+| Noto Sans CJK SC（思源黑体简体） | Sans 2.004，`templates/packaging/fonts/NotoSansSC-Regular.otf` 与 `NotoSansSC-Bold.otf` | SIL OFL 1.1（同目录 `LICENSE.txt`） | N13–N15 字幕、徽章、CTA、AI 标识。版权归 Adobe 与 Noto CJK 项目。不改字体名 |
 
 尚未引入、因此未登记：React Flow（`@xyflow/react`）、shadcn/ui、Remotion、厂商模型 SDK、boto3、MinIO Python SDK。对象存储走自写的 SigV4 HTTP 客户端。
 

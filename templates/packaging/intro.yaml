@@ -1,0 +1,6 @@
+# Three logo openings. Each one is at most 2 seconds. Short videos skip the opening.
+max_s: 2.0
+default_s: 1.6
+templates: [fade, rise, scale]
+short_video_s: 15
+short_platforms: [抖音, douyin, tiktok, 视频号]

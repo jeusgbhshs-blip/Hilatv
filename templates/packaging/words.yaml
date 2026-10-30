@@ -1,0 +1,8 @@
+# Words the line breaker must not split. Brand and product names are added at runtime.
+words:
+  - 柱塞泵
+  - 高压
+  - 兆帕
+  - 工厂
+  - 产线
+  - 认证
