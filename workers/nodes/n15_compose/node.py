@@ -40,8 +40,10 @@ from workers.nodes.n15_compose.schema import (
     VideoClip,
 )
 from workers.nodes.runtime import Deadline
+from workers.qa.pixels import MediaLoad, resolve_project_file
+from workers.qa.scores import content_blocked
 from workers.qa.settings import project_dir
-from workers.schemas.asset import Asset, AssetKind
+from workers.schemas.asset import Asset, AssetKind, Candidate
 
 NODE = "n15_compose"
 ASSET_NS = uuid.UUID("6f1c0a1e-7b2d-4e5a-9c31-0c0a6e6e0715")
@@ -230,14 +232,21 @@ def _timeline(
         duration = frames / FPS
         gains = _gains(rgb, target)
         plate = work / "plates" / f"{clip_id}.mp4"
+        if source is not None:
+            block = _blocked_plate(payload.videos, source)
+            if block == "sensitive":
+                raise QAError("内容安全硬伤不能进入成片", retryable=False)
+            if block == "unreviewed":
+                raise QAError("未经视觉评审的镜头不能进入成片", retryable=False)
         if source is None:
             encode_plate(plate, rgb=rgb, width=width, height=height, frames=frames, fps=FPS)
         else:
             _fit_clip(source, plate, width=width, height=height, frames=frames)
+        path = str(plate)
         clips.append(
             VideoClip(
                 clip_id=clip_id,
-                path=str(plate),
+                path=path,
                 duration_s=duration,
                 start_s=round(cursor, 3),
                 transition_out=transition,
@@ -506,6 +515,30 @@ def _overlays(
     items = _with_locked_label(items, work, width, height, intro_s, payload)
     items.sort(key=lambda item: order.get(item.kind, 9))
     return items
+
+
+def _blocked_plate(videos: list[Candidate], source: Path) -> str | None:
+    """Refuse a plate that is a candidate without a real visual pass.
+
+    ``judge_unavailable``, ``not_reviewed``, and mock judges are unreviewed.
+    A content-safety hard fail is reported separately. A file that is not one
+    of these candidates (a released fallback clip, a color plate) is unchanged.
+    """
+
+    from workers.expert.gates import qa_passed_flag
+
+    found: str | None = None
+    for item in videos:
+        located = resolve_project_file(Path(item.uri))
+        if isinstance(located, MediaLoad) or not located.is_file():
+            continue
+        if located.resolve() != source.resolve():
+            continue
+        if content_blocked(item.qa):
+            return "sensitive"
+        if not qa_passed_flag(item.qa):
+            found = "unreviewed"
+    return found
 
 
 def _with_locked_label(

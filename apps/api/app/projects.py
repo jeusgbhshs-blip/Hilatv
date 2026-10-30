@@ -16,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.logging import log_event
 from gateway import get_gateway
+from workers.expert.charge import BudgetExhausted, reserve
 from workers.nodes.n01_brief.schema import AttachmentRef
 from workers.nodes.n18_revision.concept_gate import classify_concept, read_project_concept
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
@@ -24,6 +25,7 @@ from workers.workflow.revise import RevisionError, revise_project
 from workers.workflow.service import release_film, start_film
 from workers.workflow.store import (
     load_checkpoint,
+    locked_project,
     project_path,
     project_root,
     read_events,
@@ -355,20 +357,30 @@ def project_status(project_id: str) -> dict[str, Any]:
 
 @router.post("/v1/projects/{project_id}/rerun")
 async def rerun_project(project_id: str, body: RerunProject) -> JSONResponse:
-    snapshot = _snapshot_or_404(project_id)
     if body.node not in PIPELINE:
         raise HTTPException(status_code=400, detail="未知节点")
-    if snapshot.get("status") == "running":
-        raise HTTPException(status_code=409, detail="项目仍在运行")
-    checkpoint = None
-    if body.node != PIPELINE[0]:
-        checkpoint = load_checkpoint(project_id)
-        index = PIPELINE.index(body.node)
-        missing = [
-            name for name in PIPELINE[:index] if name not in (checkpoint.get("completed") or [])
-        ]
-        if missing:
-            raise HTTPException(status_code=409, detail=f"缺少上游结果：{missing[0]}")
+    _snapshot_or_404(project_id)
+    with locked_project(project_id):
+        snapshot = _snapshot_or_404(project_id)
+        if snapshot.get("status") == "running":
+            raise HTTPException(status_code=409, detail="项目仍在运行")
+        checkpoint = None
+        if body.node != PIPELINE[0]:
+            checkpoint = load_checkpoint(project_id)
+            index = PIPELINE.index(body.node)
+            missing = [
+                name for name in PIPELINE[:index] if name not in (checkpoint.get("completed") or [])
+            ]
+            if missing:
+                raise HTTPException(status_code=409, detail=f"缺少上游结果：{missing[0]}")
+        script = checkpoint.get("script") if isinstance(checkpoint, dict) else None
+        shots = None
+        if isinstance(script, dict) and isinstance(script.get("shots"), list):
+            shots = [item for item in script["shots"] if isinstance(item, dict)]
+        try:
+            reserve(project_id, body.node, shots=shots)
+        except BudgetExhausted as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
     workflow_id = await start_film(
         project_id=project_id,
         sentence=str(snapshot.get("sentence") or ""),

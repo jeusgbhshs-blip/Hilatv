@@ -11,6 +11,7 @@ import json
 import os
 import re
 import tempfile
+import threading
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -21,6 +22,9 @@ from workers.logging import log_event
 from workers.workflow.contract import PIPELINE
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,79}$")
+# flock is not reentrant. The thread that owns the project lock may call
+# update_snapshot / save_node / publish without deadlocking on a second fd.
+_held = threading.local()
 
 
 def valid_project_id(project_id: str) -> bool:
@@ -51,13 +55,33 @@ def locked_project(project_id: str) -> Iterator[Path]:
         yield directory
 
 
+def _depths() -> dict[str, int]:
+    depths = getattr(_held, "depths", None)
+    if depths is None:
+        depths = {}
+        _held.depths = depths
+    return depths
+
+
 @contextmanager
 def _lock(project_id: str) -> Iterator[Path]:
+    depths = _depths()
+    if depths.get(project_id, 0) > 0:
+        depths[project_id] += 1
+        try:
+            yield project_path(project_id, create=True)
+        finally:
+            depths[project_id] -= 1
+        return
     directory = project_path(project_id, create=True)
     handle = (directory / ".lock").open("a+")
     try:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        yield directory
+        depths[project_id] = 1
+        try:
+            yield directory
+        finally:
+            depths[project_id] = 0
     finally:
         fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
         handle.close()

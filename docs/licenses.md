@@ -46,8 +46,9 @@
 | lucide-react | 0.x | ISC | 输入页上传图标 |
 | shadcn/ui | 组件源码在 `apps/web/components/ui` | MIT | 按钮、输入、文本域、标签、卡片、徽章。不是运行时依赖 |
 | Playwright | 1.x（`@playwright/test`） | Apache-2.0 | T11 桌面与手机视口 E2E |
+| @xyflow/react | 12.8.6 | MIT | T19 专家模式节点画布。界面是自写节点，不用第三方画布素材 |
 
-尚未引入、因此未登记：React Flow（`@xyflow/react`）、Remotion、厂商模型 SDK、boto3、MinIO Python SDK、librosa。对象存储走自写的 SigV4 HTTP 客户端。
+尚未引入、因此未登记：Remotion、厂商模型 SDK、boto3、MinIO Python SDK、librosa。对象存储走自写的 SigV4 HTTP 客户端。
 
 T21 的测试音乐和音效由节点代码合成（正弦底乐、节拍点击、短噪声），不新增 Python 依赖，也不把第三方录音放进仓库。许可证在每段上记为 `CC0-1.0`，来源是 `hilatv-test-library` / `hilatv-test-sfx`。响度和压低量用已经登记的 FFmpeg（`ebur128`、`volumedetect`）在渲染结果上测量。
 

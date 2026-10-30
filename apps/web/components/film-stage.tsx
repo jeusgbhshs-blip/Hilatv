@@ -346,6 +346,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
         <Button type="button" size="lg" onClick={() => void downloadFilm()}>
           下载成片
         </Button>
+        <Button asChild variant="outline" size="lg">
+          <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
+        </Button>
         {downloadError ? (
           <p role="alert" className="text-sm text-destructive">
             {downloadError}

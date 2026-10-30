@@ -159,6 +159,17 @@ def object_stores(gateway: Any) -> list[Any]:
     return found
 
 
+def with_prompt_suffix(prompt: str, suffix: str) -> str:
+    """Append an expert edit and keep the no-text constraint at the end."""
+
+    extra = " ".join(suffix.split())
+    if not extra:
+        return prompt
+    from gateway.constants import NO_RENDERED_TEXT
+
+    return f"{prompt}\n{extra}\n{NO_RENDERED_TEXT}"
+
+
 def read_bytes(gateway: Any, uri: str) -> tuple[Any, bytes] | None:
     for store in object_stores(gateway):
         try:
