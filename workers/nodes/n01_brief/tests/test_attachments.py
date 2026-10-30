@@ -1,4 +1,4 @@
-from workers.nodes.n01_brief.accept import start_asset_server
+from workers.nodes.n01_brief.accept import fixture_fetch
 from workers.nodes.n01_brief.node import run
 from workers.nodes.n01_brief.qa import check
 
@@ -69,22 +69,19 @@ def test_unknown_image_asks_the_gateway(gateway) -> None:
 
 
 def test_url_brochure_fetches_text_and_images(gateway) -> None:
-    server, port = start_asset_server()
-    try:
+    with fixture_fetch():
         result = run(
             {
                 "project_id": "url-1",
                 "payload": {
                     "raw_input": "参考这个网页做外贸英文产品视频，30秒，YouTube",
                     "attachments": [
-                        {"kind": "url", "uri": f"http://127.0.0.1:{port}/brochure.html"}
+                        {"kind": "url", "uri": "http://assets.hilatv.test/brochure.html"}
                     ],
                 },
             },
             gateway=gateway,
         )
-    finally:
-        server.shutdown()
     brief = check(result)
     page = result.payload["attachments"][0]
     assert "高压柱塞泵" in page["text_excerpt"]

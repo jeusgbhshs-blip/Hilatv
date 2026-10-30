@@ -1,4 +1,4 @@
-.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 accept-t04 accept-t05 accept-t06 accept-t07 accept-t08 accept-t09 accept-t10 accept-t18 install api
+.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 accept-t04 accept-t05 accept-t06 accept-t07 accept-t08 accept-t09 accept-t10 accept-t11 accept-t12 accept-t18 accept-t25 install api
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ENV_FILE := $(ROOT)/.env
@@ -67,8 +67,18 @@ accept-t09:
 accept-t10:
 	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t10.sh
 
+accept-t11:
+	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t11.sh
+
+accept-t12:
+	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t12.sh
+
 accept-t18:
 	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t18.sh
+
+accept-t25:
+	$(PYTHON) -m templates.validate
+	$(PYTHON) -m pytest tests/test_t25_templates.py workers/nodes/n01_brief/tests/test_industries.py workers/nodes/n05_storyboard/tests/test_presets.py -q --tb=short
 
 api:
 	$(PYTHON) -m uvicorn app.main:app --app-dir $(ROOT)/apps/api --host 0.0.0.0 --port 8000

@@ -1,5 +1,6 @@
 industry: education
 label: 教育培训
+manual_review: false
 narrative:
   - 问题
   - 解法
@@ -34,6 +35,7 @@ forbidden:
   - 画面内生成的文字、Logo、价格或电话
 requirements:
   - 信息清晰
+  - 数字人讲解可选
   - 讲师出镜需授权
 video_types:
   - id: course_promo
@@ -59,3 +61,39 @@ keywords:
   - {text: 讲师, weight: 4}
   - {text: 学员, weight: 3}
 clarify_question: 这条片是课程招生，还是知识讲解？
+shot_plan:
+  - {beat: 问题, preset: demo_push}
+  - {beat: 解法, preset: gentle_arc}
+  - {beat: 课程亮点, preset: locked_off}
+  - {beat: 讲师, preset: lectern_hold}
+  - {beat: 报名, preset: locked_off}
+narrative_structures:
+  - id: spec_default
+    label: 课程宣传主结构
+    beats:
+      - 问题
+      - 解法
+      - 课程亮点
+      - 讲师
+      - 报名
+  - id: explainer_arc
+    label: 知识短片
+    beats:
+      - 问题
+      - 演示
+      - 一个要点
+      - 延伸
+  - id: teacher_trust
+    label: 讲师信任
+    beats:
+      - 讲师
+      - 学员场景
+      - 课程亮点
+      - 报名
+  - id: presenter_optional
+    label: 数字人讲解
+    beats:
+      - 问题
+      - 讲解
+      - 课程亮点
+      - 报名

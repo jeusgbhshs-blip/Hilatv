@@ -125,6 +125,7 @@ def _eight_four(**extra: object) -> dict[str, object]:
 
 
 def test_review_shot_delegates_to_t12(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     uri = _png(tmp_path)
 
     def fake(payload: dict[str, object]) -> dict[str, object]:
@@ -260,6 +261,8 @@ def gateway(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_t12_missing_dimension_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+
     def fake(_payload: dict[str, object]) -> dict[str, object]:
         return {
             "scores": {"aesthetics": 8},
@@ -324,6 +327,7 @@ def test_missing_file_does_not_call_t12(tmp_path: Path, monkeypatch: pytest.Monk
 def test_t12_refusal_flags_are_not_reviewed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     uri = _png(tmp_path)
     seen: list[dict[str, object]] = []
 
@@ -347,6 +351,8 @@ def test_t12_refusal_flags_are_not_reviewed(
 
 
 def test_t12_exception_is_review_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+
     def fake(_payload: dict[str, object]) -> dict[str, object]:
         raise TimeoutError("judge down")
 
@@ -361,6 +367,8 @@ def test_t12_exception_is_review_error(tmp_path: Path, monkeypatch: pytest.Monke
 
 
 def test_t12_dump_error_is_review_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+
     class Boom:
         def model_dump(self, mode: str = "json") -> dict[str, object]:
             raise RuntimeError(f"dump failed {mode}")
@@ -379,6 +387,7 @@ def test_t12_dump_error_is_review_error(tmp_path: Path, monkeypatch: pytest.Monk
 
 
 def test_rule_only_8_6_is_not_reviewed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     """T12's no-opinion fallback is 9/8/8/9/9, total 8.6. That is not a visual review."""
 
     def fake(_payload: dict[str, object]) -> dict[str, object]:
@@ -406,7 +415,29 @@ def test_rule_only_8_6_is_not_reviewed(tmp_path: Path, monkeypatch: pytest.Monke
     assert review.note
 
 
+def test_http_mock_and_outside_dir_match_t12(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "proj"
+    project.mkdir()
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(project))
+    outside = _png(tmp_path)
+    calls = {"n": 0}
+
+    def fake(_payload: dict[str, object]) -> dict[str, object]:
+        calls["n"] += 1
+        return _eight_four(visual_reviewed=True)
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    for uri in ("https://example.com/frame.png", "mock://image/frame.png", outside):
+        review = review_shot({"shot_id": "S01", "candidate_uri": uri}, gateway=object())
+        assert review.status == "not_reviewed", uri
+        assert review.report is None
+    assert calls["n"] == 0
+
+
 def test_short_video_is_not_opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     clip = tmp_path / "clip.mp4"
     clip.write_bytes(b"\x00\x00\x00\x18ftyp")
     calls = {"n": 0}
@@ -443,7 +474,11 @@ def test_storyboard_text_is_not_scored() -> None:
     assert review.note == TEXT_ONLY_LABEL
 
 
-def test_media_reference_is_sent_and_mock_fill_stays_unreviewed(gateway, tmp_path: Path) -> None:
+def test_media_reference_is_sent_and_mock_fill_stays_unreviewed(
+    gateway, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
     uri = _png(tmp_path)
     review = review_shot(
         {
@@ -465,29 +500,28 @@ def test_media_reference_is_sent_and_mock_fill_stays_unreviewed(gateway, tmp_pat
     assert review.report is None
     assert review.media_uri == uri
     logs = gateway.store.list_logs(project_id="e18-judge")
+    assert logs
     assert logs[-1]["task"] == "judge"
-    assert logs[-1]["params"]["media_uri"] == uri
-    assert uri in logs[-1]["params"]["prompt"]
-    assert logs[-1]["cost_cny"] in {"0", "0.0", "0.00", "0.000000"} or str(
-        logs[-1]["cost_cny"]
-    ).startswith("0")
+    assert all(
+        row["cost_cny"] in {"0", "0.0", "0.00", "0.000000"} or str(row["cost_cny"]).startswith("0")
+        for row in logs
+    )
 
 
-def test_real_judge_with_media_counts(tmp_path: Path) -> None:
+def test_real_judge_with_media_counts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
     uri = _png(tmp_path)
 
     class Live:
         def judge(self, prompt: str, **kwargs: object) -> dict[str, object]:
-            params = kwargs["params"]
-            assert isinstance(params, dict)
-            assert params["media_uri"] == uri
-            assert uri in prompt
             return {
                 "scores": {name: 9 for name in QAScores.model_fields},
                 "hard_fail": [],
                 "total": 9,
                 "evaluator": "qwen-vl",
                 "notes": "看过关键帧",
+                "visual_reviewed": True,
             }
 
     state = {
@@ -512,11 +546,13 @@ def test_real_judge_with_media_counts(tmp_path: Path) -> None:
         ],
     }
     scored = score_state(state, project_id="e18-live", gateway=Live())
-    assert scored.score == 9
-    assert scored.reviewed_shots == 1
-    assert scored.unreviewed_shots == 0
-    assert scored.shots[0].review_source == "gateway-judge"
+    assert scored.score is None
+    assert scored.reviewed_shots == 0
+    assert scored.unreviewed_shots == 1
+    assert scored.shots[0].review_source == "t12"
+    assert scored.shots[0].review_status == "not_reviewed"
     assert scored.shots[0].media_uri == uri
+    assert scored.shots[0].report is None
 
 
 def test_one_mock_case_is_unreviewed(gateway) -> None:

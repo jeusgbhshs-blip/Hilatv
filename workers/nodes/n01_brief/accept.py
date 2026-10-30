@@ -9,25 +9,25 @@ from __future__ import annotations
 
 import json
 import os
-import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from decimal import Decimal
-from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+import httpx
 
 from workers.nodes.n01_brief.node import run
 from workers.nodes.n01_brief.platforms import aspects_match
 from workers.nodes.n01_brief.prompts import NO_DRAWN_TEXT
+from workers.nodes.n01_brief.ssrf import fetch_hooks
 from workers.schemas.brief import Brief
 
 FIXTURES = Path(__file__).resolve().parent / "tests" / "fixtures"
-PORT_TOKEN = "{{port}}"
-
-
-class _QuietHandler(SimpleHTTPRequestHandler):
-    def log_message(self, format: str, *args: object) -> None:
-        return
+# Reserved `.test` name. The suite never dials this address; the mock transport
+# reads the fixture files after the SSRF guard has accepted the pinned IP.
+FIXTURE_FETCH_HOST = "assets.hilatv.test"
+FIXTURE_FETCH_IP = "93.184.216.34"
 
 
 def main() -> int:
@@ -59,12 +59,10 @@ def live_enabled() -> bool:
 
 
 def run_suite(gateway: Any, *, strict: bool = True) -> list[str]:
-    server, port = start_asset_server()
     failures: list[str] = []
-    try:
+    with fixture_fetch():
         for path in sorted(FIXTURES.glob("*.json")):
             case = json.loads(path.read_text(encoding="utf-8"))
-            case = _rewrite(case, port)
             case_id = str(case.get("id") or path.stem)
             try:
                 result = run(case["request"], gateway=gateway)
@@ -85,8 +83,6 @@ def run_suite(gateway: Any, *, strict: bool = True) -> list[str]:
                     f"video_type={brief.video_type} "
                     f"platforms={','.join(brief.platform)}"
                 )
-    finally:
-        server.shutdown()
     return failures
 
 
@@ -151,12 +147,36 @@ def evaluate(
     return errors
 
 
-def start_asset_server() -> tuple[ThreadingHTTPServer, int]:
+@contextmanager
+def fixture_fetch() -> Iterator[None]:
+    """Serve N1 fixture pages without binding a loopback socket."""
+
     assets = FIXTURES / "assets"
-    handler = partial(_QuietHandler, directory=str(assets))
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    return server, int(server.server_address[1])
+    root = assets.resolve()
+
+    def resolver(host: str, port: int) -> list[str]:
+        if host == FIXTURE_FETCH_HOST:
+            return [FIXTURE_FETCH_IP]
+        raise OSError(f"fixture host is not mapped: {host}")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host != FIXTURE_FETCH_IP:
+            return httpx.Response(421)
+        relative = request.url.path.lstrip("/")
+        candidate = (assets / relative).resolve()
+        if candidate != root and root not in candidate.parents:
+            return httpx.Response(404)
+        if not candidate.is_file():
+            return httpx.Response(404)
+        media = {
+            ".html": "text/html; charset=utf-8",
+            ".png": "image/png",
+            ".pdf": "application/pdf",
+        }.get(candidate.suffix.lower(), "application/octet-stream")
+        return httpx.Response(200, content=candidate.read_bytes(), headers={"content-type": media})
+
+    with fetch_hooks(resolver=resolver, transport=httpx.MockTransport(handler)):
+        yield
 
 
 def _image_classes(attachments: list[dict[str, Any]]) -> list[str]:
@@ -182,16 +202,6 @@ def _eq(
     key = field or name
     if key in expect and actual != expect[key]:
         errors.append(f"{name}={actual!r}")
-
-
-def _rewrite(value: Any, port: int) -> Any:
-    if isinstance(value, str):
-        return value.replace(PORT_TOKEN, str(port))
-    if isinstance(value, list):
-        return [_rewrite(item, port) for item in value]
-    if isinstance(value, dict):
-        return {key: _rewrite(item, port) for key, item in value.items()}
-    return value
 
 
 def _snapshot(brief: Brief) -> str:

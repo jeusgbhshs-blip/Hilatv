@@ -10,15 +10,12 @@ Storyboard text alone is not a score.
 from __future__ import annotations
 
 import importlib
-import io
-import os
-import tempfile
+import inspect
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
-from PIL import Image, UnidentifiedImageError
 from pydantic import ValidationError
 
 from workers.schemas.asset import QAReport
@@ -46,8 +43,7 @@ _ALIASES = {
 TEXT_ONLY_LABEL = "只评了文字，不计入质量结论"
 UNREVIEWED_LABEL = "未评审"
 _NOT_REVIEWED_FAILS = frozenset({"not_reviewed", "judge_unavailable", "unreviewed"})
-_VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".webm", ".mkv", ".m4v"})
-_MIN_VIDEO_BYTES = 1024
+_VIDEO_SUFFIXES = (".mp4", ".mov", ".webm")
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _ENV = Environment(
@@ -84,6 +80,16 @@ def t12_review_shot() -> Any | None:
     return None
 
 
+def _t12_kwargs(fn: Any, gateway: Any) -> dict[str, Any]:
+    try:
+        parameters = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return {}
+    if "gateway" in parameters:
+        return {"gateway": gateway}
+    return {}
+
+
 def review_port() -> str:
     return "t12" if t12_review_shot() is not None else "gateway-judge"
 
@@ -108,7 +114,7 @@ def review_shot(payload: dict[str, Any], *, gateway: Any) -> ShotReview:
     fn = t12_review_shot()
     if fn is not None:
         try:
-            raw_obj = fn(dict(payload))
+            raw_obj = fn(dict(payload), **_t12_kwargs(fn, gateway))
             raw = _as_dict(raw_obj)
         except Exception as exc:
             return _review_error("t12", media_uri, exc)
@@ -202,6 +208,9 @@ def coerce_judge(raw: dict[str, Any]) -> QAReport:
     notes = raw.get("notes")
     if not isinstance(notes, str):
         raise JudgeInvalid("judge payload is missing notes")
+    judges_used = raw.get("judges_used")
+    if isinstance(judges_used, bool) or not isinstance(judges_used, int):
+        judges_used = 0
     try:
         return QAReport.model_validate(
             {
@@ -210,6 +219,9 @@ def coerce_judge(raw: dict[str, Any]) -> QAReport:
                 "total": total,
                 "evaluator": evaluator.strip(),
                 "notes": notes,
+                "visual_reviewed": raw.get("visual_reviewed") is True,
+                "judges_used": judges_used,
+                "degraded": raw.get("degraded") is True,
             }
         )
     except ValidationError as exc:
@@ -217,10 +229,11 @@ def coerce_judge(raw: dict[str, Any]) -> QAReport:
 
 
 def readable_media(payload: dict[str, Any], gateway: Any) -> str:
-    """First keyframe or video reference that exists and opens, else ``""``."""
+    """First reference T12 can open. ``gateway`` is unused; opening is local."""
 
+    del gateway
     for uri in _media_uris(payload):
-        if _opens(uri, gateway):
+        if _opens(uri):
             return uri
     return ""
 
@@ -240,119 +253,26 @@ def _media_uris(payload: dict[str, Any]) -> list[str]:
     return found
 
 
-def _opens(uri: str, gateway: Any) -> bool:
-    if not uri or uri.startswith("mock://"):
+def _opens(uri: str) -> bool:
+    """Same gate as T12: no http(s), no mock, and the file stays in the project dir."""
+
+    from workers.qa.pixels import MediaLoad, load_image, resolve_project_file
+
+    text = uri.strip()
+    if not text or text.startswith("mock://") or text.startswith(("http://", "https://")):
         return False
-    if uri.startswith("data:image"):
-        return _image_opens(_data_image_bytes(uri))
-    if uri.startswith(("oss://", "s3://")):
-        return _bytes_open(uri, _store_bytes(gateway, uri))
-    path = Path(uri[7:] if uri.startswith("file://") else uri)
-    if not path.is_file():
-        return False
-    try:
-        if path.suffix.lower() in _VIDEO_SUFFIXES:
-            return _video_file_opens(path)
-        data = path.read_bytes()
-    except OSError:
-        return False
-    return _image_opens(data)
+    if text.lower().endswith(_VIDEO_SUFFIXES):
+        from workers.qa.frames import sample_frames
 
-
-def _store_bytes(gateway: Any, uri: str) -> bytes | None:
-    store = getattr(gateway, "store", None)
-    getter = getattr(store, "get", None)
-    if not callable(getter):
-        return None
-    try:
-        data = getter(uri)
-    except Exception:
-        return None
-    if isinstance(data, bytes) and data:
-        return data
-    return None
-
-
-def _data_image_bytes(uri: str) -> bytes | None:
-    import base64
-    import binascii
-
-    raw = uri.split(",", 1)[-1]
-    try:
-        return base64.b64decode(raw)
-    except (binascii.Error, ValueError):
-        return None
-
-
-def _bytes_open(uri: str, data: bytes | None) -> bool:
-    if not data:
-        return False
-    suffix = Path(uri.split("?", 1)[0]).suffix.lower()
-    if suffix in _VIDEO_SUFFIXES or _is_isom(data[:32]):
-        return _video_bytes_open(data, suffix or ".mp4")
-    return _image_opens(data)
-
-
-def _image_opens(data: bytes | None) -> bool:
-    if not data:
-        return False
-    try:
-        with Image.open(io.BytesIO(data)) as image:
-            image.load()
-    except (UnidentifiedImageError, OSError, ValueError):
-        return False
-    return True
-
-
-def _video_file_opens(path: Path) -> bool:
-    try:
-        size = path.stat().st_size
-        with path.open("rb") as handle:
-            header = handle.read(32)
-    except OSError:
-        return False
-    if size < _MIN_VIDEO_BYTES or not _container_header(header, path.suffix.lower()):
-        return False
-    return _probe_opens(path)
-
-
-def _video_bytes_open(data: bytes, suffix: str) -> bool:
-    if len(data) < _MIN_VIDEO_BYTES or not _container_header(data[:32], suffix):
-        return False
-    ending = suffix if suffix in _VIDEO_SUFFIXES else ".mp4"
-    fd, name = tempfile.mkstemp(suffix=ending)
-    os_path = Path(name)
-    try:
-        os.write(fd, data)
-        os.close(fd)
-        fd = -1
-        return _probe_opens(os_path)
-    except OSError:
-        return False
-    finally:
-        if fd >= 0:
-            os.close(fd)
-        os_path.unlink(missing_ok=True)
-
-
-def _container_header(header: bytes, suffix: str) -> bool:
-    if suffix in {".webm", ".mkv"}:
-        return header.startswith(b"\x1a\x45\xdf\xa3")
-    return _is_isom(header)
-
-
-def _is_isom(header: bytes) -> bool:
-    return len(header) >= 12 and header[4:8] == b"ftyp"
-
-
-def _probe_opens(path: Path) -> bool:
-    try:
-        from workers.media.ffmpeg import probe
-
-        info = probe(path)
-    except Exception:
-        return False
-    return bool(info.get("width")) and bool(info.get("height"))
+        path_text = text[7:] if text.startswith("file://") else text
+        located = resolve_project_file(Path(path_text))
+        if isinstance(located, MediaLoad) or not located.is_file():
+            return False
+        try:
+            return bool(sample_frames(located))
+        except Exception:
+            return False
+    return load_image(text).ok
 
 
 def _as_dict(raw: Any) -> dict[str, Any] | None:
