@@ -22,10 +22,11 @@
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
-| T17 | 多比例、多语种导出 | T06, T09, T10 | 🔵 | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 重构图、中英配音字幕、版本 API，成片页可切换比例、语种、时长。假设见下方 |
+| T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
+| T21 | N12 音乐与音效 | T07, T09, T10 | 🔵 | cursor/t21-n12-music-2ceb | 验收中。无新迁移。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
 
@@ -42,6 +43,7 @@
 | 豆包/火山 ASR Key | T07 | mock |
 | VLM 评审 Key | T12 | mock |
 | 内容安全服务 Key | T20 | mock |
+| 音乐 Key（Mureka / Suno，须先确认商用授权） | T21 | mock。未购买曲库 |
 | 预算上限 `HILATV_BUDGET_CNY` / `HILATV_DAILY_BUDGET_CNY` | 网关 | 未设置（= 不允许 live） |
 
 ## 告警（预算超限等，由网关自动追加）
@@ -64,9 +66,21 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：T09（PR #29）、T10（PR #30）、T11（9c7e524）、T25（66306cc）、SEC-01（d845705）、T12（7a7725f）。都无新迁移
-- 正在做什么：T17 多比例、多语种导出和成片页版本切换。合并前补上：缺质检字段不算通过，deliveries.json 先 fsync，mock 听写不计入核对，并发上限按进程。无 Key，`make accept-t17` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络
+- 合并了哪些：T09（PR #29）、T10（PR #30）、T11（9c7e524）、T25（66306cc）、SEC-01（d845705）、T12（7a7725f）、T17（a44d931）。都无新迁移
+- 正在做什么：T21 N12 音乐与音效。mock 曲库和音效都是仓库里合成的测试音，不买曲、不调 Mureka/Suno。N15 只多了一条音轨输入。无 Key，`HILATV_LIVE` 保持关闭。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权（Mureka/Suno 或正版曲库）要另批，未批之前保持 mock。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测。
+
+## T21 假设
+
+- 旁白目标是 -16 LUFS，成片目标是 -14 LUFS。SPEC 没有写容差。成片按 -14 ± 1 LU 验收，旁白同样按 ± 1 LU 当作「附近」。这是假设，不是 SPEC 里的数字。
+- 压低量取区间中点 11 dB。测量的是旁白区段里、躲开点击之后的底乐：未压低的音乐和压低后的音乐用 ffmpeg `volumedetect` 的 mean volume 相减。节拍误差用渲染出来的音乐文件重新检测，不拿节点自己记下的节拍表跟切点比。
+- 响度用 ffmpeg `ebur128` 的 Integrated loudness。旁白和成片分开测。成片的电平只靠抬或压背景乐，不改已经归一到 -16 的旁白，这样压低比例不会被整轨增益冲掉。
+- 无 Key 时音乐走 gateway `music`，路由仍是 mock。Mock 按情绪从仓库内的测试曲库挑一条，节拍是代码合成的点击加底乐，许可证记 `CC0-1.0`，来源是 `hilatv-test-library/...`。音效同样是代码合成的短声，来源是 `hilatv-test-sfx/...`。没有第三方录音，也没有把音频文件放进仓库。
+- 切点对齐会把每镜时长抬到整拍，不短于原来的镜头和旁白。对齐后的脚本放在 N12 的输出里。T10 主链路不拿它去改 N13/N14 已经算好的字幕和包装，N15 的画面时长仍是 N6 的时长。音轨从镜头起点铺上，多出来的尾巴由成片时长裁掉。画面切点和节拍对齐留到以后字幕、包装和合成共用一条时间轴的时候。验收量的是 N12 自己渲染的音乐和它给出的切点。
+- T20 还没在 main 上。授权记录定义在 `workers/nodes/n12_music/schema.py` 的 `LicenseRecord` / `LicensingSummary`。字段是 `source` 和 `license`。T20 以后应原样收进成片授权说明。任一音乐或音效缺来源或缺许可证时，N12 直接失败，不交出音轨；N15 收到音轨或授权行却缺这两项时也不合成。
+- N12 与 N13、N14 并行，都进 N15。N15 只增加可选的 `audio_track` 和 `licenses`。三条导出（成片、无字幕、无配音）的滤镜结构没改。没有音轨时行为和 T09 一样。无配音版仍然去掉全部音轨。
+- 不接用户上传音乐做 MV。不新增 Mureka/Suno adapter，`.env.example` 里这两个 Key 留空。不新增 Python 依赖，也不新增迁移。Alembic head 仍是 `t03_gateway_0002`。
+- 画面上的字、Logo、价格、电话仍只由 N13/N14/N15 叠加。音乐提示词要求无歌词、无口播、无文字。
 
 ## T17 假设
 

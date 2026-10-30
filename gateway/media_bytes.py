@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import array
 import io
 import math
 import re
@@ -226,6 +227,92 @@ def render_wav(
         handle.setframerate(sample_rate)
         handle.writeframes(bytes(pcm))
     return buf.getvalue(), stamps, duration
+
+
+MUSIC_RATE = 48000
+CLICK_SAMPLES = 144
+CLICK_PEAK = 30000
+
+
+def beat_period_s(bpm: float) -> float:
+    return 60.0 / bpm if bpm > 0 else 0.6
+
+
+def beat_sample_index(index: int, bpm: float, sample_rate: int = MUSIC_RATE) -> int:
+    """Sample where beat ``index`` falls. Index 0 is the first sample."""
+
+    return int(round(index * beat_period_s(bpm) * sample_rate))
+
+
+def render_beat_pcm(
+    *,
+    n_samples: int,
+    bpm: float,
+    pad_amp: int,
+    seed: int | None = None,
+    sample_rate: int = MUSIC_RATE,
+) -> array.array:
+    """Pad tone plus one click on each beat.
+
+    The click jumps away from the pad so a later onset detector can find it
+    without knowing the beat grid. This is synthesized here; it is not a
+    commercial recording.
+    """
+
+    total = max(1, int(n_samples))
+    amp = max(0, min(22000, int(pad_amp)))
+    freq = 82.0 + (0 if seed is None else int(seed) % 5)
+    samples = array.array("h", [0] * total)
+    for index in range(total):
+        samples[index] = int(amp * math.sin(2 * math.pi * freq * index / sample_rate))
+    if bpm <= 0:
+        return samples
+    beat = 0
+    while beat < 100000:
+        start = beat_sample_index(beat, bpm, sample_rate)
+        if start >= total:
+            break
+        previous = int(samples[start - 1]) if start else 0
+        peak = -CLICK_PEAK if previous >= 0 else CLICK_PEAK
+        for offset in range(CLICK_SAMPLES):
+            pos = start + offset
+            if pos >= total:
+                break
+            fade = 1.0 - (offset / CLICK_SAMPLES)
+            samples[pos] = int(peak * fade)
+        beat += 1
+    return samples
+
+
+def render_beat_wav(
+    *,
+    duration_s: float,
+    bpm: float,
+    pad_amp: int = 4000,
+    seed: int | None = None,
+    sample_rate: int = MUSIC_RATE,
+) -> bytes:
+    """Reference mock music file. The node rebuilds the same grid when mixing."""
+
+    frames = max(1, int(round(max(0.2, float(duration_s)) * sample_rate)))
+    pcm = render_beat_pcm(
+        n_samples=frames,
+        bpm=bpm,
+        pad_amp=pad_amp,
+        seed=seed,
+        sample_rate=sample_rate,
+    )
+    return _wav_bytes(pcm, sample_rate)
+
+
+def _wav_bytes(samples: array.array, sample_rate: int) -> bytes:
+    buf = io.BytesIO()
+    with wave.open(buf, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(samples.tobytes())
+    return buf.getvalue()
 
 
 def decode_wav(data: bytes) -> float:

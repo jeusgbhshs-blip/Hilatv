@@ -117,6 +117,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     fallback = Path("/tmp") / "hilatv-n15" / request.project_id
     work = Path(payload.work_dir) if payload.work_dir else fallback
     work.mkdir(parents=True, exist_ok=True)
+    _require_license(payload)
     intro_s = quantize_s(payload.intro_s)
     outro_s = quantize_s(payload.outro_s or float(outro_spec()["duration_s"]))
     timeline = _timeline(payload, work, width, height, intro_s, outro_s)
@@ -163,6 +164,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
             "width": width,
             "height": height,
             "fps": FPS,
+            **_license_payload(payload),
         },
     )
 
@@ -223,7 +225,39 @@ def _timeline(
     )
 
 
+def _require_license(payload: N15Input) -> None:
+    track = payload.audio_track
+    if track is None:
+        return
+    if not track.source.strip() or not track.license.strip():
+        raise QAError("audio track is missing a source or a license", retryable=False)
+    if not Path(track.path).is_file():
+        raise QAError("audio track file is missing", retryable=False)
+    for item in payload.licenses:
+        if not item.source.strip() or not item.license.strip():
+            raise QAError("a music or sound-effect license record is incomplete", retryable=False)
+
+
+def _license_payload(payload: N15Input) -> dict[str, Any]:
+    if payload.audio_track is None:
+        return {}
+    return {
+        "audio_track": payload.audio_track.model_dump(mode="json"),
+        "licenses": [item.model_dump(mode="json") for item in payload.licenses],
+    }
+
+
 def _audio(payload: N15Input, work: Path, intro_s: float) -> list[AudioClip]:
+    track = payload.audio_track
+    if track is not None:
+        start = intro_s if track.start_s is None else track.start_s
+        return [
+            AudioClip(
+                path=track.path,
+                start_s=round(start, 3),
+                duration_s=round(track.duration_s, 3),
+            )
+        ]
     takes = {item.shot_id: item for item in payload.voiceovers}
     clips: list[AudioClip] = []
     offset = intro_s
