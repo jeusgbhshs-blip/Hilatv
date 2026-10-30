@@ -23,6 +23,9 @@ from workers.qa.settings import validate_settings
 from workers.qa.vlm import cross_review
 from workers.schemas.asset import QAReport
 
+# Suffixes that are decoded as video. Eval uses the same tuple.
+VIDEO_SUFFIXES = (".mp4", ".mov", ".webm")
+
 
 def review_not_ready() -> dict[str, str]:
     return {"status": "stub", "task": "T12"}
@@ -107,7 +110,7 @@ def _media(
     uri = _text(payload.get("candidate_uri")) or _text(payload.get("uri"))
     if not uri:
         return MediaLoad(None, "missing", "no media uri")
-    if uri.lower().endswith((".mp4", ".mov", ".webm")) or uri.startswith("mock://"):
+    if uri.lower().endswith(VIDEO_SUFFIXES) or uri.startswith("mock://"):
         return _video(uri)
     return _as_still(load_image(uri))
 

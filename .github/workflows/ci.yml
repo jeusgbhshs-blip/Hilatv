@@ -67,6 +67,9 @@ jobs:
       - name: Accept T16
         run: make accept-t16
 
+      - name: Accept T18
+        run: make accept-t18
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
