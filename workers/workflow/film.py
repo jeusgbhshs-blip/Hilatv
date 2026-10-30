@@ -1,8 +1,8 @@
 """Temporal workflow for one sentence → one master MP4.
 
 The workflow only schedules activities. Media and model calls stay in the
-activities, which call the existing nodes. N13 and N14 run together; everything
-else is in order. A ``start_from`` rerun does not schedule upstream nodes.
+activities, which call the existing nodes. N12, N13, and N14 run together;
+everything else is in order. A ``start_from`` rerun does not schedule upstream nodes.
 """
 
 from __future__ import annotations
@@ -124,16 +124,10 @@ class ProduceFilm:
             patch = await self._call(node, request, state)
             state = _merge(state, patch, node)
         peers = [node for node in PEERS if PIPELINE.index(node) >= start_index]
-        if len(peers) == 2:
-            first, second = await asyncio.gather(
-                self._call(peers[0], request, state),
-                self._call(peers[1], request, state),
-            )
-            state = _merge(state, first, peers[0])
-            state = _merge(state, second, peers[1])
-        elif len(peers) == 1:
-            patch = await self._call(peers[0], request, state)
-            state = _merge(state, patch, peers[0])
+        if peers:
+            patches = await asyncio.gather(*(self._call(node, request, state) for node in peers))
+            for node, patch in zip(peers, patches, strict=True):
+                state = _merge(state, patch, node)
         if PIPELINE.index(FINAL_NODE) >= start_index:
             patch = await self._call(FINAL_NODE, request, state)
             state = _merge(state, patch, FINAL_NODE)

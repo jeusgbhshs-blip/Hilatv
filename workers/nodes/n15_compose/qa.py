@@ -59,10 +59,29 @@ def check(result: NodeResult) -> Timeline:
         raise QAError("the ending overlay is missing a logo or a CTA")
     if not any(item.kind is AssetKind.deliverable for item in _assets(result)):
         raise QAError("deliverable asset is missing")
+    _check_soundtrack(result, timeline)
     hard_cut = all(clip.transition_out.lower() in {"", "cut"} for clip in timeline.clips[:-1])
     if hard_cut and "xfade=" in filters["master"]:
         raise QAError("default transition must be a hard cut")
     return timeline
+
+
+def _check_soundtrack(result: NodeResult, timeline: Timeline) -> None:
+    raw = result.payload.get("audio_track")
+    if not raw:
+        return
+    source = str(raw.get("source") or "").strip()
+    license_name = str(raw.get("license") or "").strip()
+    if not source or not license_name:
+        raise QAError("audio track is missing a source or a license")
+    path = str(raw.get("path") or "")
+    if path not in {clip.path for clip in timeline.audio}:
+        raise QAError("audio track was not placed on the timeline")
+    for item in result.payload.get("licenses") or []:
+        if not isinstance(item, dict):
+            raise QAError("license record is not an object")
+        if not str(item.get("source") or "").strip() or not str(item.get("license") or "").strip():
+            raise QAError("a music or sound-effect license record is incomplete")
 
 
 def _assets(result: NodeResult) -> list[Asset]:

@@ -69,6 +69,7 @@ class N17Input(BaseModel):
     regenerate_vertical: bool | None = None
     verify_pixels: bool = False
     work_dir: str | None = None
+    audio_track: str | None = None
 
 
 class GeometryRecord(BaseModel):

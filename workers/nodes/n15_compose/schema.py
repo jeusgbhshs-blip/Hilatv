@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from workers.nodes.n06_voiceover.schema import ShotVoiceover
 from workers.nodes.n13_subtitle.schema import SubtitleCue
@@ -29,6 +29,26 @@ class NodeResult(BaseModel):
     attempt: int
 
 
+class AudioTrack(BaseModel):
+    """Optional soundtrack from N12. Empty source or license blocks delivery."""
+
+    path: str = Field(min_length=1)
+    start_s: float | None = None
+    duration_s: float = Field(gt=0)
+    source: str = ""
+    license: str = ""
+
+
+class TrackLicense(BaseModel):
+    """One row of N12's licensing summary. Extra keys are ignored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    source: str = ""
+    license: str = ""
+    kind: str = ""
+
+
 class N15Input(BaseModel):
     script: Script
     voiceovers: list[ShotVoiceover] = Field(default_factory=list)
@@ -41,6 +61,8 @@ class N15Input(BaseModel):
     width: int | None = Field(default=None, ge=16)
     height: int | None = Field(default=None, ge=16)
     work_dir: str | None = None
+    audio_track: AudioTrack | None = None
+    licenses: list[TrackLicense] = Field(default_factory=list)
 
 
 class VideoClip(BaseModel):
