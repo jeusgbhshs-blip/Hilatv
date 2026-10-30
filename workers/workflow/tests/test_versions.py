@@ -50,7 +50,6 @@ def test_rollback_any_version_and_fsync(tmp_path, monkeypatch) -> None:
             shot_reviews=[
                 {"shot_id": "S01", "visual_reviewed": True, "quality_pass": True},
             ],
-            regen_used=0,
         )
     assert second["quality_pass"] is False
     restore_version(project_id, first)
@@ -60,6 +59,113 @@ def test_rollback_any_version_and_fsync(tmp_path, monkeypatch) -> None:
     assert (media / "S01.bin").read_bytes() == b"shot-a2"
     again = json.loads((directory / "project.json").read_text(encoding="utf-8"))
     assert again["quality_pass"] is False
+
+
+def test_rollback_after_regenerations_leaves_the_count_unchanged(tmp_path, monkeypatch) -> None:
+    from workers.workflow.regen_count import project_regens, raise_project_regens
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    project_id = "regencap"
+    init_project(project_id, sentence="一句", status="completed")
+    directory = project_path(project_id)
+    (directory / "media").mkdir()
+    (directory / "media" / "S01.bin").write_bytes(b"a")
+    (directory / "project.json").write_text(
+        json.dumps({"project_id": project_id, "status": "completed", "regen_used": 0}) + "\n",
+        encoding="utf-8",
+    )
+    listed = list_versions(project_id)
+    first = listed["current_version_id"]
+    assert raise_project_regens(project_id, 4) == 4
+    assert raise_project_regens(project_id, 1) == 4
+    (directory / "media" / "S01.bin").write_bytes(b"b")
+    with locked_project(project_id) as folder:
+        snapshot = json.loads((folder / "project.json").read_text(encoding="utf-8"))
+        snapshot["regen_used"] = 1
+        second = commit_locked(
+            folder,
+            snapshot,
+            instruction="重生",
+            quality_pass=False,
+            concept_degraded=False,
+            executed=["n10_video"],
+            video_shots=["S01"],
+            decisions=[],
+            shot_reviews=[{"shot_id": "S01", "visual_reviewed": False, "quality_pass": False}],
+            regen_used=1,
+        )
+    first_manifest = json.loads(
+        (directory / "versions" / first / "manifest.json").read_text(encoding="utf-8")
+    )
+    second_path = directory / "versions" / second["version_id"] / "manifest.json"
+    second_manifest = json.loads(second_path.read_text(encoding="utf-8"))
+    assert "regen_used" not in first_manifest
+    assert "regen_used" not in second_manifest
+    restore_version(project_id, first)
+    restored = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+    assert "regen_used" not in restored
+    assert project_regens(project_id) == 4
+    restore_version(project_id, second["version_id"])
+    again = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+    assert "regen_used" not in again
+    assert project_regens(project_id) == 4
+
+
+def test_interrupted_restore_puts_the_previous_tree_back(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    project_id = "vercrash"
+    init_project(project_id, sentence="一句", status="completed")
+    directory = project_path(project_id)
+    media = directory / "media"
+    media.mkdir()
+    (media / "S01.bin").write_bytes(b"live")
+    master = directory / "playback" / "master.mp4"
+    master.parent.mkdir()
+    master.write_bytes(b"live-master")
+    update_snapshot(project_id, status="completed", deliverable=str(master))
+    listed = list_versions(project_id)
+    first = listed["current_version_id"]
+    (media / "S01.bin").write_bytes(b"newer")
+    master.write_bytes(b"newer-master")
+    with locked_project(project_id) as folder:
+        snapshot = json.loads((folder / "project.json").read_text(encoding="utf-8"))
+        snapshot["deliverable"] = str(master)
+        commit_locked(
+            folder,
+            snapshot,
+            instruction="改过",
+            quality_pass=False,
+            concept_degraded=False,
+            executed=[],
+            video_shots=[],
+            decisions=[],
+            shot_reviews=[],
+        )
+    real_unlink = os.unlink
+
+    def crash_on_marker(path: str, *, dir_fd: int | None = None) -> None:
+        if str(path).endswith(".restore-inflight"):
+            raise RuntimeError("crash before the restore is published")
+        if dir_fd is None:
+            real_unlink(path)
+        else:
+            real_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", crash_on_marker)
+    try:
+        restore_version(project_id, first)
+    except RuntimeError as exc:
+        assert "crash" in str(exc)
+    else:
+        raise AssertionError("restore finished without the injected crash")
+    monkeypatch.setattr(os, "unlink", real_unlink)
+    list_versions(project_id)
+    assert (media / "S01.bin").read_bytes() == b"newer"
+    assert master.read_bytes() == b"newer-master"
+    body = json.loads((directory / "project.json").read_text(encoding="utf-8"))
+    assert "regen_used" not in body
+    assert body.get("current_version_id") != first
+    assert not (directory / ".restore-inflight").exists()
 
 
 def test_client_version_ids_and_paths_are_rejected(tmp_path, monkeypatch) -> None:

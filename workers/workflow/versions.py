@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import time
 import uuid
 from pathlib import Path
@@ -34,6 +35,7 @@ def list_versions(project_id: str) -> dict[str, Any]:
     if not valid_project_id(project_id):
         raise VersionError("项目不存在", status=404)
     with locked_project(project_id) as directory:
+        _recover_restore(directory)
         snapshot = _snapshot(directory, project_id)
         if snapshot.get("status") == "completed" and not _index(directory)["items"]:
             _commit(
@@ -46,7 +48,6 @@ def list_versions(project_id: str) -> dict[str, Any]:
                 video_shots=[],
                 decisions=[],
                 shot_reviews=_unreviewed(directory),
-                regen_used=int(snapshot.get("regen_used") or 0),
             )
         return _public(directory)
 
@@ -60,22 +61,21 @@ def restore_version(project_id: str, version_id: str) -> dict[str, Any]:
         if snapshot.get("status") == "running":
             raise VersionError("项目仍在运行", status=409)
         manifest = _manifest(directory, version_id)
-        _restore_files(directory, version_id, manifest)
+        _recover_restore(directory)
+        staged = _stage_restore(directory, version_id, manifest)
         playback = _playback(directory)
-        master = _inside(directory, directory / "versions" / version_id / "master.mp4")
-        if master.is_file():
-            _copy_bytes(master, playback)
+        if (staged / "master.mp4").is_file():
             snapshot["deliverable"] = str(playback)
         snapshot["current_version_id"] = version_id
         concept = {"degraded": True, "ok": False} if manifest.get("concept_degraded") else None
         snapshot["quality_pass"] = delivery_passes(list(manifest.get("shots") or []), concept)
-        snapshot["regen_used"] = int(manifest.get("regen_used") or 0)
+        # The regenerate count is not part of a version. Leave its file alone.
+        snapshot.pop("regen_used", None)
         snapshot["status"] = "completed"
         snapshot["message"] = f"已回到版本 {manifest.get('index')}"
-        _write_json(directory / "project.json", snapshot)
         index = _index(directory)
         index["current"] = version_id
-        _write_json(directory / "versions" / "index.json", index)
+        _swap_restore(directory, staged, snapshot, index)
         return _public(directory)
 
 
@@ -155,7 +155,6 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
         "video_shots": list(fields.get("video_shots") or []),
         "decisions": list(fields.get("decisions") or []),
         "shots": list(fields.get("shot_reviews") or []),
-        "regen_used": int(fields.get("regen_used") or 0),
         "master": master_name,
     }
     _write_json(folder / "manifest.json", manifest)
@@ -174,23 +173,131 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
     return manifest
 
 
-def _restore_files(directory: Path, version_id: str, manifest: dict[str, Any]) -> None:
-    folder = _version_dir(directory, version_id)
-    nodes = folder / "nodes"
-    if nodes.is_dir():
-        for path in nodes.iterdir():
-            if path.suffix != ".json" or path.stem not in PIPELINE:
-                continue
-            _copy_bytes(path, directory / "nodes" / path.name)
-    media = folder / "media"
-    if media.is_dir():
-        destination = directory / "media"
-        destination.mkdir(parents=True, exist_ok=True)
-        for path in media.iterdir():
-            if path.is_file() and _SHOT.fullmatch(path.stem):
-                _copy_bytes(path, media_path(directory, path.stem))
+def _stage_restore(directory: Path, version_id: str, manifest: dict[str, Any]) -> Path:
+    """Copy the chosen version into a temp tree. The live tree is swapped later."""
+
     if manifest.get("master") not in {"", "master.mp4"}:
         raise VersionError("版本清单里的成片名无效")
+    folder = _version_dir(directory, version_id)
+    staging = directory / ".restore-staging"
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir()
+    nodes = folder / "nodes"
+    if nodes.is_dir():
+        destination = staging / "nodes"
+        destination.mkdir()
+        for path in nodes.iterdir():
+            if path.suffix == ".json" and path.stem in PIPELINE:
+                _copy_bytes(path, destination / path.name)
+    media = folder / "media"
+    if media.is_dir():
+        destination = staging / "media"
+        destination.mkdir()
+        for path in media.iterdir():
+            if path.is_file() and _SHOT.fullmatch(path.stem):
+                _copy_bytes(path, destination / path.name)
+    master = folder / "master.mp4"
+    if master.is_file():
+        _copy_bytes(master, staging / "master.mp4")
+    return staging
+
+
+def _swap_restore(
+    directory: Path,
+    staging: Path,
+    snapshot: dict[str, Any],
+    index: dict[str, Any],
+) -> None:
+    """Swap a staged tree into place. The snapshot file is the commit point.
+
+    A crash while ``.restore-inflight`` is present puts ``.restore-prev`` back,
+    including the previous snapshot, so the project is not half restored.
+    """
+
+    marker = directory / ".restore-inflight"
+    marker.write_bytes(b"1")
+    _fsync_dir(directory)
+    previous = directory / ".restore-prev"
+    if previous.exists():
+        shutil.rmtree(previous)
+    previous.mkdir()
+    for name in ("nodes", "media"):
+        live = directory / name
+        staged = staging / name
+        if not staged.exists():
+            continue
+        if live.exists():
+            os.replace(live, previous / name)
+        os.replace(staged, live)
+    _swap_file(staging / "master.mp4", _playback(directory), previous / "master.mp4", previous)
+    atomic_write(
+        staging / "project.json",
+        json.dumps(snapshot, ensure_ascii=False, indent=2).encode("utf-8") + b"\n",
+    )
+    atomic_write(
+        staging / "index.json",
+        json.dumps(index, ensure_ascii=False, indent=2).encode("utf-8") + b"\n",
+    )
+    _swap_file(
+        staging / "project.json",
+        directory / "project.json",
+        previous / "project.json",
+        previous,
+    )
+    index_path = directory / "versions" / "index.json"
+    _swap_file(staging / "index.json", index_path, previous / "index.json", previous)
+    marker.unlink(missing_ok=True)
+    shutil.rmtree(previous, ignore_errors=True)
+    shutil.rmtree(staging, ignore_errors=True)
+
+
+def _swap_file(staged: Path, live: Path, backup: Path, previous: Path) -> None:
+    """Replace one file from the staged tree, keeping the old bytes for recovery."""
+
+    if not staged.is_file():
+        return
+    previous.mkdir(parents=True, exist_ok=True)
+    if live.is_file():
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(live, backup)
+    else:
+        (previous / f"{backup.name}.missing").write_bytes(b"1")
+    live.parent.mkdir(parents=True, exist_ok=True)
+    os.replace(staged, live)
+
+
+def _recover_restore(directory: Path) -> None:
+    marker = directory / ".restore-inflight"
+    previous = directory / ".restore-prev"
+    if not marker.exists():
+        return
+    for name in ("nodes", "media"):
+        backup = previous / name
+        live = directory / name
+        if backup.exists():
+            if live.exists():
+                shutil.rmtree(live)
+            os.replace(backup, live)
+    _restore_file(previous / "master.mp4", _playback(directory), previous)
+    _restore_file(previous / "project.json", directory / "project.json", previous)
+    _restore_file(previous / "index.json", directory / "versions" / "index.json", previous)
+    marker.unlink(missing_ok=True)
+    shutil.rmtree(previous, ignore_errors=True)
+    staging = directory / ".restore-staging"
+    if staging.exists():
+        shutil.rmtree(staging)
+
+
+def _restore_file(backup: Path, live: Path, previous: Path) -> None:
+    if backup.is_file():
+        live.parent.mkdir(parents=True, exist_ok=True)
+        if live.exists():
+            live.unlink()
+        os.replace(backup, live)
+        return
+    if (previous / f"{backup.name}.missing").is_file() and live.exists():
+        live.unlink()
 
 
 def _public(directory: Path) -> dict[str, Any]:

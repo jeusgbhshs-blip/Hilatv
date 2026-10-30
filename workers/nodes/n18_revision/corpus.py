@@ -263,14 +263,16 @@ CASES: list[dict[str, Any]] = [
 ]
 
 
-def evaluate(script: Script | None = None) -> dict[str, Any]:
-    """Score the set. A miss records the first mismatched field."""
+def evaluate(script: Script | None = None, gateway: Any | None = None) -> dict[str, Any]:
+    """Score the hand-written set against the live parser, including a mock model."""
 
     board = script or sample_script()
     passed = 0
     failures: list[dict[str, str]] = []
+    blanket = 0
     for case in CASES:
-        reason = _judge(board, case)
+        reason, flagged = _judge(board, case, gateway)
+        blanket += flagged
         if reason:
             failures.append({"instruction": case["instruction"], "reason": reason})
         else:
@@ -281,37 +283,52 @@ def evaluate(script: Script | None = None) -> dict[str, Any]:
         "passed": passed,
         "rate": passed / total if total else 0.0,
         "failures": failures,
+        "blanket_regens": blanket,
         "self_made": True,
     }
 
 
-def _judge(script: Script, case: dict[str, Any]) -> str:
-    directive = parse_edit(
+def _judge(script: Script, case: dict[str, Any], gateway: Any | None) -> tuple[str, int]:
+    parsed = parse_edit(
         script,
         case["instruction"],
         focused_shot_id=case.get("focused_shot_id"),
-        gateway=None,
+        gateway=gateway,
     )
+    flagged = 0
+    if (
+        parsed.directive is not None
+        and parsed.directive.change.get("visual") == "regenerate"
+        and set(parsed.directive.targets) == {shot.shot_id for shot in script.shots}
+        and not any(word in case["instruction"] for word in ("所有", "每个", "全部", "整片"))
+    ):
+        flagged = 1
+    expected = case.get("status") or "apply"
+    if parsed.status != expected:
+        return parsed.status, flagged
+    if expected != "apply" or parsed.directive is None:
+        return "", flagged
+    directive = parsed.directive
     if directive.targets != case["targets"]:
-        return f"targets {directive.targets}"
+        return f"targets {directive.targets}", flagged
     if directive.change != case["change"]:
-        return f"change {directive.change}"
+        return f"change {directive.change}", flagged
     for item in case["keep"]:
         if item not in directive.keep:
-            return f"missing keep {item}"
+            return f"missing keep {item}", flagged
     for key in directive.change:
         if key in directive.keep:
-            return f"{key} is both changed and kept"
+            return f"{key} is both changed and kept", flagged
     plan = plan_for(script, directive)
     if plan.nodes != case["nodes"]:
-        return f"nodes {plan.nodes}"
+        return f"nodes {plan.nodes}", flagged
     if plan.video_shots != case["video"]:
-        return f"video {plan.video_shots}"
+        return f"video {plan.video_shots}", flagged
     updated = apply_script(script, directive)
     targets = set(directive.targets)
     for before, after in zip(script.shots, updated.shots, strict=True):
         if before.shot_id in targets:
             continue
         if before.model_dump(mode="json") != after.model_dump(mode="json"):
-            return f"{before.shot_id} changed"
-    return ""
+            return f"{before.shot_id} changed", flagged
+    return "", flagged

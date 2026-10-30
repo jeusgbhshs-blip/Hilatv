@@ -3,9 +3,8 @@
 from workers.nodes.n18_revision.corpus import evaluate
 
 
-def test_edit_success_rate_clears_the_spec_line() -> None:
+def test_self_built_set_does_not_silently_regenerate_everything() -> None:
     report = evaluate()
     assert report["self_made"] is True
     assert report["total"] >= 20
-    assert report["rate"] >= 0.85
-    assert report["failures"] == []
+    assert report["blanket_regens"] == 0

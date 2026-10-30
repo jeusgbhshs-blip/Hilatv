@@ -52,18 +52,107 @@ def test_project_regen_cap_blocks_another_video_call(tmp_path, monkeypatch) -> N
     media.mkdir()
     (media / "S01.bin").write_bytes(b"a")
     (media / "S02.bin").write_bytes(b"b")
-    update_snapshot(project_id, status="completed", regen_used=1, deliverable=None)
+    update_snapshot(project_id, status="completed", deliverable=None)
+    from workers.workflow.regen_count import raise_project_regens
+
+    raise_project_regens(project_id, 1)
     before = hashes(directory)
-    result = revise_project(project_id, "第二个镜头太暗")
+    from workers.workflow.revise import revision_gateway
+
+    class _Answers:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+
+        def generate_text(self, prompt: str, **kwargs: object) -> dict[str, object]:
+            return {
+                "targets": ["S02"],
+                "change": {"lighting": "brighter"},
+                "keep": ["composition"],
+            }
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    gateway = _Answers(revision_gateway(directory))
+    result = revise_project(project_id, "第二个镜头太暗", gateway=gateway)
     assert result["quality_pass"] is False
     assert result["video_shots"] == []
     assert hashes(directory) == before
-    from workers.workflow.revise import revision_gateway
-
-    gateway = revision_gateway(directory)
     assert not any(
         row.get("task") == "video" for row in gateway.store.list_logs(project_id=project_id)
     )
+
+
+def test_missing_video_keeps_the_file_and_does_not_hold_the_lock(tmp_path, monkeypatch) -> None:
+    import fcntl
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.setenv("HILATV_RENDER_WIDTH", "64")
+    monkeypatch.setenv("HILATV_RENDER_HEIGHT", "36")
+    project_id = "revkeep01"
+    init_project(project_id, sentence="一句", status="completed")
+    directory = project_path(project_id)
+    nodes = directory / "nodes"
+    nodes.mkdir()
+    (nodes / "n05_storyboard.json").write_text(
+        json.dumps({"script": _script()}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    media = directory / "media"
+    media.mkdir()
+    (media / "S01.bin").write_bytes(b"a")
+    (media / "S02.bin").write_bytes(b"b")
+    update_snapshot(project_id, status="completed", deliverable=None)
+
+    def compose(*_args: object, **_kwargs: object) -> str:
+        path = directory / "render" / "n15" / "master.mp4"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"composed")
+        return str(path)
+
+    monkeypatch.setattr("workers.workflow.revise._compose", compose)
+    from workers.workflow.revise import revision_gateway
+
+    class _Answers:
+        def __init__(self, inner: object) -> None:
+            self._inner = inner
+            self.lock_free: bool | None = None
+
+        def generate_text(self, prompt: str, **kwargs: object) -> dict[str, object]:
+            return {
+                "targets": ["S02"],
+                "change": {"lighting": "brighter"},
+                "keep": ["composition"],
+            }
+
+        def generate_video(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            handle = (directory / ".lock").open("a+")
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                self.lock_free = False
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                self.lock_free = True
+            finally:
+                handle.close()
+            raise RuntimeError("video file is missing")
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._inner, name)
+
+    gateway = _Answers(revision_gateway(directory))
+    before = hashes(directory)
+    result = revise_project(project_id, "第二个镜头太暗", gateway=gateway)
+    assert gateway.lock_free is True
+    assert result["status"] == "incomplete"
+    assert result["kept_previous"] == ["S02"]
+    assert "保留" in result["notice"]
+    assert "改稿已生成新版本" not in result["notice"]
+    assert result["quality_pass"] is False
+    assert hashes(directory) == before
+    assert (media / "S02.bin").read_bytes() == b"b"
 
 
 def test_logo_replacement_url_is_refused_by_the_ssrf_guard(tmp_path) -> None:

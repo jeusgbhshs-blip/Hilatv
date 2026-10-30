@@ -74,7 +74,7 @@ def _execute(
     )
     deadline.check()
     brand = gate_brand(payload.brand_kit, from_archive=False)
-    directive = parse_edit(
+    parsed = parse_edit(
         payload.script,
         payload.instruction,
         focused_shot_id=focused,
@@ -82,6 +82,32 @@ def _execute(
         project_id=request.project_id,
         attempt=attempt,
     )
+    if parsed.status != "apply" or parsed.directive is None:
+        log_event(
+            "revision_not_applied",
+            project_id=request.project_id,
+            node=NODE,
+            shot_id=focused,
+            attempt=attempt,
+            status=parsed.status,
+        )
+        return NodeResult(
+            project_id=request.project_id,
+            node=NODE,
+            ok=True,
+            payload={
+                "status": parsed.status,
+                "question": parsed.question,
+                "notice": parsed.notice,
+                "script": payload.script.model_dump(mode="json"),
+                "brand_kit": brand.model_dump(mode="json") if brand is not None else None,
+                "nodes": [],
+                "video_shots": [],
+                "reuse_shots": [],
+            },
+            attempt=request.attempt,
+        )
+    directive = parsed.directive
     script = apply_script(payload.script, directive)
     brand = apply_brand(brand, directive)
     plan = plan_for(script, directive)
@@ -99,6 +125,9 @@ def _execute(
         node=NODE,
         ok=True,
         payload={
+            "status": "apply",
+            "question": "",
+            "notice": parsed.notice,
             "directive": directive.model_dump(mode="json"),
             "script": script.model_dump(mode="json"),
             "brand_kit": brand.model_dump(mode="json") if brand is not None else None,

@@ -47,6 +47,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const [shotId, setShotId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  const [question, setQuestion] = useState<string | null>(null);
   const [playerToken, setPlayerToken] = useState(0);
 
   useEffect(() => {
@@ -244,7 +245,10 @@ export function FilmStage({ projectId }: { projectId: string }) {
         body: JSON.stringify({ instruction: text, shot_id: shotId }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
+      const body = (await response.json()) as { status?: string; question?: string; notice?: string };
       setInstruction("");
+      setQuestion(body.question || body.notice || null);
+      if (body.status === "needs_clarification" || body.status === "not_supported") return;
       setSrc(null);
       setPlayerToken((value) => value + 1);
     } catch (caught) {
@@ -429,6 +433,16 @@ export function FilmStage({ projectId }: { projectId: string }) {
           >
             {busy ? "正在改稿" : "发送改稿"}
           </Button>
+          {question ? (
+            <p role="status" data-testid="revision-notice" className="text-sm text-muted-foreground">
+              {question}
+            </p>
+          ) : null}
+          {snapshot?.revision_notice ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {snapshot.revision_notice}
+            </p>
+          ) : null}
           {editError ? (
             <p role="alert" className="text-sm text-destructive">
               {editError}

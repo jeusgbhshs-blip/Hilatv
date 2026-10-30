@@ -50,6 +50,7 @@ export type ProjectSnapshot = {
   concept_ok?: boolean | null;
   concept_text_source?: string | null;
   quality_pass?: boolean;
+  revision_notice?: string | null;
 };
 
 export function eventKey(event: ProgressEvent): string {

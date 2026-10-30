@@ -13,11 +13,21 @@ class QAError(Exception):
         self.retryable = retryable
 
 
-def check(result: NodeResult) -> RevisionPlan:
+def check(result: NodeResult) -> RevisionPlan | None:
     if result.node != "n18_revision":
         raise QAError(f"unexpected node {result.node}", retryable=False)
     if not result.ok:
         raise QAError("n18_revision result is not ok")
+    status = str(result.payload.get("status") or "apply")
+    if status != "apply":
+        if result.payload.get("video_shots"):
+            raise QAError("a question must not schedule video")
+        question = str(result.payload.get("question") or "").strip()
+        if status == "needs_clarification" and not question:
+            raise QAError("clarification needs a question")
+        if status == "not_supported" and not str(result.payload.get("notice") or "").strip():
+            raise QAError("an unsupported edit needs an explanation")
+        return None
     script = Script.model_validate(result.payload.get("script"))
     directive = RevisionDirective.model_validate(result.payload.get("directive"))
     plan = RevisionPlan.model_validate(

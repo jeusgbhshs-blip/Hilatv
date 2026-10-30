@@ -7,13 +7,10 @@ work the change set said to keep.
 
 from __future__ import annotations
 
-import io
 import os
 import re
 from pathlib import Path
 from typing import Any
-
-from PIL import Image, ImageDraw
 
 from workers.logging import log_event
 from workers.nodes.n18_revision.concept_gate import (
@@ -26,16 +23,24 @@ from workers.nodes.n18_revision.qa import QAError
 from workers.nodes.runtime import read_bytes
 from workers.qa.scores import is_quality_pass, not_reviewed
 from workers.qa.service import review_shot
-from workers.qa.settings import RetryBudget
+from workers.qa.settings import project_retry_cap
 from workers.schemas.asset import QAReport
 from workers.schemas.director import DecisionAction, DecisionTarget, DirectorDecision
 from workers.schemas.script import Script, ShotStatus
 from workers.workflow.contract import PIPELINE
-from workers.workflow.store import locked_project, valid_project_id
-from workers.workflow.versions import atomic_write, commit_locked, hashes, media_path
+from workers.workflow.regen_count import project_regens, try_spend_regen
+from workers.workflow.store import locked_project, project_path, valid_project_id
+from workers.workflow.versions import (
+    _recover_restore,
+    atomic_write,
+    commit_locked,
+    hashes,
+    media_path,
+)
 
 _URL = re.compile(r"https?://[^\s]+")
 _RENDER = ("n14", "n15", "n13", "n06", "n08", "n10")
+END_CARD_NOTE = "片头和角标已去掉。片尾仍保留 Logo 和行动号召。"
 
 
 class RevisionError(ValueError):
@@ -61,6 +66,7 @@ def revise_project(
     ):
         raise RevisionError("镜头编号无效")
     with locked_project(project_id) as directory:
+        _recover_restore(directory)
         snapshot = _read_snapshot(directory)
         if snapshot.get("status") == "running":
             raise RevisionError("项目仍在运行", status=409)
@@ -70,59 +76,93 @@ def revise_project(
         script = _script(state)
         if shot_id and shot_id not in {shot.shot_id for shot in script.shots}:
             raise RevisionError("镜头编号无效")
-        _ensure_media(directory, script)
+        held = {"snapshot": snapshot, "state": state}
+    gateway = gateway if gateway is not None else _live_gateway()
+    try:
+        parsed = run_revision(
+            {
+                "project_id": project_id,
+                "shot_id": shot_id,
+                "payload": {
+                    "instruction": text,
+                    "script": script.model_dump(mode="json"),
+                    "brand_kit": state.get("brand_kit"),
+                    "focused_shot_id": shot_id,
+                },
+            },
+            timeout_s=30,
+            max_attempts=1,
+            gateway=gateway,
+        )
+    except QAError as exc:
+        raise RevisionError(str(exc)) from exc
+    if parsed.payload.get("status") != "apply":
+        return {
+            "project_id": project_id,
+            "version_id": None,
+            "directive": None,
+            "nodes": [],
+            "video_shots": [],
+            "quality_pass": False,
+            "status": parsed.payload.get("status"),
+            "question": parsed.payload.get("question") or "",
+            "notice": parsed.payload.get("notice") or "",
+            "concept_degraded": False,
+            "concept_ok": None,
+            "concept_text_source": "",
+        }
+    directory = project_path(project_id)
+    _maybe_fetch_logo(directory, text, parsed.payload.get("directive") or {})
+    outcome = _execute(
+        directory,
+        project_id,
+        held["snapshot"],
+        held["state"],
+        parsed.payload,
+        gateway=gateway,
+    )
+    with locked_project(project_id) as directory:
+        _recover_restore(directory)
+        snapshot = _read_snapshot(directory)
+        state = held["state"]
+        concept = read_project_concept(directory)
+        view = classify_concept(concept)
         if not _index_items(directory):
             commit_locked(
                 directory,
                 snapshot,
                 instruction="初版",
                 quality_pass=False,
-                concept_degraded=classify_concept(read_project_concept(directory)).degraded,
+                concept_degraded=view.degraded,
                 executed=[],
                 video_shots=[],
                 decisions=[],
                 shot_reviews=_reviews_from_hashes(directory),
-                regen_used=int(snapshot.get("regen_used") or 0),
             )
             snapshot = _read_snapshot(directory)
-        gateway = gateway if gateway is not None else _mock_gateway(directory)
-        try:
-            parsed = run_revision(
-                {
-                    "project_id": project_id,
-                    "shot_id": shot_id,
-                    "payload": {
-                        "instruction": text,
-                        "script": script.model_dump(mode="json"),
-                        "brand_kit": state.get("brand_kit"),
-                        "focused_shot_id": shot_id,
-                    },
-                },
-                timeout_s=30,
-                max_attempts=1,
-                gateway=gateway,
-            )
-        except QAError as exc:
-            raise RevisionError(str(exc)) from exc
-        _maybe_fetch_logo(directory, text, parsed.payload.get("directive") or {})
-        concept = read_project_concept(directory)
-        view = classify_concept(concept)
-        outcome = _execute(
-            directory,
-            project_id,
-            snapshot,
-            state,
-            parsed.payload,
-            gateway=gateway,
-        )
         reviews = outcome["reviews"]
         passes = delivery_passes(reviews, concept if view.degraded or view.ok is False else concept)
         if view.degraded or view.ok is False:
             passes = False
+        kept = list(outcome.get("kept_previous") or [])
+        if kept:
+            passes = False
+        notice = str(parsed.payload.get("notice") or "")
+        change = (parsed.payload.get("directive") or {}).get("change") or {}
+        if change.get("logo") == "remove":
+            notice = f"{notice} {END_CARD_NOTE}".strip()
+        if kept:
+            notice = f"{notice} 这些镜头没有新画面，已保留上一版：{'、'.join(kept)}。".strip()
+        _store_media(directory, outcome.get("fresh") or {})
+        deliverable = outcome.get("deliverable") or snapshot.get("deliverable")
+        if outcome.get("master_path"):
+            playback = directory / "playback" / "master.mp4"
+            atomic_write(playback, Path(outcome["master_path"]).read_bytes())
+            deliverable = str(playback.resolve())
         _write_patches(directory, outcome["patches"])
         manifest = commit_locked(
             directory,
-            {**snapshot, "deliverable": outcome.get("deliverable") or snapshot.get("deliverable")},
+            {**snapshot, "deliverable": deliverable},
             instruction=text,
             quality_pass=passes,
             concept_degraded=view.degraded or view.ok is False,
@@ -130,16 +170,17 @@ def revise_project(
             video_shots=outcome["video_shots"],
             decisions=outcome["decisions"],
             shot_reviews=reviews,
-            regen_used=outcome["regen_used"],
         )
+        status = "incomplete" if kept else "completed"
+        message = notice if kept or notice else "改稿已生成新版本"
         snapshot.update(
             {
                 "status": "completed",
-                "message": "改稿已生成新版本",
+                "message": message,
                 "current_version_id": manifest["version_id"],
                 "quality_pass": passes,
-                "regen_used": outcome["regen_used"],
-                "deliverable": outcome.get("deliverable") or snapshot.get("deliverable"),
+                "deliverable": deliverable,
+                "revision_notice": notice,
                 "concept_degraded": view.degraded or view.ok is False,
                 "concept_ok": False if view.degraded or view.ok is False else view.ok,
                 "concept_text_source": view.text_source,
@@ -149,6 +190,7 @@ def revise_project(
                 ],
             }
         )
+        snapshot.pop("regen_used", None)
         atomic_write(
             directory / "project.json",
             _json_bytes(snapshot),
@@ -172,7 +214,10 @@ def revise_project(
             "concept_degraded": view.degraded or view.ok is False,
             "concept_ok": False if view.degraded or view.ok is False else view.ok,
             "concept_text_source": view.text_source,
-            "status": "completed",
+            "status": status,
+            "notice": notice,
+            "kept_previous": kept,
+            "question": "",
         }
 
 
@@ -192,17 +237,15 @@ def _execute(
     brief = state.get("brief")
     nodes: list[str] = list(payload.get("nodes") or [])
     planned_video: list[str] = list(payload.get("video_shots") or [])
-    budget = RetryBudget()
-    budget.used = int(snapshot.get("regen_used") or 0)
     decisions: list[dict[str, Any]] = []
     video_shots: list[str] = []
     blocked: set[str] = set()
+    limit = project_retry_cap()
     for shot_id in planned_video:
-        if not budget.allow():
+        if not try_spend_regen(project_id):
             blocked.add(shot_id)
-            decisions.append(_blocked(shot_id, budget.limit))
+            decisions.append(_blocked(shot_id, limit))
             continue
-        budget.consume()
         video_shots.append(shot_id)
     patches = _patches(directory)
     width, height = _canvas()
@@ -215,6 +258,7 @@ def _execute(
     intro_s = float(state.get("intro_s") or 0)
     outro_s = float(state.get("outro_s") or 0)
     fresh: dict[str, bytes] = {}
+    kept: list[str] = []
     reviews = {shot.shot_id: _cached_review(shot.shot_id) for shot in script.shots}
 
     if "n06_voiceover" in nodes:
@@ -234,7 +278,7 @@ def _execute(
         executed.append("n08_keyframe")
         executed.append("n09_keyframe_qa")
     if "n10_video" in nodes and video_shots:
-        videos, made = _videos(
+        videos, made, skipped = _videos(
             directory,
             project_id,
             script,
@@ -246,6 +290,7 @@ def _execute(
             gateway,
         )
         fresh.update(made)
+        kept.extend(skipped)
         executed.extend(["n10_video", "n11_video_qa"])
         for shot_id, report in _review_new(directory, project_id, fresh, gateway).items():
             reviewed = report.visual_reviewed is True
@@ -274,8 +319,9 @@ def _execute(
         executed.append("n14_packaging")
         ran_picture = True
     deliverable = snapshot.get("deliverable")
+    master_path = ""
     if ran_picture or ("n15_compose" in nodes and executed):
-        deliverable = _compose(
+        master_path = _compose(
             directory,
             project_id,
             script,
@@ -290,7 +336,7 @@ def _execute(
             height,
         )
         executed.append("n15_compose")
-    _store_media(directory, fresh)
+        deliverable = master_path or deliverable
     _remember(
         patches,
         script=script,
@@ -323,8 +369,11 @@ def _execute(
         "video_shots": video_shots,
         "decisions": decisions,
         "reviews": [reviews[shot.shot_id] for shot in script.shots],
-        "regen_used": budget.used,
+        "regen_used": project_regens(project_id),
         "deliverable": deliverable,
+        "master_path": master_path,
+        "fresh": fresh,
+        "kept_previous": kept,
         "script": script.model_dump(mode="json"),
         "patches": patches,
         "blocked": sorted(blocked),
@@ -416,34 +465,39 @@ def _videos(directory, project_id, script, existing, keyframes, shot_ids, brand,
         row for row in existing if isinstance(row, dict) and row.get("shot_id") not in shot_ids
     ]
     made: dict[str, bytes] = {}
+    skipped: list[str] = []
     for shot_id in shot_ids:
-        result = run(
-            {
-                "project_id": project_id,
-                "shot_id": shot_id,
-                "payload": {
-                    "script": script.model_dump(mode="json"),
-                    "candidates": keyframes,
-                    "brief": brief,
-                    "brand_kit": brand,
-                    "video_candidates": 3,
+        try:
+            result = run(
+                {
+                    "project_id": project_id,
+                    "shot_id": shot_id,
+                    "payload": {
+                        "script": script.model_dump(mode="json"),
+                        "candidates": keyframes,
+                        "brief": brief,
+                        "brand_kit": brand,
+                        "video_candidates": 3,
+                    },
                 },
-            },
-            timeout_s=180,
-            max_attempts=1,
-            gateway=gateway,
-        )
+                timeout_s=180,
+                max_attempts=1,
+                gateway=gateway,
+            )
+        except Exception:
+            skipped.append(shot_id)
+            continue
         rows = result.payload.get("candidates") or []
         merged.extend(rows)
         selected = next((row for row in rows if row.get("selected")), rows[0] if rows else None)
         data = _candidate_bytes(gateway, selected)
-        if data is None:
-            order = next(shot.order for shot in script.shots if shot.shot_id == shot_id)
-            data = _draw(order, changed=True)
+        if not data:
+            skipped.append(shot_id)
+            continue
         scratch = directory / "render" / "review" / f"{shot_id}.bin"
         atomic_write(scratch, data)
         made[shot_id] = data
-    return merged, made
+    return merged, made, skipped
 
 
 def _review_new(directory, project_id, fresh, gateway) -> dict[str, QAReport]:
@@ -550,10 +604,7 @@ def _compose(
         timeout_s=180,
         max_attempts=1,
     )
-    master = result.payload["exports"]["master"]
-    playback = directory / "playback" / "master.mp4"
-    atomic_write(playback, Path(master).read_bytes())
-    return str(playback.resolve())
+    return str(Path(result.payload["exports"]["master"]).resolve())
 
 
 def _maybe_fetch_logo(directory: Path, instruction: str, directive: dict[str, Any]) -> None:
@@ -626,29 +677,12 @@ def _cached_review(shot_id: str) -> dict[str, Any]:
     return {"shot_id": shot_id, "visual_reviewed": False, "quality_pass": False}
 
 
-def _ensure_media(directory: Path, script: Script) -> None:
-    for shot in script.shots:
-        path = media_path(directory, shot.shot_id)
-        if path.is_file():
-            continue
-        atomic_write(path, _draw(shot.order, changed=False))
-
-
 def _store_media(directory: Path, fresh: dict[str, bytes]) -> None:
     for shot_id, data in fresh.items():
         path = media_path(directory, shot_id)
         if path.is_file() and path.read_bytes() == data:
             continue
         atomic_write(path, data)
-
-
-def _draw(order: int, *, changed: bool) -> bytes:
-    color = (200, (30 + order * 20) % 256, 48) if changed else ((24 + order * 36) % 256, 72, 120)
-    image = Image.new("RGB", (64, 64), color)
-    ImageDraw.Draw(image).rectangle((6, 6, 58, 58), outline=(255, 255, 255))
-    buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
-    return buffer.getvalue()
 
 
 def _remember(patches, **fields: Any) -> None:
@@ -784,8 +818,10 @@ def revision_gateway(directory: Path) -> Any:
     )
 
 
-def _mock_gateway(directory: Path) -> Any:
-    return revision_gateway(directory)
+def _live_gateway() -> Any:
+    from gateway import get_gateway
+
+    return get_gateway()
 
 
 def _work(directory: Path, name: str) -> Path:

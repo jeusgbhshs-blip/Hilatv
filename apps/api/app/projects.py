@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.logging import log_event
+from gateway import get_gateway
 from workers.nodes.n01_brief.schema import AttachmentRef
 from workers.nodes.n18_revision.concept_gate import classify_concept, read_project_concept
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
@@ -387,7 +388,12 @@ def project_restore(project_id: str, version_id: str) -> dict[str, Any]:
 @router.post("/v1/projects/{project_id}/revisions")
 def project_revision(project_id: str, body: ReviseProject) -> dict[str, Any]:
     try:
-        return revise_project(project_id, body.instruction, shot_id=body.shot_id)
+        return revise_project(
+            project_id,
+            body.instruction,
+            shot_id=body.shot_id,
+            gateway=get_gateway(),
+        )
     except (RevisionError, VersionError) as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 

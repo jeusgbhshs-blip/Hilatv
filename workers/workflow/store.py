@@ -77,6 +77,8 @@ def _read(directory: Path, project_id: str) -> dict[str, Any]:
 
 
 def _write(directory: Path, snapshot: dict[str, Any]) -> None:
+    # Regenerations live in regen_budget.json. A snapshot must not keep a copy.
+    snapshot.pop("regen_used", None)
     _atomic_text(
         directory / "project.json",
         json.dumps(snapshot, ensure_ascii=False, indent=2) + "\n",
