@@ -1,0 +1,23 @@
+# 电商零售样例。价格只出现在口播或后期，不要求模型把价格画进画面。
+industry: ecommerce
+cases:
+  - id: ecommerce-01
+    sentence: "这款运动鞋做一条15秒抖音带货短视频，节奏快，突出透气，鞋重 200g 写进口播"
+  - id: ecommerce-02
+    sentence: "给新款保温杯做一条15秒主图视频，发抖音，竖屏"
+  - id: ecommerce-03
+    sentence: "电商保温杯 SKU 做一条15秒带货片，面向通勤的人，容量 350ml"
+  - id: ecommerce-04
+    sentence: "给儿童水杯做一条15秒抖音带货视频，讲清吸管和刻度，刻度不画进画面"
+  - id: ecommerce-05
+    sentence: "给运动鞋垫做一条15秒电商主图视频，竖屏，突出回弹"
+  - id: ecommerce-06
+    sentence: "给收纳箱做一条15秒带货短片，发抖音，三个尺寸写进口播"
+  - id: ecommerce-07
+    sentence: "给蓝牙音箱做一条15秒主图视频，面向宿舍场景，续航 12 小时写进口播"
+  - id: ecommerce-08
+    sentence: "给宠物饮水器做一条15秒电商带货片，竖屏，容量 2L 写进口播"
+  - id: ecommerce-09
+    sentence: "给防晒衣做一条15秒抖音带货视频，面向户外，面料写进口播"
+  - id: ecommerce-10
+    sentence: "给厨房置物架做一条15秒主图视频，发抖音，承重 5kg 写进口播"

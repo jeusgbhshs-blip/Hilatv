@@ -50,6 +50,9 @@ Thumbs.db
 .idea/
 .vscode/
 
+# Eval score tables from a local run
+eval/reports/
+
 # Generated media outputs (renders, mixes, intermediate frames)
 output/
 outputs/

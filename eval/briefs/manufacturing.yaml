@@ -1,0 +1,23 @@
+# 制造业样例。团队收集的真实需求替换本文件后，同一条命令改跑新句子。
+industry: manufacturing
+cases:
+  - id: manufacturing-01
+    sentence: "给高压柱塞泵做一条15秒抖音产品宣传片，面向采购经理，产品特写和工厂检测都要，30MPa 只放后期字幕"
+  - id: manufacturing-02
+    sentence: "给数控机床做一条15秒产品宣传片，发抖音，行程和主轴写进口播，不要画进画面"
+  - id: manufacturing-03
+    sentence: "给焊接机器人做一条15秒工厂实力片，放视频号，展示车间和检测线"
+  - id: manufacturing-04
+    sentence: "给减速机零部件做一条15秒产品片，横屏放官网，风格稳重，面向设备科"
+  - id: manufacturing-05
+    sentence: "给空压机做一条15秒竖屏产品宣传片，发抖音，讲清维保方式，联系方式放片尾后期"
+  - id: manufacturing-06
+    sentence: "给激光切割机做一条15秒产品宣传片，面向钣金厂，要有加工时的工厂实拍感"
+  - id: manufacturing-07
+    sentence: "给工业阀门做一条15秒产品片，投视频号，口径和材质写进口播"
+  - id: manufacturing-08
+    sentence: "给注塑机做一条15秒工厂实力片，横屏放官网，展示装配和试模"
+  - id: manufacturing-09
+    sentence: "给轴承做一条15秒产品宣传片，面向经销商，风格冷色工业质感"
+  - id: manufacturing-10
+    sentence: "给输送机械做一条15秒产品片，发抖音和视频号，竖屏，带宽写进口播"

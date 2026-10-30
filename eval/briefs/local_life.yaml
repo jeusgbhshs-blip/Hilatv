@@ -1,0 +1,23 @@
+# 本地生活样例。地址和优惠留给后期字幕。
+industry: local_life
+cases:
+  - id: local-life-01
+    sentence: "给海景餐厅做一条15秒探店视频，竖屏，发抖音，风格真实感，地址在青岛五四广场"
+  - id: local-life-02
+    sentence: "给社区咖啡馆做一条15秒探店片，发抖音和视频号，招牌拿铁"
+  - id: local-life-03
+    sentence: "给火锅店做一条15秒餐饮探店，竖屏，食物质感，人均写后期"
+  - id: local-life-04
+    sentence: "给酒店周末亲子活动做一条15秒推广，发抖音，地址放片尾后期"
+  - id: local-life-05
+    sentence: "给烘焙店做一条15秒探店视频，竖屏，展示新品面包"
+  - id: local-life-06
+    sentence: "给美业头疗店做一条15秒到店视频，发抖音，环境先出"
+  - id: local-life-07
+    sentence: "给奶茶店做一条15秒探店片，竖屏，新品两款写进口播"
+  - id: local-life-08
+    sentence: "给社区健身房做一条15秒到店推广，视频号，体验课放片尾后期"
+  - id: local-life-09
+    sentence: "给民宿做一条15秒探店视频，竖屏，面向周末游客"
+  - id: local-life-10
+    sentence: "给早餐厅做一条15秒餐饮视频，发抖音，地址在市南区"

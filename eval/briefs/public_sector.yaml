@@ -1,0 +1,23 @@
+# 政企公共样例。句子里不写没有出处的成绩数字。
+industry: public_sector
+cases:
+  - id: public-sector-01
+    sentence: "把园区人才政策解读成一条15秒短视频，横屏放官网，数据放后期且要有出处"
+  - id: public-sector-02
+    sentence: "给高新区做一条15秒招商宣传片，视频号，语气庄重，不编数据"
+  - id: public-sector-03
+    sentence: "给政务服务中心做一条15秒办事指引，竖屏，步骤用后期字幕"
+  - id: public-sector-04
+    sentence: "给城市书房做一条15秒公共宣传片，视频号，介绍开放时间"
+  - id: public-sector-05
+    sentence: "给社区食堂做一条15秒政策解读式短片，面向居民，地址放片尾"
+  - id: public-sector-06
+    sentence: "给公交便民举措做一条15秒宣传片，横屏放官网，成效用已经公布的说法"
+  - id: public-sector-07
+    sentence: "给垃圾分类宣传做一条15秒政务短片，视频号，语气克制"
+  - id: public-sector-08
+    sentence: "给老旧小区改造做一条15秒宣传片，官网横屏，先讲背景再讲举措"
+  - id: public-sector-09
+    sentence: "给就业服务专区做一条15秒政务视频，视频号，报名渠道放片尾后期"
+  - id: public-sector-10
+    sentence: "给科普馆开放日做一条15秒公共宣传片，竖屏，时间写进口播"
