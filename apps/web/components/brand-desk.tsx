@@ -2,6 +2,7 @@
 
 import { type FormEvent, useState } from "react";
 
+import { IndustryShortcut } from "@/components/hilatv/industry-shortcut";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -97,11 +98,11 @@ export function BrandDesk() {
   }
 
   return (
-    <div className="grid items-start gap-8 lg:grid-cols-[minmax(0,40rem)_18rem]">
-      <form className="min-w-0" onSubmit={onSubmit}>
-        <p className="text-sm text-muted-foreground">企业后台</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">品牌资料</h1>
-        <p className="mt-3 max-w-xl text-base leading-7 text-muted-foreground">
+    <div className="mx-auto flex w-full max-w-300 flex-col items-start gap-8 lg:flex-row">
+      <form className="w-full min-w-0 lg:max-w-160 lg:flex-1" onSubmit={onSubmit}>
+        <p className="text-small text-text-2">企业后台</p>
+        <h1 className="mt-2 text-h1 font-medium tracking-wide">品牌资料</h1>
+        <p className="mt-2 max-w-xl text-body text-text-2">
           录入一次。之后新建的项目会自动套用 Logo、色彩、字体、行动号召和卖点。
         </p>
 
@@ -111,18 +112,16 @@ export function BrandDesk() {
         </div>
 
         <fieldset className="mt-6">
-          <legend className="text-sm font-medium">行业</legend>
+          <legend className="text-small font-medium">行业</legend>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             {INDUSTRIES.map((item) => (
-              <Button
+              <IndustryShortcut
                 key={item.id}
-                type="button"
-                variant={industry === item.id ? "default" : "outline"}
-                aria-pressed={industry === item.id}
+                id={item.id}
+                label={item.label}
+                pressed={industry === item.id}
                 onClick={() => setIndustry(item.id)}
-              >
-                {item.label}
-              </Button>
+              />
             ))}
           </div>
         </fieldset>
@@ -139,7 +138,11 @@ export function BrandDesk() {
 
         <div className="mt-6 grid gap-2">
           <Label htmlFor="product-name">产品名称</Label>
-          <Input id="product-name" value={productName} onChange={(event) => setProductName(event.target.value)} />
+          <Input
+            id="product-name"
+            value={productName}
+            onChange={(event) => setProductName(event.target.value)}
+          />
           <Label htmlFor="product-photo">产品图</Label>
           <Input
             id="product-photo"
@@ -154,7 +157,7 @@ export function BrandDesk() {
         <div className="mt-6 grid gap-2">
           <Label htmlFor="role">人物身份</Label>
           <Input id="role" value={role} onChange={(event) => setRole(event.target.value)} />
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex min-h-11 items-center gap-2 text-small md:min-h-8">
             <input
               type="checkbox"
               checked={consent}
@@ -187,25 +190,30 @@ export function BrandDesk() {
         </div>
 
         {error ? (
-          <p role="alert" className="mt-4 text-sm text-destructive">
+          <p role="alert" className="mt-4 text-caption text-danger">
             {error}
           </p>
         ) : null}
 
-        <Button type="submit" size="lg" className="mt-6 w-full" disabled={busy}>
+        <Button type="submit" size="lg" className="mt-6 w-full" disabled={busy} loading={busy}>
           {busy ? "正在整理资料" : "保存品牌资料"}
         </Button>
       </form>
 
-      <Card className="min-w-0 p-5">
-        <h2 className="text-sm font-medium">当前资料</h2>
+      <Card className="w-full min-w-0 p-4 md:p-5 lg:sticky lg:top-20 lg:w-80 lg:shrink-0">
+        <h2 className="text-h3 font-medium">当前资料</h2>
         {saved ? (
-          <div className="mt-4 grid gap-3 text-sm leading-6">
+          <div className="mt-4 grid gap-3 text-small">
             <p>已保存。之后新建的项目会自动套用这份 Logo、色彩、字体、行动号召和卖点。</p>
             {saved.previews.logo ? (
               // The preview is a data URL of our own cutout.
               // eslint-disable-next-line @next/next/no-img-element
-              <img src={saved.previews.logo} alt="" className="h-16 w-16 rounded-md border border-border bg-white object-contain" />
+              <img
+                src={saved.previews.logo}
+                alt=""
+                data-theme="light"
+                className="size-16 rounded-sm border border-border bg-surface object-contain"
+              />
             ) : null}
             <p>
               主色 {saved.brand_kit.colors.primary}，辅色 {saved.brand_kit.colors.secondary}，强调色{" "}
@@ -225,7 +233,7 @@ export function BrandDesk() {
             <p>未勾选肖像授权的人物不会出镜，也不能克隆声音。</p>
           </div>
         ) : (
-          <p className="mt-4 text-sm leading-6 text-muted-foreground">保存之后，这里会显示抠好的 Logo 和提取出的颜色。</p>
+          <p className="mt-4 text-small text-text-2">保存之后，这里会显示抠好的 Logo 和提取出的颜色。</p>
         )}
       </Card>
     </div>

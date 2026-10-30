@@ -3,8 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { useShellStage } from "@/components/hilatv/shell-stage";
 import { StoryboardStrip } from "@/components/storyboard-strip";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Progress } from "@/components/ui/progress";
 import { apiFetch, ensureSession, withSession, wsUrl } from "@/lib/api";
 import { readCards, type StoryboardCard } from "@/lib/storyboard";
 import {
@@ -12,7 +16,6 @@ import {
   latestMessage,
   latestPhase,
   mergeEvents,
-  PHASES,
   projectStatus,
   readAttachments,
   readEvents,
@@ -23,6 +26,7 @@ import {
   type ProjectSnapshot,
   type ShotSummary,
 } from "@/lib/progress";
+import { PROJECT_COPY, SHOT_STATUS, shotStatus, stageProgress, STAGES } from "@/lib/status-copy";
 
 export function ProgressBoard({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
@@ -97,91 +101,93 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
     };
   }, [projectId, tick]);
 
+  const phase = latestPhase(events, snapshot?.phase || STAGES[0]);
+  const status = projectStatus(snapshot?.status, events);
+  useShellStage(missing ? null : phase, status === "completed");
+
   if (missing) {
     return (
       <div className="mx-auto max-w-xl">
-        <h1 className="text-3xl font-semibold">项目不存在</h1>
+        <h1 className="text-h1 font-medium">{PROJECT_COPY.missing}</h1>
         <Button asChild className="mt-6">
-          <Link href="/">返回输入</Link>
+          <Link href="/">{PROJECT_COPY.backHome}</Link>
         </Button>
       </div>
     );
   }
 
-  const phase = latestPhase(events, snapshot?.phase || "理解需求");
-  const status = projectStatus(snapshot?.status, events);
-  const headline = latestMessage(events, snapshot?.message || "正在排队");
+  const headline = latestMessage(events, snapshot?.message || PROJECT_COPY.queued);
   const rows = shotViews(shots, events);
-  const phaseIndex = PHASES.indexOf(phase as (typeof PHASES)[number]);
+  const failed = status === "failed";
 
   return (
-    <div className="mx-auto grid min-w-0 max-w-3xl gap-6">
+    <div className="mx-auto grid w-full min-w-0 max-w-300 gap-6">
       <div>
-        <p className="text-sm text-muted-foreground">生成进度</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">正在做这条片</h1>
+        <p className="text-small text-text-2">生成进度</p>
+        <h1 className="mt-2 text-h1 font-medium tracking-wide">正在做这条片</h1>
         {snapshot?.sentence ? (
-          <p className="mt-3 break-words text-base leading-7 text-muted-foreground">{snapshot.sentence}</p>
+          <p className="mt-2 break-words text-body text-text-2">{snapshot.sentence}</p>
         ) : null}
       </div>
 
-      <ol aria-label="进度" className="flex flex-wrap gap-2">
-        {PHASES.map((item, index) => {
-          const active = item === phase;
-          const done = phaseIndex > index;
-          return (
-            <li
-              key={item}
-              aria-current={active ? "step" : undefined}
-              className={`rounded-full px-3 py-1.5 text-sm ${
-                active
-                  ? "bg-primary text-primary-foreground"
-                  : done
-                    ? "bg-accent text-foreground"
-                    : "bg-muted text-muted-foreground"
-              }`}
-            >
-              {item}
-            </li>
-          );
-        })}
-      </ol>
-
-      <p data-testid="current-message" role={status === "failed" ? "alert" : "status"} className="text-lg">
-        {headline}
-      </p>
-      {typeof snapshot?.elapsed_s === "number" ? (
-        <p className="text-sm text-muted-foreground">已用时 {Math.max(0, Math.round(snapshot.elapsed_s))} 秒</p>
-      ) : null}
+      <Card className="grid gap-3 p-4 md:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p
+            data-testid="current-message"
+            role={failed ? "alert" : "status"}
+            className={failed ? "text-h3 font-medium text-danger" : "text-h3 font-medium"}
+          >
+            {headline}
+          </p>
+          {typeof snapshot?.elapsed_s === "number" ? (
+            <p className="tabular text-caption text-text-3">
+              已用时 {Math.max(0, Math.round(snapshot.elapsed_s))} 秒
+            </p>
+          ) : null}
+        </div>
+        <Progress label="总进度" value={stageProgress(phase, status)} />
+      </Card>
 
       {snapshot?.status === "paused" && cards.length > 0 ? (
         <StoryboardStrip projectId={projectId} cards={cards} onSaved={() => setTick((value) => value + 1)} />
       ) : null}
 
       {rows.length > 0 ? (
-        <ol data-testid="shot-list" aria-label="分镜进度" className="grid gap-3">
-          {rows.map((shot) => (
-            <li key={shot.key} className="min-w-0 rounded-lg border border-border bg-card px-4 py-3">
-              {shot.purpose ? <p className="text-sm text-muted-foreground">{shot.purpose}</p> : null}
-              <p data-testid="shot-stage" className="mt-1 break-words text-base font-medium">
-                {shot.stage}
-              </p>
-            </li>
-          ))}
+        <ol data-testid="shot-list" aria-label="分镜进度" className="grid gap-2">
+          {rows.map((shot) => {
+            const tag = SHOT_STATUS[shotStatus(shot.stage, status)];
+            return (
+              <li
+                key={shot.key}
+                className="flex min-w-0 items-center gap-3 rounded-md border border-border bg-surface px-3 py-3 md:px-4"
+              >
+                <span className="tabular flex size-8 shrink-0 items-center justify-center rounded-sm bg-hover text-caption text-text-2">
+                  {shot.order}
+                </span>
+                <div className="min-w-0 flex-1">
+                  {shot.purpose ? <p className="text-caption text-text-3">{shot.purpose}</p> : null}
+                  <p data-testid="shot-stage" className="break-words text-body">
+                    {shot.stage}
+                  </p>
+                </div>
+                <Badge tone={tag.tone} className="shrink-0">
+                  {tag.label}
+                </Badge>
+              </li>
+            );
+          })}
         </ol>
       ) : (
-        <p className="text-sm text-muted-foreground">镜头会在分镜排好后逐条出现在这里。</p>
+        <p className="text-small text-text-2">{PROJECT_COPY.shotsLater}</p>
       )}
 
       {attachments.length > 0 ? (
         <div>
-          <h2 className="text-sm font-medium">已提交的素材</h2>
-          <ul className="mt-2 grid gap-1">
+          <h2 className="text-h3 font-medium">已提交的素材</h2>
+          <ul className="mt-2 flex flex-wrap gap-2">
             {attachments.map((item) => (
-              <li
-                key={item.upload_id || item.filename || item.uri}
-                className="break-all text-sm text-muted-foreground"
-              >
-                {attachmentLabel(item)}
+              <li key={item.upload_id || item.filename || item.uri} className="max-w-full">
+                <Badge className="break-all">{attachmentLabel(item)}</Badge>
               </li>
             ))}
           </ul>
@@ -189,7 +195,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
       ) : null}
 
       <div className="flex flex-wrap gap-3">
-        <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
+        <Button asChild variant="secondary" size="lg" className="w-full sm:w-auto">
           <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
         </Button>
         {status === "needs_human_review" ? (
