@@ -110,6 +110,73 @@ def test_pixel_count_is_rejected_before_decode() -> None:
         _open(header)
 
 
+def test_brand_id_without_enterprise_does_not_query_postgres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("unscoped database lookup")
+
+    monkeypatch.setattr("psycopg.connect", explode)
+    with pytest.raises(BrandReadError, match="enterprise_id"):
+        resolve_kit(
+            inline=None,
+            brand_id="brand-1",
+            enterprise_id=None,
+            project_id="p",
+            attempt=1,
+        )
+
+
+def test_export_hides_unconsented_archive_person(brand_dir) -> None:
+    assert brand_dir is not None
+    secret_photo = "oss://hidden/face.jpg"
+    secret_voice = "voice-secret-clone"
+    kit = {
+        "brand_id": "brand-hidden",
+        "company_name": "青岛测试机械",
+        "industry": "manufacturing",
+        "logo": {
+            "primary": "oss://logo.png",
+            "mono_white": "oss://logo-w.png",
+            "safe_area_ratio": 0.2,
+        },
+        "colors": {"primary": "#0A3D91", "secondary": "#FFFFFF", "accent": "#F5A623"},
+        "fonts": {"title": "NotoSansSC-Bold", "body": "NotoSansSC-Regular"},
+        "products": [],
+        "people": [
+            {
+                "person_id": "hidden-boss",
+                "role": "老板",
+                "photos": [secret_photo],
+                "consent": False,
+                "voice_id": secret_voice,
+            },
+            {
+                "person_id": "shown-engineer",
+                "role": "工程师",
+                "photos": ["oss://engineer.png"],
+                "consent": True,
+                "voice_id": None,
+            },
+        ],
+        "voice": {"tts_voice": "zh_male_steady", "speed": 1.0},
+        "tone": "专业",
+        "banned_words": ["最好"],
+        "cta": {"phone": "", "website": "", "wechat_qr": ""},
+    }
+    save_record(BrandRecord(enterprise_id=ENTERPRISE, brand_kit=kit, usable_people=["hidden-boss"]))
+    exported = export_record(load_record(ENTERPRISE))
+    rendered = str(exported)
+    assert secret_photo not in rendered
+    assert secret_voice not in rendered
+    assert "hidden-boss" not in rendered
+    assert exported["usable_people"] == ["shown-engineer"]
+    assert [person["role"] for person in exported["brand_kit"]["people"]] == ["工程师"]
+    stored = load_record(ENTERPRISE).brand_kit["people"][0]
+    assert stored["photos"] == [secret_photo]
+    assert stored["voice_id"] == secret_voice
+
+
 def test_base64_cap_is_checked_before_decoding() -> None:
     huge = "A" * 8_000_001
     with pytest.raises(ValidationError, match="图片过大"):

@@ -75,6 +75,12 @@ def test_saved_kit_is_reused_by_two_projects(client: TestClient) -> None:
     assert left["products"][0]["selling_points"] == points
 
 
+def test_brand_id_without_enterprise_is_rejected(client: TestClient) -> None:
+    response = client.post("/v1/projects", json={"sentence": "做一条片", "brand_id": "brand-1"})
+    assert response.status_code == 422
+    assert "enterprise_id" in response.json()["detail"]
+
+
 def test_bad_cutout_asks_for_another_picture(client: TestClient) -> None:
     response = client.post("/v1/brands", json=_body(noise_png()))
     assert response.status_code == 422

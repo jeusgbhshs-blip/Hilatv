@@ -108,7 +108,7 @@
 - 卖点只保留人工填写的句子，以及原文里已经出现的句子。模型多写的参数丢掉。用户改卖点或删掉的句子写回资料；删掉的句子追加进 `banned_words`，下一条片子不会再念。
 - 肖像授权只认品牌资料流程写入档案的 `consent=true`。项目里附带的资料（inline kit）即使自报 `consent=true` 也不算授权，人物和照片都不会进入下游。未授权的人可以留在档案里，但照片和声音编号会被清掉；`people_for_use` / `release_kit` 给 T13 和其他节点的结果里没有他们。`usable_people` 每次按当前授权重算，不沿用旧列表。未授权却填写 `voice_id` 时直接失败。
 - TODO(auth): `/v1/brands` 和创建项目时的 `enterprise_id` 由客户端自己填写，T15 没有登录态，也不校验调用者属于该企业。全局认证不在本任务。认证任务落地前，不能把这些接口当成已隔离的生产入口。
-- 企业资料存在 `HILATV_BRAND_DIR`（默认 `<项目目录>/_brands`）的 JSON 里。同一 `enterprise_id` 再开项目、且请求里不带 inline kit 时，按 Logo、色彩、字体、CTA、卖点套用。inline kit 只用于这一次项目，不会写回档案。`brand://` 必须带本企业的 UUID，路径必须落在该企业的存储目录内。按 `brand_id` 查文件只查当前企业，不扫描别的企业。Postgres `brand_kits` 仍是按 `brand_id` 的只读兜底，验收不连数据库。
+- 企业资料存在 `HILATV_BRAND_DIR`（默认 `<项目目录>/_brands`）的 JSON 里。同一 `enterprise_id` 再开项目、且请求里不带 inline kit 时，按 Logo、色彩、字体、CTA、卖点套用。inline kit 只用于这一次项目，不会写回档案。`brand://` 必须带本企业的 UUID，路径必须落在该企业的存储目录内。按 `brand_id` 查文件只查当前企业，不扫描别的企业。没有 `enterprise_id` 时拒绝这次查询，不再按 `brand_id` 去 Postgres 做不限企业的读取。
 - N3 读取 T25 写进行业模板的 `narrative_structures`（每行业 3–5 套），从中取 3 套做方案卡。不改 `templates/`。模型稿若两两余弦 ≥ 0.85、含禁用词或不可用，会带反馈再生成，最多 3 次；仍然不行就明确降级为 `source=template_fallback` 且 `degraded=true`，不能假装是模型通过。嵌入是本地字符二元组，不调用嵌入接口。
 - 封面和锚点图必须读到真实图片字节。`mock://` 或读不出来的地址是 `not_ready`，不写入可用锚点，也不用纯色图冒充封面。无 Key 时方案卡因此是降级结果，主流程仍可继续，但 `ok` 不是 true。
 - 主流程不暂停等选卡。没有 `concept_selection` 时 N3 仍生成三张卡，并自动记下「你帮我选」，所以 T10 的出片验收继续往下走。用户在方案页点了某一张，创建项目时带上那个方向 id。

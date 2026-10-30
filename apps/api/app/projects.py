@@ -62,6 +62,8 @@ def brand_for_request(body: CreateProject, *, project_id: str) -> dict[str, Any]
     TODO(auth): enterprise_id is client-supplied and unauthenticated until the auth task.
     """
 
+    if body.brand_id and not body.enterprise_id:
+        raise HTTPException(status_code=422, detail="按 brand_id 查询必须带 enterprise_id")
     try:
         if body.enterprise_id:
             uuid.UUID(body.enterprise_id)

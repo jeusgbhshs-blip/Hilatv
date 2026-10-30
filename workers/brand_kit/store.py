@@ -12,7 +12,6 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from workers.brand_kit.people import people_for_use, release_kit
-from workers.logging import log_event
 from workers.schemas.brand import BrandKit
 
 
@@ -139,7 +138,7 @@ def resolve_kit(
         if record is not None:
             return export_record(record)["brand_kit"]
     if brand_id and not enterprise_id:
-        return _from_database(brand_id, project_id=project_id, attempt=attempt)
+        raise BrandReadError("brand_id lookup requires enterprise_id")
     return None
 
 
@@ -173,52 +172,6 @@ def export_record(record: BrandRecord) -> dict[str, Any]:
         "mono_black": mono,
         "preferences": list(record.preferences),
     }
-
-
-def _validated(document: dict[str, Any], *, project_id: str, attempt: int) -> dict[str, Any] | None:
-    try:
-        kit = release_kit(BrandKit.model_validate(document), trust_consent=True)
-        return kit.model_dump(mode="json")
-    except ValidationError as exc:
-        log_event(
-            "n02_brand_kit_invalid",
-            project_id=project_id,
-            node="n02_brand_kit",
-            attempt=attempt,
-            error=str(exc)[:300],
-        )
-        return None
-
-
-def _from_database(brand_id: str, *, project_id: str, attempt: int) -> dict[str, Any] | None:
-    url = os.getenv("DATABASE_URL", "").strip()
-    if not url:
-        return None
-    try:
-        import psycopg
-    except ImportError:
-        return None
-    try:
-        with psycopg.connect(url, connect_timeout=2) as conn:
-            row = conn.execute(
-                "SELECT document FROM brand_kits WHERE brand_id = %s",
-                (brand_id,),
-            ).fetchone()
-    except Exception as exc:
-        log_event(
-            "n02_brand_kit_unavailable",
-            project_id=project_id,
-            node="n02_brand_kit",
-            attempt=attempt,
-            error=str(exc)[:300],
-        )
-        return None
-    if row is None:
-        return None
-    document = row[0]
-    if isinstance(document, str):
-        document = json.loads(document)
-    return _validated(document, project_id=project_id, attempt=attempt)
 
 
 def _parse_uri(uri: str) -> tuple[str, str] | None:
