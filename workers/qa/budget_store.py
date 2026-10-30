@@ -50,6 +50,18 @@ class ProjectBudget(RetryBudget):
         self.used = self._read_used()
         return self.used < self.limit
 
+    def can_take(self, count: int) -> bool:
+        """True when ``count`` more regens still fit. This does not spend.
+
+        Storyboard narration uses this before its two ``try_take`` calls.
+        ``try_take_n`` applies the same comparison inside the file lock.
+        """
+
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise SettingsError("regen budget count must be an integer >= 1")
+        self.allow()
+        return self.used + count <= self.limit
+
     def consume(self) -> None:
         self.try_take()
 
@@ -61,7 +73,9 @@ class ProjectBudget(RetryBudget):
     def try_take_n(self, count: int) -> bool:
         """Spend ``count`` regens in one update, or spend nothing.
 
-        The file lock makes the check and the add one step. A second caller
+        The file lock makes the fit check and the add one step, the same
+        rule as ``can_take``: if the whole count does not fit, nothing is
+        spent. A count that already landed is never lowered. A second caller
         that arrives while this one holds the lock sees the new total, so two
         reviews cannot both spend the same remaining slots.
         """

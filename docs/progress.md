@@ -79,9 +79,14 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：已并入 main `43d2401`（SEC-54 会话身份 #56）。终审命令用 `project_for`；别的企业访问交付接口是 404
-- 正在做什么：T22 N16 成片终审。抽帧和转写走 gateway judge/asr（mock）。硬伤拦截 47/47，干净片 6/6 放行且不重跑。`visual_reviewed` 在 mock 下是 false，VLM 实帧和 ASR 听写记未测。`HILATV_LIVE=1` 时未评审不放行，项目停在 `needs_human_review`，交付 409
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。无 Key，终审走 mock
+- 合并了哪些：已并入 main `398be89`（T23 旁白预算 #57）和 `43d2401`（SEC-54 #56）
+- 正在做什么：T22 成片终审。live 下证据不足或有硬伤就停在 `needs_human_review` 并清掉母版。重生用 `try_take_n`，整批不够就一次不扣，和旁白改字的「不够付两次就一次不扣」同一条规则。无 Key，`HILATV_LIVE` 关闭
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+
+### 2026-10-30
+- 正在做什么：T23 旁白改字的回归。账本只剩 1 次时，改旁白要付两次，旧实现先扣掉那 1 次再拒绝。现已改为不够付两次就一次不扣；第二次 `try_take` 失败时已记下的次数不退。项目不改脚本、不配音、不出片。无 Key，`HILATV_LIVE` 关闭。
+- 合并了哪些：无。
+- 需要提供什么：无。
 
 ### 2026-10-30
 - 正在做什么：T19 专家模式画布。查看每镜关键帧、视频候选和质检结论，手动重跑该节点及下游。重生次数只通过 `open_project_budget.try_take` 增加，写在 `regen_budget.json`，不进快照。未评审镜头停在 `needs_human_review`，重跑不会交出成片。无 Key，`HILATV_LIVE` 关闭。
@@ -121,7 +126,7 @@
 - 合规不另写规则。调用 `workers.nodes.n16_review`（极限词、内容安全、授权、肖像）。`HILATV_LIVE=1` 时 mock 或未完成的内容安全照 T20 阻断。缺「AI生成」不放行。`omit_ai_label` 和「去掉 AI 标识」直接拒绝。
 - 钩子和叙事的 VLM 分在 mock 下记未测。结构上：成片镜头都在脚本里且顺序一致；首镜有目的或旁白。对不上就不放行，也不当视频硬伤去重生。
 - mock ASR 回显 `reference_text`（缺省是脚本旁白）。听到的声音和旁白是否一致记未测。成片没有音轨时写一段静音再调用 gateway `asr`，仍然算调用过。`HILATV_LIVE=1` 且 ASR 结果仍是 mock，视为没听过，不放行。
-- 有内容硬伤才生成 `DirectorDecision`，`target.shot_id` 只有这一镜，节点是 `N10`。产品形变、人脸、闪烁走 `switch_model`，其他硬伤走 `regenerate`。敏感内容走 `ask_user`，不扣次数。满 3 次走 AI fallback。`changes.source` 固定 `ai_generated`，不写补拍、实拍或客户素材。每一次 `regenerate` / `switch_model` 调用一次 `open_project_budget.try_take`。额度不够就拒绝这一镜，不放行；项目已有快照时状态改为 `needs_human_review`。没有第二本账。
+- 有内容硬伤才生成 `DirectorDecision`，`target.shot_id` 只有这一镜，节点是 `N10`。产品形变、人脸、闪烁走 `switch_model`，其他硬伤走 `regenerate`。敏感内容走 `ask_user`，不扣次数。满 3 次走 AI fallback。`changes.source` 固定 `ai_generated`，不写补拍、实拍或客户素材。要重生的镜头数一次交给 `try_take_n`。和 T23 的旁白改字一样：整批放不进剩余次数就一次都不扣。已经记下的次数不退。没有第二本账。
 - 只有每一镜 `visual_reviewed is True` 才把总分当成 VLM 分。否则 `vlm_total` 写「未测」，规则分仅供参考（干净画面约 8.6），`quality_pass` 不是 true。`HILATV_LIVE=1` 时，ASR、整片 judge、单镜评审任一失败，或 judge 没看过画面，或仍有硬伤，都写入 `needs_human_review` 并清掉 `deliverable`。已有母版也不能交付，本企业的 deliveries 返回 409。硬伤决策仍然只指向受影响的镜头，但 live 下不会在暂停之外放行。
 - 一次终审要重生的镜头先在 `locked_project` 里数清，再调用 `open_project_budget.try_take_n`。额度不够整批就一次都不扣，并暂停。N10 自己不扣这本账，所以一镜只扣一次。Logo / CTA 的像素是否在画面上，mock 和未看过帧的 live 都记「未测」，live 不能靠 elements 当成已经看见。
 - `enterprise_id` 只从项目快照读。请求体里的同名字段在校验前丢掉。单独重跑的命令要求登录会话，并用 SEC-54 的 `project_for` 核对项目属于该企业；对不上时和接口一样当作项目不存在（HTTP 交付是 404，命令行退出码 2，文案「项目不存在」）。本任务没有新的 HTTP 路由。
@@ -298,7 +303,7 @@
 - 这一步的 N9 只调用 `review_shot` 记下 `visual_reviewed`，不调用导演决策，也不扣重生次数。Mock 关键帧过不了质检；如果在这里按未通过去重生，会把 N8 选中的帧清掉，后面的图生视频没有首帧，还会在用户还没看卡片时花掉项目重生额度。完整的 N9 重生循环仍留在 `workers/nodes/n09_keyframe_qa`，给单独调用。
 - 卡片上的旁白由前端画。改字写回 Script，只重跑该镜的 N6，并经 T16 的 `_voice` / `_keyframes` 重做该镜画面。不把旁白或画面字写进图像、视频提示词。其他镜头的配音文件不打开重写。
 - 画面能不能当预览：`mock://`、http(s)、项目目录外的路径、打不开的文件，以及整张只有一种颜色的色块，都是 `unavailable`，不给图片地址。`visual_reviewed` 只有预览可用且 `review_shot` 的该字段为 true 时才是 true。Mock 下关键帧像素记「未测」。
-- 改旁白先连扣两次 `open_project_budget.try_take()`（新配音一次、新关键帧一次），都在 TTS 之前。任一次失败就整次拒绝，不改脚本、不调用 TTS、不重生画面。次数只在 `regen_budget.json`，不写入 `project.json`。
+- 改旁白要先付两次 `open_project_budget.try_take()`（新配音一次、新关键帧一次），都在内容审核和 TTS 之前。账本剩下的次数不够付这两次时，一次都不扣，直接拒绝。第二次 `try_take` 失败时，已经记下的那一次不退回（只增不减），版本回滚也不能把 `used` 改小，也不能超过 `HILATV_QA_PROJECT_RETRIES`。两种情况都整次拒绝：不改脚本、不调用审核和 TTS、不重生画面、不交出成片。用户看到「项目重生次数已到上限」。次数只在 `regen_budget.json`，不写入 `project.json`。这条接口仍先走 SEC-54：缺会话是 401，别的企业是 404，这两种都不动账本。
 - 改过的旁白在 TTS 之前走内容审核。`HILATV_LIVE=1` 时，未评审、mock 或报错都是 422，不落任何文件。mock 模式仍会调用审核；只有明确拦截才拒绝。
 - 分镜等待默认 86400 秒（`HILATV_STORYBOARD_WAIT_S`）。超时把项目标成 `timed_out` 且 `cancellable`，不自动往下出片。
 - 配音和关键帧重跑带上项目记录里的 `enterprise_id`，不读请求体。这样档案里已授权的克隆声线和人物才能过 T20 的同意校验。`revise.py` 同样从快照读取，对应 #52。

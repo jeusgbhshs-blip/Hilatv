@@ -41,6 +41,18 @@ def test_the_counter_only_increases(tmp_path, monkeypatch: pytest.MonkeyPatch) -
     assert again.used == 3
 
 
+def test_can_take_refuses_before_spending(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "2")
+    budget = open_project_budget("proj-fit")
+    assert budget.try_take() is True
+    assert budget.can_take(1) is True
+    assert budget.can_take(2) is False
+    assert budget.used == 1
+    assert budget.try_take_n(2) is False
+    assert budget.used == 1
+
+
 def test_try_take_n_spends_all_or_nothing(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "3")
