@@ -467,10 +467,10 @@ def test_two_different_batches_reserve_before_n10(tmp_path: Path, monkeypatch) -
     real_begin = ProjectBudget.begin_batch
     entered = threading.Barrier(2)
 
-    def begin(self: ProjectBudget, count: int, key: str) -> str:
-        status = real_begin(self, count, key)
+    def begin(self: ProjectBudget, count: int, key: str) -> tuple[str, str]:
+        status, token = real_begin(self, count, key)
         entered.wait(5)
-        return status
+        return status, token
 
     def wrapped(raw: dict, **kwargs: object):
         calls.append(raw.get("shot_id"))
@@ -542,6 +542,31 @@ def test_partial_redo_charges_only_the_saved_shot(gateway, tmp_path: Path, monke
     assert {row["shot_id"] for row in videos["videos"]} == {"S01"}
     snapshot = read_snapshot("t22part") or {}
     assert snapshot["status"] == "needs_human_review"
+
+
+def test_redo_does_not_save_after_the_deadline(gateway, tmp_path: Path, monkeypatch) -> None:
+    import time
+
+    from workers.nodes.n10_video.node import run as run_video
+
+    monkeypatch.setenv("HILATV_BUDGET_RESERVE_TTL_S", "0.4")
+    init_project("t22late", sentence="一句", status="completed")
+    anchor = _png(tmp_path / "t22late" / "anchor.png", _plate("rect"))
+    plant_opening("t22late", "S01", Path(anchor))
+    film = write_film("t22late", [_plate("shear")])
+
+    def slow(raw: dict, **kwargs: object):
+        time.sleep(0.5)
+        return run_video(raw, **kwargs)
+
+    monkeypatch.setattr("workers.nodes.n10_video.node.run", slow)
+    result = run(
+        request_for("t22late", film, ["S01"], seconds_each=1.0, anchors={"S01": anchor}),
+        gateway=gateway,
+    )
+    assert result.payload["budget_taken"] == 0
+    assert open_project_budget("t22late").used == 0
+    assert not (project_folder("t22late") / "nodes" / "n10_video.json").is_file()
 
 
 def test_human_release_restores_the_held_master(gateway, tmp_path: Path, monkeypatch) -> None:

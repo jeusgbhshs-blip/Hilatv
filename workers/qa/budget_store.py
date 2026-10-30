@@ -15,6 +15,7 @@ import fcntl
 import json
 import os
 import time
+import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -90,52 +91,56 @@ class ProjectBudget(RetryBudget):
         self.limit = project_retry_cap()
         return taken
 
-    def begin_batch(self, count: int, key: str) -> str:
+    def begin_batch(self, count: int, key: str) -> tuple[str, str]:
         """Reserve ``count`` under the ledger lock, or report why it must not run.
 
-        Returns ``begun``, ``already``, ``pending``, or ``refused``.
-        ``begun`` holds the slots until ``finish_batch`` or ``abort_batch``.
-        Other takers, including ``try_take_n`` and ``can_take``, see that hold.
+        Returns ``(status, token)``. ``status`` is ``begun``, ``already``,
+        ``pending``, or ``refused``. ``token`` is set only for ``begun``.
+        ``finish_batch`` and ``abort_batch`` must present that token.
+        ``begun`` holds the slots until finish or abort. Other takers,
+        including ``try_take_n`` and ``can_take``, see that hold.
         ``used`` does not move here. A batch that does not fit is refused
-        before anything is regenerated. ``already`` means this key was charged.
-        ``pending`` means this key already holds a live reservation.
+        before anything is regenerated.
         """
 
         _check_count(count)
         _check_key(key)
-        status, used, reserved = _batch(
-            self.path, limit=project_retry_cap(), op="begin", count=count, key=key
+        status, token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="begin", count=count, key=key, token=""
+        )
+        self.used = used
+        self.reserved = reserved
+        self.limit = project_retry_cap()
+        return status, token
+
+    def finish_batch(self, count: int, key: str, token: str) -> str:
+        """Bill ``count`` saved shots for this reservation token.
+
+        A matching token turns that reservation into ``used`` and releases any
+        unused slots. A token whose reservation already expired still adds
+        ``count`` to ``used`` and holds the project, and it does not touch a
+        newer reservation of the same key. ``used`` only increases. The same
+        token is not billed twice.
+        """
+
+        _check_count(count)
+        _check_key(key)
+        _check_token(token)
+        status, _token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="finish", count=count, key=key, token=token
         )
         self.used = used
         self.reserved = reserved
         self.limit = project_retry_cap()
         return status
 
-    def finish_batch(self, count: int, key: str) -> bool:
-        """Turn a reservation into ``used`` for the shots that were saved.
-
-        ``count`` is how many shots were regenerated. Anything reserved above
-        that is released. ``used`` only increases, and only by ``count``.
-        A second finish for the same key does not add again. A missing
-        reservation is not charged.
-        """
-
-        _check_count(count)
-        _check_key(key)
-        status, used, reserved = _batch(
-            self.path, limit=project_retry_cap(), op="finish", count=count, key=key
-        )
-        self.used = used
-        self.reserved = reserved
-        self.limit = project_retry_cap()
-        return status == "taken"
-
-    def abort_batch(self, key: str) -> None:
-        """Release a reservation. The spent counter stays where it is."""
+    def abort_batch(self, key: str, token: str) -> None:
+        """Release this token's reservation. Another token's hold stays."""
 
         _check_key(key)
-        _status, used, reserved = _batch(
-            self.path, limit=project_retry_cap(), op="abort", count=1, key=key
+        _check_token(token)
+        _status, _token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="abort", count=1, key=key, token=token
         )
         self.used = used
         self.reserved = reserved
@@ -145,8 +150,8 @@ class ProjectBudget(RetryBudget):
         """``applied``, ``pending``, or ``free``. An expired reservation is ``free``."""
 
         _check_key(key)
-        status, used, reserved = _batch(
-            self.path, limit=project_retry_cap(), op="status", count=1, key=key
+        status, _token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="status", count=1, key=key, token=""
         )
         self.used = used
         self.reserved = reserved
@@ -189,7 +194,22 @@ def _check_key(key: str) -> None:
         raise SettingsError("regen budget key is invalid")
 
 
-def _reserve_ttl_s() -> float:
+def _check_token(token: str) -> None:
+    if not isinstance(token, str) or not token or len(token) > 64 or "\n" in token:
+        raise SettingsError("regen budget token is invalid")
+
+
+def reserve_ttl_s() -> float:
+    """Wall-clock lifetime of one reservation. Default 900s.
+
+    The file is shared by processes, so the expiry has to be ``time.time``
+    rather than ``time.monotonic``: another process cannot read this one's
+    monotonic clock. A step of the wall clock can expire a reservation early
+    or stretch it. The N16 redo loop stops on a monotonic deadline of half
+    this value, so the default 900s leaves a 450s gap after the worker stops
+    saving. 450s is the longest that loop will run.
+    """
+
     raw = os.getenv("HILATV_BUDGET_RESERVE_TTL_S", "").strip()
     if not raw:
         return 900.0
@@ -207,11 +227,20 @@ def _reserved_total(state: dict[str, Any]) -> int:
 
 
 def _drop_expired(state: dict[str, Any], now: float) -> list[str]:
+    """Move expired holds aside so a late finish can still bill them.
+
+    ``now`` is wall-clock seconds, matching the expiry stored in the file.
+    """
+
     expired: list[str] = []
-    kept: dict[str, dict[str, float | int]] = {}
+    kept: dict[str, dict[str, Any]] = {}
+    remembered = state["expired_tokens"]
     for key, item in state["reserved"].items():
         if float(item["expires"]) <= now:
             expired.append(key)
+            token = str(item.get("token") or "")
+            if token and token not in state["audit"]:
+                remembered[token] = {"count": int(item["count"]), "key": key}
         else:
             kept[key] = item
     state["reserved"] = kept
@@ -231,45 +260,75 @@ def _update(path: Path, *, limit: int, take: int) -> tuple[bool, int, int]:
     return bool(taken), used, reserved
 
 
-def _batch(path: Path, *, limit: int, op: str, count: int, key: str) -> tuple[str, int, int]:
+def _batch(
+    path: Path, *, limit: int, op: str, count: int, key: str, token: str
+) -> tuple[str, str, int, int]:
     """One locked update for a redo batch. ``used`` never goes down."""
 
-    def change(state: dict[str, Any], cap: int) -> str:
-        applied: dict[str, int] = state["applied"]
-        reserved: dict[str, dict[str, float | int]] = state["reserved"]
-        if op == "status":
-            if key in applied:
-                return "applied"
-            if key in reserved:
-                return "pending"
-            return "free"
-        if op == "abort":
-            reserved.pop(key, None)
-            return "aborted"
-        if op == "begin":
-            if key in applied:
-                return "already"
-            if key in reserved:
-                return "pending"
-            if state["used"] + _reserved_total(state) + count > cap:
-                return "refused"
-            reserved[key] = {"count": count, "expires": time.time() + _reserve_ttl_s()}
-            return "begun"
+    def change(state: dict[str, Any], cap: int) -> tuple[str, str]:
+        return _change_batch(state, cap=cap, op=op, count=count, key=key, token=token)
+
+    result, used, reserved_total = _with_ledger(path, limit, change)
+    status, issued = result
+    return str(status), str(issued), used, reserved_total
+
+
+def _change_batch(
+    state: dict[str, Any], *, cap: int, op: str, count: int, key: str, token: str
+) -> tuple[str, str]:
+    applied: dict[str, int] = state["applied"]
+    reserved: dict[str, dict[str, Any]] = state["reserved"]
+    audit: dict[str, dict[str, Any]] = state["audit"]
+    if op == "status":
         if key in applied:
-            return "already"
+            return "applied", ""
+        if key in reserved:
+            return "pending", ""
+        return "free", ""
+    if op == "abort":
         reservation = reserved.get(key)
-        if not isinstance(reservation, dict):
-            return "refused"
+        if isinstance(reservation, dict) and reservation.get("token") == token:
+            reserved.pop(key, None)
+        return "aborted", ""
+    if op == "begin":
+        if key in applied:
+            return "already", ""
+        if key in reserved:
+            return "pending", ""
+        if state["used"] + _reserved_total(state) + count > cap:
+            return "refused", ""
+        issued = uuid.uuid4().hex
+        reserved[key] = {
+            "count": count,
+            "expires": time.time() + reserve_ttl_s(),
+            "token": issued,
+        }
+        return "begun", issued
+    if token in audit:
+        return "already", ""
+    reservation = reserved.get(key)
+    if isinstance(reservation, dict) and reservation.get("token") == token:
         charge = count if count <= int(reservation["count"]) else int(reservation["count"])
         reserved.pop(key, None)
         if charge < 1:
-            return "refused"
+            return "refused", ""
         state["used"] += charge
         applied[key] = charge
-        return "taken"
-
-    status, used, reserved_total = _with_ledger(path, limit, change)
-    return str(status), used, reserved_total
+        audit[token] = {"count": charge, "key": key, "reason": "finished"}
+        return "taken", ""
+    stale = state["expired_tokens"].get(token)
+    if not isinstance(stale, dict):
+        return "refused", ""
+    ceiling = int(stale["count"])
+    charge = count if count <= ceiling else ceiling
+    state["expired_tokens"].pop(token, None)
+    if charge < 1:
+        return "refused", ""
+    # A late worker's saved shots are billed without taking the live reservation.
+    state["used"] += charge
+    audit[token] = {"count": charge, "key": str(stale.get("key") or key), "reason": "late"}
+    state["_hold_late"] = True
+    return "audited", ""
 
 
 def _with_ledger(
@@ -288,6 +347,7 @@ def _with_ledger(
         result = change(state, limit)
         if state["used"] < previous:
             raise SettingsError("regen budget cannot decrease")
+        hold_late = bool(state.pop("_hold_late", False))
         payload = _dump(state, limit)
         handle.seek(0)
         handle.truncate()
@@ -296,46 +356,18 @@ def _with_ledger(
         os.fsync(handle.fileno())
         used = state["used"]
         reserved = _reserved_total(state)
-    if expired:
-        _hold_expired(path.parent.name)
+    # Ledger lock is released before the project lock. See hold_expired_budget.
+    if expired or hold_late:
+        from workers.workflow.store import hold_expired_budget
+
+        hold_expired_budget(path.parent.name)
     return result, used, reserved
-
-
-def _hold_expired(project_id: str) -> None:
-    """A crashed reservation is released. The project stops for a person."""
-
-    from workers.workflow.store import (
-        contained_file,
-        read_snapshot,
-        update_snapshot,
-        valid_project_id,
-    )
-
-    if not valid_project_id(project_id):
-        return
-    snapshot = read_snapshot(project_id)
-    if not isinstance(snapshot, dict):
-        return
-    if snapshot.get("status") == "needs_human_review" and not snapshot.get("deliverable"):
-        return
-    fields: dict[str, Any] = {
-        "status": "needs_human_review",
-        "phase": "待人工复核",
-        "node": "n16_final_review",
-        "message": "重生预留已超时，成片暂停，需要人工放行",
-        "paused": True,
-        "deliverable": None,
-    }
-    kept = contained_file(project_id, snapshot.get("deliverable"))
-    if kept:
-        fields["held_deliverable"] = kept
-    update_snapshot(project_id, **fields)
 
 
 def _parse(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if not text:
-        return {"used": 0, "applied": {}, "reserved": {}}
+        return {"used": 0, "applied": {}, "reserved": {}, "expired_tokens": {}, "audit": {}}
     try:
         data = json.loads(text)
         used = int(data["used"])
@@ -353,7 +385,13 @@ def _parse(raw: str) -> dict[str, Any]:
         if count < 1:
             raise SettingsError("regen budget file is unreadable")
         clean_applied[key] = count
-    return {"used": used, "applied": clean_applied, "reserved": _parse_reserved(data)}
+    return {
+        "used": used,
+        "applied": clean_applied,
+        "reserved": _parse_reserved(data),
+        "expired_tokens": _parse_token_map(data.get("expired_tokens")),
+        "audit": _parse_token_map(data.get("audit"), with_reason=True),
+    }
 
 
 def _dump(state: dict[str, Any], limit: int) -> str:
@@ -366,6 +404,10 @@ def _dump(state: dict[str, Any], limit: int) -> str:
         payload["applied"] = state["applied"]
     if state["reserved"]:
         payload["reserved"] = state["reserved"]
+    if state["expired_tokens"]:
+        payload["expired_tokens"] = state["expired_tokens"]
+    if state["audit"]:
+        payload["audit"] = state["audit"]
     return json.dumps(payload) + "\n"
 
 
@@ -382,7 +424,11 @@ def _parse_reserved(data: dict[str, Any]) -> dict[str, dict[str, float | int]]:
                 raise SettingsError("regen budget file is unreadable")
             if isinstance(expires, bool) or not isinstance(expires, int | float):
                 raise SettingsError("regen budget file is unreadable")
-            found[key] = {"count": count, "expires": float(expires)}
+            token = item.get("token")
+            if not isinstance(token, str) or not token:
+                found[key] = {"count": count, "expires": 0.0, "token": ""}
+            else:
+                found[key] = {"count": count, "expires": float(expires), "token": token}
         return found
     legacy = data.get("pending")
     if legacy is None:
@@ -394,5 +440,30 @@ def _parse_reserved(data: dict[str, Any]) -> dict[str, dict[str, float | int]]:
     for key in legacy:
         if not isinstance(key, str):
             raise SettingsError("regen budget file is unreadable")
-        found[key] = {"count": 1, "expires": 0.0}
+        found[key] = {"count": 1, "expires": 0.0, "token": ""}
+    return found
+
+
+def _parse_token_map(raw: object, *, with_reason: bool = False) -> dict[str, dict[str, Any]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise SettingsError("regen budget file is unreadable")
+    found: dict[str, dict[str, Any]] = {}
+    for token, item in raw.items():
+        if not isinstance(token, str) or not isinstance(item, dict):
+            raise SettingsError("regen budget file is unreadable")
+        count = item.get("count")
+        key = item.get("key")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise SettingsError("regen budget file is unreadable")
+        if not isinstance(key, str):
+            raise SettingsError("regen budget file is unreadable")
+        row: dict[str, Any] = {"count": count, "key": key}
+        if with_reason:
+            reason = item.get("reason")
+            if not isinstance(reason, str) or not reason:
+                raise SettingsError("regen budget file is unreadable")
+            row["reason"] = reason
+        found[token] = row
     return found

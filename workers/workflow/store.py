@@ -171,6 +171,36 @@ def update_snapshot(project_id: str, **fields: Any) -> dict[str, Any]:
         return snapshot
 
 
+def hold_expired_budget(project_id: str) -> None:
+    """Stop a project after a regen reservation expires or a late charge lands.
+
+    Callers must already have released the regen-budget file lock. The lock
+    order is the project lock first, then that file lock, whenever one thread
+    holds both. This function takes only the project lock, and it reads and
+    writes the snapshot inside that lock so a concurrent save is not overwritten
+    from a stale copy.
+    """
+
+    if not valid_project_id(project_id):
+        return
+    with locked_project(project_id) as directory:
+        if not (directory / "project.json").is_file():
+            return
+        snapshot = _read(directory, project_id)
+        if snapshot.get("status") == "needs_human_review" and not snapshot.get("deliverable"):
+            return
+        kept = contained_file(project_id, snapshot.get("deliverable"))
+        snapshot["status"] = "needs_human_review"
+        snapshot["phase"] = "待人工复核"
+        snapshot["node"] = "n16_final_review"
+        snapshot["message"] = "重生预留已超时，成片暂停，需要人工放行"
+        snapshot["paused"] = True
+        snapshot["deliverable"] = None
+        if kept:
+            snapshot["held_deliverable"] = kept
+        _write(directory, snapshot)
+
+
 def read_snapshot(project_id: str) -> dict[str, Any] | None:
     if not valid_project_id(project_id):
         return None

@@ -15,7 +15,7 @@ from typing import Any
 from gateway.constants import NO_RENDERED_TEXT
 from workers.logging import log_event
 from workers.nodes.n16_final_review.schema import N16FinalInput, NodeRequest
-from workers.qa.budget_store import open_project_budget
+from workers.qa.budget_store import open_project_budget, reserve_ttl_s
 from workers.schemas.director import DecisionAction, DirectorDecision
 from workers.workflow.store import load_checkpoint, project_path, read_snapshot, save_node
 
@@ -46,14 +46,14 @@ def apply_redos(
         return kept, 0, False
     key = _batch_key(request, payload, shot_ids)
     budget = open_project_budget(request.project_id)
-    status = budget.begin_batch(len(shot_ids), key)
+    status, token = budget.begin_batch(len(shot_ids), key)
     if status == "refused":
         return [], 0, True
     if status in {"already", "pending"}:
         if status == "pending":
             waited = _wait(request.project_id, key)
             if waited == "free":
-                status = budget.begin_batch(len(shot_ids), key)
+                status, token = budget.begin_batch(len(shot_ids), key)
             else:
                 return kept, 0, False
         else:
@@ -62,9 +62,12 @@ def apply_redos(
             return [], 0, True
         if status != "begun":
             return kept, 0, False
-    produced = _execute(request, payload, chargeable, shot_ids, gateway=gateway)
+    # Monotonic, and strictly shorter than the wall-clock reservation TTL.
+    deadline = time.monotonic() + _redo_deadline_s()
+    produced = _execute(request, payload, chargeable, shot_ids, gateway=gateway, deadline=deadline)
     if not produced:
-        budget.abort_batch(key)
+        if token:
+            budget.abort_batch(key, token)
         log_event(
             "n16_redo_skipped",
             project_id=request.project_id,
@@ -73,13 +76,26 @@ def apply_redos(
             attempt=request.attempt,
         )
         return kept, 0, False
-    if not budget.finish_batch(len(produced), key):
+    outcome = budget.finish_batch(len(produced), key, token)
+    if outcome not in {"taken", "audited"}:
         return [], 0, True
     saved = set(produced)
     if saved == set(shot_ids):
         return planned, len(shot_ids), False
     chosen = [item for item in planned if item.action not in _REGEN or item.target.shot_id in saved]
     return chosen, len(produced), False
+
+
+def _redo_deadline_s() -> float:
+    """Half the reservation TTL. Default TTL is 900s, so this is 450s.
+
+    450s is the longest this N10 loop runs. The reservation stays on the
+    wall clock for 900s so another process can see it. This deadline uses
+    ``time.monotonic`` so a wall-clock step cannot keep saves going after
+    the worker's own budget. 450s is strictly inside the 900s reservation.
+    """
+
+    return reserve_ttl_s() / 2
 
 
 def _execute(
@@ -89,6 +105,7 @@ def _execute(
     shot_ids: list[str],
     *,
     gateway: Any,
+    deadline: float,
 ) -> list[str]:
     from workers.nodes.n10_video.node import run as run_video
 
@@ -99,6 +116,9 @@ def _execute(
     produced: list[str] = []
     try:
         for shot_id in shot_ids:
+            if time.monotonic() >= deadline:
+                break
+            remaining = deadline - time.monotonic()
             result = run_video(
                 {
                     "project_id": request.project_id,
@@ -118,6 +138,7 @@ def _execute(
                 },
                 gateway=gateway,
                 max_attempts=1,
+                timeout_s=max(0.05, remaining),
             )
             rows = [
                 item
@@ -127,6 +148,8 @@ def _execute(
             failed = set(result.payload.get("generation_failed") or [])
             if shot_id in failed or not rows:
                 return produced
+            if time.monotonic() >= deadline:
+                break
             _store_videos(request.project_id, rows)
             produced.append(shot_id)
     except Exception as exc:
