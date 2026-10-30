@@ -1,22 +1,23 @@
 """T21 acceptance.
 
-Picture-cut alignment is not met: T10 still cuts on N6 durations, so this
-command does not treat a plan-versus-grid check as the SPEC beat limit.
-Ducking is the music level under narration versus the gaps, recovered from
-the rendered mix. Master loudness is ffmpeg ebur128 on the N15 mp4.
+Picture cuts are read from the N15 mp4. Beats are onsets in that same file.
+N12's planned cut list is not compared with itself. Ducking is the music
+level under narration versus the gaps, recovered from the rendered mix.
+Master loudness is ffmpeg ebur128 on the N15 mp4.
 """
 
 from __future__ import annotations
 
-import array
+import copy
 import os
 from pathlib import Path
 from typing import Any
 
 from gateway.media_bytes import speech_timestamps
-from workers.nodes.n12_music.measure import ducking_db_on_mix, integrated_lufs, read_wav
+from workers.nodes.n12_music.measure import ducking_db_on_mix, integrated_lufs
 from workers.nodes.n12_music.node import run
-from workers.nodes.n12_music.qa import QAError
+from workers.nodes.n12_music.picture import measure_picture_cuts
+from workers.nodes.n12_music.qa import BEAT_LIMIT_MS, QAError
 from workers.nodes.n12_music.schema import LicenseRecord
 
 
@@ -32,16 +33,17 @@ def main() -> int:
         print(f"T21 accept: FAIL {exc}")
         return 1
     print(
-        "picture_cut_alignment={picture_cut_alignment} "
-        "internal_grid_check_ms={internal_grid_ms:.2f} "
+        "picture_cut_ms={picture_cut_ms:.2f} "
+        "picture_cuts={picture_cuts} "
+        "picture_beats={picture_beats} "
         "ducking_db={ducking_db:.2f} "
         "narration_lufs={narration_lufs:.2f} "
         "mix_lufs={mix_lufs:.2f} "
         "mp4_lufs={mp4_lufs:.2f}".format(**metrics)
     )
     print(
-        "T21 accept: picture cuts 未达标 / 遗留 (not aligned on the film). "
-        "ducking 10–12 dB measured on the mix. N15 mp4 -14 LUFS ± 1"
+        "T21 accept: picture cuts on the N15 mp4 are within 80ms of the beats "
+        "in that file. ducking 10–12 dB measured on the mix. N15 mp4 -14 LUFS ± 1"
     )
     return 0
 
@@ -52,8 +54,9 @@ def evaluate(work: Path, gateway: Any) -> dict[str, Any]:
     os.environ["HILATV_PROJECT_DIR"] = str(root)
     os.environ["HILATV_LIVE"] = "0"
     n12 = root / "n12"
+    body = fixture()
     result = run(
-        {"project_id": "accept-t21", "payload": {**fixture(), "work_dir": str(n12)}},
+        {"project_id": "accept-t21", "payload": {**body, "work_dir": str(n12)}},
         gateway=gateway,
     )
     payload = result.payload
@@ -66,7 +69,7 @@ def evaluate(work: Path, gateway: Any) -> dict[str, Any]:
     kinds = {item.kind for item in records}
     if kinds != {"music", "sfx"}:
         raise AssertionError(f"expected music and sfx segments, got {kinds}")
-    metrics = _measure(payload, root)
+    metrics = _measure(payload, body, root)
     if not 10.0 <= metrics["ducking_db"] <= 12.0:
         raise AssertionError(f"ducking {metrics['ducking_db']:.2f} dB")
     if abs(metrics["narration_lufs"] + 16) > 1:
@@ -75,8 +78,18 @@ def evaluate(work: Path, gateway: Any) -> dict[str, Any]:
         raise AssertionError(f"mix {metrics['mix_lufs']:.2f} LUFS")
     if abs(metrics["mp4_lufs"] + 14) > 1:
         raise AssertionError(f"mp4 {metrics['mp4_lufs']:.2f} LUFS")
-    if metrics["picture_cut_alignment"] != "未达标":
-        raise AssertionError("picture-cut alignment must stay marked as not met")
+    if metrics["picture_cuts"] != metrics["expected_cuts"]:
+        raise AssertionError(
+            f"decoded {metrics['picture_cuts']} picture changes, "
+            f"the film has {metrics['expected_cuts']} joins "
+            f"peak={metrics['step_peak']:.1f} median={metrics['step_median']:.1f} "
+            f"cuts={metrics['decoded_cuts']}"
+        )
+    if metrics["picture_cut_ms"] > BEAT_LIMIT_MS:
+        raise AssertionError(
+            f"picture cuts {metrics['picture_cut_ms']:.2f}ms "
+            f"cuts={metrics['decoded_cuts']} beats={metrics['decoded_beats']}"
+        )
     return metrics
 
 
@@ -92,25 +105,37 @@ def _bare_record(record: LicenseRecord) -> bool:
     )
 
 
-def _measure(payload: dict[str, Any], root: Path) -> dict[str, Any]:
-    bed = Path(payload["music_bed_path"])
+def _measure(payload: dict[str, Any], body: dict[str, Any], root: Path) -> dict[str, Any]:
     narration = Path(payload["narration_path"])
     mix = Path(payload["mix_path"])
-    bed_pcm, rate = read_wav(bed)
-    beats = smoothed_onsets(bed_pcm, rate)
-    cuts = [float(item) for item in payload["cut_times_s"]]
-    if beats and cuts:
-        internal_ms = max(min(abs(cut - beat) for beat in beats) for cut in cuts) * 1000
-    else:
-        internal_ms = 1_000_000.0
-    track = payload["audio_track"]
     script = payload["script"]
-    for shot in script.get("shots") or []:
-        shot["transition_out"] = "cut"
-    mp4 = _compose_mp4(root, script, track)
+    aligned = payload["aligned_script"]
+    brief = body["brief"]
+    cues = _subtitles(root, script, body["voiceovers"], brief)
+    elements, intro_s, outro_s = _packaging(root, script, brief)
+    composed = _compose_mp4(
+        root,
+        script,
+        aligned,
+        payload["audio_track"],
+        cues,
+        elements,
+        intro_s,
+        outro_s,
+    )
+    timeline = composed["timeline"]
+    _assert_synced(script, aligned, cues, timeline, intro_s)
+    mp4 = Path(composed["exports"]["master"])
+    film = measure_picture_cuts(mp4, root / "picture")
     return {
-        "picture_cut_alignment": "未达标",
-        "internal_grid_ms": internal_ms,
+        "picture_cut_ms": film.error_ms,
+        "picture_cuts": len(film.cuts_s),
+        "picture_beats": len(film.beats_s),
+        "expected_cuts": max(0, len(timeline["clips"]) - 1),
+        "decoded_cuts": [round(item, 4) for item in film.cuts_s],
+        "decoded_beats": [round(item, 4) for item in film.beats_s],
+        "step_peak": film.step_peak,
+        "step_median": film.step_median,
         "ducking_db": ducking_db_on_mix(mix, narration, mix.parent),
         "narration_lufs": integrated_lufs(narration),
         "mix_lufs": integrated_lufs(mix),
@@ -118,81 +143,198 @@ def _measure(payload: dict[str, Any], root: Path) -> dict[str, Any]:
     }
 
 
-def _compose_mp4(root: Path, script: dict[str, Any], track: dict[str, Any]) -> Path:
-    from PIL import Image
+def _assert_synced(
+    script: dict[str, Any],
+    aligned: dict[str, Any],
+    cues: list[dict[str, Any]],
+    timeline: dict[str, Any],
+    intro_s: float,
+) -> None:
+    old = _shot_starts(script["shots"])
+    new = _shot_starts(aligned["shots"])
+    clips = {item["clip_id"]: item for item in timeline["clips"]}
+    moved = False
+    for shot in aligned["shots"]:
+        original = next(item for item in script["shots"] if item["shot_id"] == shot["shot_id"])
+        if abs(float(shot["duration_s"]) - float(original["duration_s"])) > 0.02:
+            moved = True
+        duration = float(clips[shot["shot_id"]]["duration_s"])
+        if abs(duration - float(shot["duration_s"])) > (1 / 30) + 1e-3:
+            raise AssertionError(
+                f"{shot['shot_id']} timeline {duration} != aligned {shot['duration_s']}"
+            )
+    if not moved:
+        raise AssertionError("aligned durations did not move a shot")
+    overlays = timeline["overlays"]
+    for cue in cues:
+        offset = float(cue["start_s"]) - old[cue["shot_id"]]
+        expect = intro_s + new[cue["shot_id"]] + offset
+        match = next(
+            item for item in overlays if item["kind"] == "subtitle" and item["text"] == cue["text"]
+        )
+        if abs(float(match["start_s"]) - expect) > 0.04:
+            raise AssertionError(
+                f"subtitle {cue['text']} at {match['start_s']} wanted {expect:.3f}"
+            )
+    board = sum(float(shot["duration_s"]) for shot in aligned["shots"])
+    old_board = sum(float(shot["duration_s"]) for shot in script["shots"])
+    outro = next(item for item in overlays if item["kind"] == "outro_logo")
+    if abs(float(outro["start_s"]) - (intro_s + board)) > 0.04:
+        raise AssertionError(f"outro at {outro['start_s']} wanted {intro_s + board:.3f}")
+    if abs(board - old_board) < 0.05:
+        raise AssertionError("packaging did not move with the aligned picture")
+    labels = [item for item in overlays if item["kind"] == "ai_label" and item["text"] == "AI生成"]
+    if len(labels) != 1 or float(labels[0]["start_s"]) != 0.0:
+        raise AssertionError("AI生成 label is missing from the timeline")
+    if float(labels[0]["end_s"]) + 0.05 < float(timeline["duration_s"]):
+        raise AssertionError("AI生成 label does not cover the film")
 
-    from workers.nodes.n15_compose.node import run as run_edit
 
-    logo = root / "logo.png"
-    Image.new("RGBA", (16, 16), (255, 255, 255, 255)).save(logo)
-    edited = run_edit(
+def _shot_starts(shots: list[dict[str, Any]]) -> dict[str, float]:
+    cursor = 0.0
+    found: dict[str, float] = {}
+    for shot in shots:
+        found[str(shot["shot_id"])] = cursor
+        cursor += float(shot["duration_s"])
+    return found
+
+
+def _subtitles(
+    root: Path,
+    script: dict[str, Any],
+    voiceovers: list[dict[str, Any]],
+    brief: dict[str, Any],
+) -> list[dict[str, Any]]:
+    from workers.nodes.n13_subtitle.node import run as run_subs
+
+    result = run_subs(
         {
             "project_id": "accept-t21",
             "payload": {
                 "script": script,
+                "voiceovers": voiceovers,
+                "brief": brief,
+                "width": 320,
+                "height": 180,
+                "work_dir": str(root / "n13"),
+            },
+        },
+        timeout_s=60,
+        max_attempts=1,
+    )
+    cues = result.payload["cues"]
+    if not cues:
+        raise AssertionError("spoken shots produced no subtitles")
+    return cues
+
+
+def _packaging(
+    root: Path, script: dict[str, Any], brief: dict[str, Any]
+) -> tuple[list[dict[str, Any]], float, float]:
+    from workers.nodes.n14_packaging.node import run as run_pack
+
+    result = run_pack(
+        {
+            "project_id": "accept-t21",
+            "payload": {
+                "script": script,
+                "brief": brief,
+                "width": 320,
+                "height": 180,
+                "work_dir": str(root / "n14"),
+            },
+        },
+        timeout_s=60,
+        max_attempts=1,
+    )
+    return (
+        result.payload["elements"],
+        float(result.payload.get("intro_s") or 0),
+        float(result.payload.get("outro_s") or 0),
+    )
+
+
+def _compose_mp4(
+    root: Path,
+    script: dict[str, Any],
+    aligned: dict[str, Any],
+    track: dict[str, Any],
+    cues: list[dict[str, Any]],
+    elements: list[dict[str, Any]],
+    intro_s: float,
+    outro_s: float,
+) -> dict[str, Any]:
+    from workers.nodes.n15_compose.node import run as run_edit
+
+    clips = []
+    for index, shot in enumerate(script["shots"]):
+        path = _pattern(root / "patterns" / f"{shot['shot_id']}.mp4", index)
+        clips.append({"shot_id": shot["shot_id"], "path": str(path), "cards": []})
+    edited = run_edit(
+        {
+            "project_id": "accept-t21",
+            "payload": {
+                "script": _hard_cuts(script),
+                "aligned_script": _hard_cuts(aligned),
+                "cues": cues,
+                "elements": elements,
                 "work_dir": str(root / "n15"),
-                "intro_s": 0,
-                "outro_s": 0.4,
+                "intro_s": intro_s,
+                "outro_s": outro_s,
                 "width": 320,
                 "height": 180,
                 "audio_track": track,
-                "elements": [
-                    _element("outro-logo", "outro_logo", "", 0.4, logo),
-                    _element("outro-cta", "outro_cta", "联系我们", 0.6, logo),
-                ],
+                "shot_clips": clips,
             },
         },
         timeout_s=120,
         max_attempts=1,
     )
-    return Path(edited.payload["exports"]["master"])
+    return edited.payload
 
 
-def _element(element_id: str, kind: str, text: str, y_ratio: float, logo: Path) -> dict[str, Any]:
-    return {
-        "element_id": element_id,
-        "kind": kind,
-        "text": text,
-        "start_s": 0.2,
-        "end_s": 1.2,
-        "anchor": "center",
-        "y_ratio": y_ratio,
-        "png_path": str(logo),
-    }
+def _hard_cuts(script: dict[str, Any]) -> dict[str, Any]:
+    body = copy.deepcopy(script)
+    for shot in body["shots"]:
+        shot["transition_out"] = "cut"
+    return body
 
 
-def smoothed_onsets(samples: array.array, sample_rate: int) -> list[float]:
-    """Peaks of a short moving sum of the absolute sample difference."""
+def _pattern(path: Path, index: int) -> Path:
+    """A bar pattern with no glyphs, so a graded frame still changes at the cut."""
 
-    if not samples:
-        return []
-    diffs = [0] * len(samples)
-    previous = 0
-    for index, sample in enumerate(samples):
-        diffs[index] = abs(int(sample) - previous)
-        previous = int(sample)
-    window = max(1, sample_rate // 400)
-    smooth = [0] * len(diffs)
-    total = 0
-    for index, value in enumerate(diffs):
-        total += value
-        if index >= window:
-            total -= diffs[index - window]
-        smooth[index] = total
-    peak = max(smooth)
-    if peak <= 0:
-        return []
-    threshold = peak * 0.45
-    found: list[float] = []
-    refractory = int(0.1 * sample_rate)
-    last = -refractory
-    for index in range(1, len(smooth) - 1):
-        if smooth[index] < threshold or index - last < refractory:
-            continue
-        if smooth[index] >= smooth[index - 1] and smooth[index] >= smooth[index + 1]:
-            found.append(index / sample_rate)
-            last = index
-    return found
+    from workers.media.ffmpeg import run_ffmpeg
+
+    exprs = (
+        r"if(lt(mod(X\,48)\,24)\,255\,0)",
+        r"if(lt(mod(Y\,48)\,24)\,255\,0)",
+        r"if(lt(mod(X+Y\,64)\,32)\,255\,0)",
+    )
+    expr = exprs[index % len(exprs)]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            f"color=c=black:s=320x180:r=30:d=0.4,geq=r='{expr}':g='{expr}':b='{expr}'",
+            "-frames:v",
+            "8",
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            "-preset",
+            "ultrafast",
+            str(path),
+        ]
+    )
+    return path
 
 
 def fixture() -> dict[str, Any]:

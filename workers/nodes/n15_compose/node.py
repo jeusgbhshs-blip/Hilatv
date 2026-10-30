@@ -27,6 +27,7 @@ from workers.media.packaging import (
     quantize_s,
 )
 from workers.media.raster import render_overlay, save_png
+from workers.nodes.n15_compose.align import apply_aligned_script
 from workers.nodes.n15_compose.graph import command
 from workers.nodes.n15_compose.qa import QAError, check
 from workers.nodes.n15_compose.schema import (
@@ -129,8 +130,10 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     work = Path(payload.work_dir) if payload.work_dir else fallback
     work.mkdir(parents=True, exist_ok=True)
     _require_license(payload)
-    intro_s = quantize_s(payload.intro_s)
+    # Zero means no opening card. quantize_s() would turn that into one frame.
+    intro_s = 0.0 if payload.intro_s <= 0 else quantize_s(payload.intro_s)
     outro_s = quantize_s(payload.outro_s or float(outro_spec()["duration_s"]))
+    payload = apply_aligned_script(payload, intro_s=intro_s)
     timeline = _timeline(payload, work, width, height, intro_s, outro_s)
     path = work / "timeline.json"
     body = json.dumps(timeline.model_dump(mode="json"), ensure_ascii=False, indent=2)
@@ -597,7 +600,8 @@ def _gains(src: tuple[int, int, int], target: tuple[int, int, int]) -> tuple[flo
         if channel <= 0:
             values.append(1.0)
         else:
-            values.append(round(max(0.25, min(4.0, aim / channel)), 4))
+            # ffmpeg's colorchannelmixer only accepts -2..2.
+            values.append(round(max(0.25, min(2.0, aim / channel)), 4))
     return values[0], values[1], values[2]
 
 

@@ -40,10 +40,12 @@ def filter_complex(timeline: Timeline, variant: str) -> str:
         for index, audio in enumerate(audios):
             src = n_video + index
             delay = max(0, int(round(audio.start_s * 1000)))
+            # This ffmpeg rejects adelay=0. A clip that starts at 0 needs no delay.
+            delay_filter = f",adelay={delay}:all=1" if delay > 0 else ""
             lines.append(
                 f"[{src}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
-                f"atrim=0:{audio.duration_s:.3f},asetpts=PTS-STARTPTS,"
-                f"adelay={delay}:all=1[a{index}]"
+                f"atrim=0:{audio.duration_s:.3f},asetpts=PTS-STARTPTS"
+                f"{delay_filter}[a{index}]"
             )
             mix_inputs.append(f"[a{index}]")
         if len(mix_inputs) == 1:

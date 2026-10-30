@@ -149,7 +149,9 @@ def test_rendered_mix_meets_the_spec(tmp_path: Path) -> None:
             return gateway.music(prompt, **kwargs)
 
     metrics = evaluate(tmp_path / "mix", Recording())
-    assert metrics["picture_cut_alignment"] == "未达标"
+    assert metrics["picture_cut_ms"] <= 80
+    assert metrics["picture_cuts"] >= 1
+    assert metrics["picture_cuts"] == metrics["expected_cuts"]
     assert 10 <= metrics["ducking_db"] <= 12
     assert abs(metrics["narration_lufs"] + 16) <= 1
     assert abs(metrics["mix_lufs"] + 14) <= 1
