@@ -49,6 +49,23 @@ class TrackLicense(BaseModel):
     kind: str = ""
 
 
+class MotionCard(BaseModel):
+    """Render-layer text for one slice of a shot. Times are relative to the shot."""
+
+    text: str = Field(min_length=1)
+    start_s: float = Field(ge=0)
+    end_s: float = Field(gt=0)
+    y_ratio: float = Field(default=0.62, ge=0, le=1)
+
+
+class ShotClip(BaseModel):
+    """A real picture for one shot. N15 fits it; it does not paint a color plate."""
+
+    shot_id: str = Field(min_length=1)
+    path: str = Field(min_length=1)
+    cards: list[MotionCard] = Field(default_factory=list)
+
+
 class N15Input(BaseModel):
     script: Script
     voiceovers: list[ShotVoiceover] = Field(default_factory=list)
@@ -63,6 +80,7 @@ class N15Input(BaseModel):
     work_dir: str | None = None
     audio_track: AudioTrack | None = None
     licenses: list[TrackLicense] = Field(default_factory=list)
+    shot_clips: list[ShotClip] = Field(default_factory=list)
 
 
 class VideoClip(BaseModel):

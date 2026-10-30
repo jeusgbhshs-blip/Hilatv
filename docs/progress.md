@@ -19,7 +19,7 @@
 | T11 | 前端：输入页、进度页、成片页 | T10 | ✅ | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 已合并（9c7e524）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ✅ | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 已合并（7a7725f）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | 🔵 | [cursor/t13-anchors-composite-f261](https://github.com/jeusgbhshs-blip/Hilatv/pull/47) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
+| T14 | 降级方案 6.10 | T12, T13 | 🔵 | [cursor/t14-fallback-plan-bd74](https://github.com/jeusgbhshs-blip/Hilatv/pull/) | 验收中。产品负责人把 SPEC 第 3、4 级换成继续用 AI 生成。假设见下方 |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ✅ | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 已合并（5e15a75）。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。假设见下方 |
@@ -69,6 +69,20 @@
 - 合并了哪些：main 现为 `bbe69f9`（T15 `5e15a75`、T17 `a44d931`、T18 `bbe69f9`）。更早同日已在 main：T09–T12、T11、T25、SEC-01。都无新迁移
 - 正在做什么：T21 N12 音乐与音效，已把这份 main 合并进本分支。mock 曲库和音效都是仓库里合成的测试音，不买曲、不调 Mureka/Suno。N15 只多了一条音轨输入。无 Key，`HILATV_LIVE` 保持关闭。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权（Mureka/Suno 或正版曲库）要另批，未批之前保持 mock。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测。T18 的 60 条样例仍待换成真实企业需求
+- T14：降级方案。产品负责人决定不再使用企业实拍素材库，也不再交付「此镜头建议补拍」。四级都是 AI 生成。无 Key，`HILATV_LIVE` 保持关闭。
+
+## T14 假设
+
+- 产品负责人（2026-10-30）改了 SPEC §6.10 的第 3、4 级：不调用企业素材库里的真实视频，也不在交付信息里写「此镜头建议补拍」。新顺序是：① 换视频路由、改写提示词、换种子，经网关再生，花费只走 `open_project_budget`；② 只用已经通过质检（`visual_reviewed` 且达到 7.5）的 AI 关键帧做图生视频；③ 这张关键帧加本地程序化运镜（Ken Burns，有抠图时再加 2.5D 视差）；④ 动态图形（T13 抠图 + 渲染层文字动画 + 生成的背景运动）。第 ④ 级必须能做出来，所以片子一定能交。SPEC.md 正文没有改。
+- 每一级的成片都再过 `review_shot`。内容硬伤（形变、多余文字、人脸、闪烁等）不进入成片。降级镜头的交付记录里 `qa_passed` 和 `reviewed` 都是 false。`visual_reviewed is True` 仍是「已评审」的唯一定义，但降级镜头即使评过也不记成已评审或质检通过。
+- Mock 评审不会把 `visual_reviewed` 设为 true。因此无 Key 时第 ② 级不会被选中。验收里的第 ② 级测试在进程内打开 `HILATV_LIVE=1`，用一个不联网的假评审返回完整分数。`make accept-t14` 的端到端流程保持 `HILATV_LIVE=0`。
+- 有内容硬伤的成片先走 T12 的 `run_shot_loop`（每镜最多 3 次，项目花费只走预算文件）。没有可审像素的镜头不再空转这 3 次，直接进入上面的阶梯，第 ① 级仍是一次计费的再生。
+- 动态图形镜头不调用视频模型，直接做第 ④ 级。画面上的字只来自渲染层的文字卡片，不画进镜头文件。没有抠图时主体是一块由模型颜色推导的图形，交付记录写 `subject=generated_shape`，不假装是产品照片。
+- 不使用纯色底板代替失败镜头。N15 只有在没有 `shot_clips` 时才保留原来的纯色底板，给尚未走到导演的旧测试用。T14 的成片每个镜头都有真实片段。片头片尾仍是包装用的短板。
+- 人物照片不读。抠图只来自产品的 `cutouts`，或对项目目录里的产品照片走网关 `matte`。`http` 链接经 SEC-01 的 `fetch_bytes`。解析后落在项目目录外的路径不读。
+- 故障注入是 `HILATV_FAIL_VIDEO_SHOTS`（`*` 或镜头 id）。只让 mock 视频适配器失败，图像和配音不受影响。没有新的重试计数器。
+- 端到端验收用 ffprobe / ffmpeg 解成片。Mock 关键帧是纯色，Ken Burns 的帧差在这条流程上记为未测。Live VLM 是否看过这些帧也记为未测。
+- 不新增数据库迁移。Alembic head 仍是 `t03_gateway_0002`。
 
 ## T21 假设
 

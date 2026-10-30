@@ -28,13 +28,31 @@ def check(result: NodeResult) -> list[Candidate]:
     by_shot: dict[str, list[Candidate]] = {}
     for row in rows:
         by_shot.setdefault(row.shot_id, []).append(row)
+    failed = _failed(result.payload.get("generation_failed"))
     shots = {shot.shot_id: shot for shot in script.shots}
     for shot_id in wanted:
         shot = shots.get(shot_id)
         if shot is None:
             raise QAError(f"unknown shot {shot_id}")
+        if shot_id in failed:
+            if by_shot.get(shot_id):
+                raise QAError(f"{shot_id} failed generation but still has candidates")
+            continue
         _audit_shot(shot, by_shot.get(shot_id, []))
     return rows
+
+
+def _failed(raw: object) -> set[str]:
+    if raw is None:
+        return set()
+    if not isinstance(raw, list):
+        raise QAError("generation_failed must be a list")
+    found: set[str] = set()
+    for item in raw:
+        if not isinstance(item, str) or not item:
+            raise QAError("generation_failed items must be shot ids")
+        found.add(item)
+    return found
 
 
 def _candidate(raw: object) -> Candidate:

@@ -30,6 +30,7 @@ from workers.nodes.n15_compose.graph import command
 from workers.nodes.n15_compose.qa import QAError, check
 from workers.nodes.n15_compose.schema import (
     AudioClip,
+    MotionCard,
     N15Input,
     NodeRequest,
     NodeResult,
@@ -179,25 +180,45 @@ def _timeline(
     outro_s: float,
 ) -> Timeline:
     shots = list(payload.script.shots)
-    pieces: list[tuple[str, float, str, tuple[int, int, int]]] = []
+    supplied = {item.shot_id: item for item in payload.shot_clips}
+    pieces: list[tuple[str, float, str, tuple[int, int, int], Path | None, list[MotionCard]]] = []
     if intro_s > 0:
-        pieces.append(("intro", intro_s, "cut", (16, 32, 64)))
+        pieces.append(("intro", intro_s, "cut", (16, 32, 64), None, []))
     for index, shot in enumerate(shots):
-        color = _PALETTE[index % len(_PALETTE)]
+        duration = quantize_s(float(shot.duration_s))
+        media = supplied.get(shot.shot_id)
+        if payload.shot_clips and media is None:
+            raise QAError(f"{shot.shot_id} has no picture to edit", retryable=False)
+        if media is None:
+            color = _PALETTE[index % len(_PALETTE)]
+            pieces.append((shot.shot_id, duration, shot.transition_out, color, None, []))
+            continue
+        source = _inside_project(media.path)
         pieces.append(
-            (shot.shot_id, quantize_s(float(shot.duration_s)), shot.transition_out, color)
+            (
+                shot.shot_id,
+                duration,
+                shot.transition_out,
+                (128, 128, 128),
+                source,
+                list(media.cards),
+            )
         )
-    pieces.append(("outro", outro_s, "cut", (12, 24, 48)))
+    pieces.append(("outro", outro_s, "cut", (12, 24, 48), None, []))
     colors = [item[3] for item in pieces]
     target = colors[0]
     cursor = 0.0
     clips: list[VideoClip] = []
-    for clip_id, duration, transition, rgb in pieces:
+    card_rows: list[tuple[MotionCard, float]] = []
+    for clip_id, duration, transition, rgb, source, cards in pieces:
         frames = max(1, int(round(duration * FPS)))
         duration = frames / FPS
         gains = _gains(rgb, target)
         plate = work / "plates" / f"{clip_id}.mp4"
-        encode_plate(plate, rgb=rgb, width=width, height=height, frames=frames, fps=FPS)
+        if source is None:
+            encode_plate(plate, rgb=rgb, width=width, height=height, frames=frames, fps=FPS)
+        else:
+            _fit_clip(source, plate, width=width, height=height, frames=frames)
         clips.append(
             VideoClip(
                 clip_id=clip_id,
@@ -210,9 +231,12 @@ def _timeline(
                 grade_bb=gains[2],
             )
         )
+        for card in cards:
+            card_rows.append((card, cursor))
         cursor += duration
     audio = _audio(payload, work, intro_s)
     overlays = _overlays(payload, work, width, height, intro_s)
+    overlays.extend(_motion_cards(card_rows, work, width, height))
     return Timeline(
         width=width,
         height=height,
@@ -224,6 +248,82 @@ def _timeline(
         overlays=overlays,
         work_dir=str(work),
     )
+
+
+def _fit_clip(source: Path, dest: Path, *, width: int, height: int, frames: int) -> None:
+    """Cover the frame with a real clip. Pad is not used, so the edges are not bars."""
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    run_ffmpeg(
+        [
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-threads",
+            "1",
+            "-stream_loop",
+            "-1",
+            "-i",
+            str(source),
+            "-vf",
+            (
+                f"scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},fps={FPS}"
+            ),
+            "-frames:v",
+            str(frames),
+            "-c:v",
+            "libx264",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+            "-preset",
+            "ultrafast",
+            "-fflags",
+            "+bitexact",
+            "-flags",
+            "+bitexact",
+            str(dest),
+        ]
+    )
+
+
+def _motion_cards(
+    rows: list[tuple[MotionCard, float]],
+    work: Path,
+    width: int,
+    height: int,
+) -> list[OverlayItem]:
+    items: list[OverlayItem] = []
+    folder = work / "motion"
+    for index, (card, origin) in enumerate(rows):
+        image = render_overlay(
+            card.text,
+            weight="bold",
+            font_size=max(12, round(height * 0.08)),
+            fill="#FFFFFF",
+            padding=6,
+            stroke=2,
+        )
+        path = folder / f"card_{index}.png"
+        save_png(image, path)
+        start = origin + card.start_s
+        end = origin + card.end_s
+        if end <= start:
+            continue
+        items.append(
+            OverlayItem(
+                kind="motion_card",
+                path=str(path),
+                text=card.text,
+                start_s=round(start, 3),
+                end_s=round(end, 3),
+                y_ratio=card.y_ratio,
+                anchor="center",
+            )
+        )
+    return items
 
 
 def _require_license(payload: N15Input) -> None:

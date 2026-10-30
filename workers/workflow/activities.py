@@ -381,7 +381,59 @@ def n10_video(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "n10_video",
     )
-    return _finish(project_id, "n10_video", {"videos": result.payload["candidates"]}, attempt)
+    return _finish(
+        project_id,
+        "n10_video",
+        {
+            "videos": result.payload["candidates"],
+            "generation_failed": result.payload.get("generation_failed") or [],
+        },
+        attempt,
+    )
+
+
+@activity.defn(name="shot_director")
+def shot_director(payload: dict[str, Any]) -> dict[str, Any]:
+    attempt = _announce(payload, "shot_director")
+    project_id = _project(payload)
+    state = _state(payload)
+    from workers.fallback.direct import direct_shots
+    from workers.media.packaging import canvas_size
+    from workers.schemas.asset import Candidate
+    from workers.schemas.brand import BrandKit
+    from workers.schemas.brief import Brief
+    from workers.schemas.script import Script
+
+    script = Script.model_validate(_require_dict(state, "script"))
+    brief_raw = state.get("brief")
+    brief = Brief.model_validate(brief_raw) if isinstance(brief_raw, dict) else None
+    kit_raw = state.get("brand_kit")
+    kit = BrandKit.model_validate(kit_raw) if isinstance(kit_raw, dict) else None
+    aspect = brief.aspect_ratios[0] if brief and brief.aspect_ratios else None
+    width, height = canvas_size(aspect)
+    videos = [Candidate.model_validate(item) for item in state.get("videos") or []]
+    keyframes = [Candidate.model_validate(item) for item in state.get("keyframes") or []]
+    from gateway import get_gateway
+
+    result = direct_shots(
+        project_id=project_id,
+        script=script,
+        videos=videos,
+        keyframes=keyframes,
+        brand_kit=kit,
+        width=width,
+        height=height,
+        gateway=get_gateway(),
+    )
+    return _finish(
+        project_id,
+        "shot_director",
+        {
+            "shot_clips": [item.model_dump(mode="json") for item in result.clips],
+            "shot_quality": [item.model_dump(mode="json") for item in result.notes],
+        },
+        attempt,
+    )
 
 
 @activity.defn(name="n12_music")
@@ -494,6 +546,7 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
                 "intro_s": float(state.get("intro_s") or 0),
                 "outro_s": float(state.get("outro_s") or 0),
                 "work_dir": _work(payload, "n15"),
+                "shot_clips": state.get("shot_clips") or [],
                 **_soundtrack(state),
             },
             "attempt": attempt,
@@ -533,6 +586,7 @@ ACTIVITIES = [
     n06_voiceover,
     n08_keyframe,
     n10_video,
+    shot_director,
     n12_music,
     n13_subtitle,
     n14_packaging,

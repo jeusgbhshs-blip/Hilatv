@@ -101,6 +101,7 @@ class ProduceFilm:
             "deliverable": state.get("deliverable"),
             "elapsed_s": state.get("elapsed_s"),
             "completed": list(state.get("completed") or []),
+            "shot_quality": state.get("shot_quality"),
         }
 
     @workflow.signal
