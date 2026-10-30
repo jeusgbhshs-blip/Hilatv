@@ -19,6 +19,7 @@ from gateway.constants import (
     DASHSCOPE_BASE_URL,
     DEEPSEEK_BASE_URL,
     DEFAULT_TTS_VOICE,
+    GEMINI_BASE_URL,
     VOLC_ASR_BASE_URL,
     VOLC_ASR_RESOURCE,
     VOLC_TTS_BASE_URL,
@@ -57,6 +58,20 @@ def build_registry(
             provider="ark",
             base_url=os.getenv("ARK_BASE_URL", ARK_BASE_URL),
             key_fn=lambda: os.getenv("ARK_API_KEY", ""),
+            transport=transport,
+        ),
+        "qwen_vl": OpenAICompatAdapter(
+            provider="qwen_vl",
+            base_url=os.getenv("DASHSCOPE_BASE_URL", DASHSCOPE_BASE_URL),
+            key_fn=lambda: os.getenv("DASHSCOPE_API_KEY", ""),
+            tasks=frozenset({"judge"}),
+            transport=transport,
+        ),
+        "gemini": OpenAICompatAdapter(
+            provider="gemini",
+            base_url=os.getenv("GEMINI_BASE_URL", GEMINI_BASE_URL),
+            key_fn=lambda: os.getenv("GEMINI_API_KEY", ""),
+            tasks=frozenset({"judge"}),
             transport=transport,
         ),
         "seedream": SeedreamAdapter(

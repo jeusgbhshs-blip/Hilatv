@@ -27,6 +27,7 @@ class Invocation:
     attempt: int | None = None
     shot_type: str | None = None
     language: str | None = None
+    image_b64: str | None = None
 
 
 @dataclass

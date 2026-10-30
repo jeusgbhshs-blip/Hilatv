@@ -95,10 +95,10 @@ def _body(call: Invocation) -> dict[str, Any]:
             f"{system}\n\nReturn a JSON object that validates against this JSON Schema. "
             f"No markdown.\n{schema_text}"
         ).strip()
-    messages: list[dict[str, str]] = []
+    messages: list[dict[str, Any]] = []
     if system:
         messages.append({"role": "system", "content": system})
-    messages.append({"role": "user", "content": call.prompt})
+    messages.append({"role": "user", "content": _user_content(call)})
     body: dict[str, Any] = {"model": call.model, "messages": messages}
     if call.temperature is not None:
         body["temperature"] = call.temperature
@@ -110,6 +110,16 @@ def _body(call: Invocation) -> dict[str, Any]:
     if max_tokens is not None:
         body["max_tokens"] = max_tokens
     return body
+
+
+def _user_content(call: Invocation) -> str | list[dict[str, Any]]:
+    image = call.image_b64
+    if not isinstance(image, str) or not image:
+        return call.prompt
+    return [
+        {"type": "text", "text": call.prompt},
+        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{image}"}},
+    ]
 
 
 def _message_text(payload: dict[str, Any], provider: str) -> str:

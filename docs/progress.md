@@ -17,7 +17,7 @@
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ✅ | [t09-render](https://github.com/jeusgbhshs-blip/Hilatv/pull/29) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ✅ | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T11 | 前端：输入页、进度页、成片页 | T10 | 🔵 | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
+| T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | 🔵 | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
@@ -60,9 +60,30 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：T09（PR #29，无新迁移）、T10（PR #30，无新迁移）
-- 正在做什么：T11 输入页、进度页、成片页。另开 SEC-01，拦住 N1 抓用户链接时访问本机和内网。无 Key，URL 测试用 mock 解析器，不走真实网络。另开 T25：电商、本地生活、教育、政企四套模板补上镜头计划和叙事变体，镜头预设全部标成「试用」。Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测，本任务不跑。
+- 合并了哪些：T09（PR #29，无新迁移）、T10（PR #30，无新迁移）。main 现为 `d845705`（含 T11、T25、SEC-01）
+- 正在做什么：T12 N9/N11 质检和导演决策循环，已合入最新 main。无 Key，`make accept-t12` 走本地规则和 mock judge。埋入坏图拦截率 47/47，质检未校准（0/200）。T11 输入页、进度页、成片页。SEC-01 拦住 N1 抓用户链接时访问本机和内网。T25 补电商、本地生活、教育、政企模板和镜头预设（全部「试用」）。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络
+
+## T12 假设
+
+- QAReport 仍用第 5 章的五项：`product_fidelity`、`motion_quality`、`aesthetics`、`prompt_match`、`artifact_free`。N9 写的「品牌一致」并进 aesthetics，N11 的「时间一致性」并进 motion_quality，并写在 notes。不改模型，不加迁移。Alembic head 仍是 `t03_gateway_0002`。
+- 仓库里没有 DINOv2 权重，也不引入 torch。产品形变是相对边框色的 32×32 占空网格余弦，低于 0.90 记 `product_deform`。视频里任一采样帧低于该值就否决。人脸与锚点的余弦沿用 SPEC 的 0.75。
+- 没有云 OCR，也没有人脸 SDK。多余文字和乱码看高对比笔画带；人脸是肤色连通域加上眼睛暗块。分辨率看长边，低于 240px 算不够。这 240 不是 SPEC 里的数字。320×180 的预览可以通过。
+- 双评审走网关两条 judge 路由：Qwen-VL（`DASHSCOPE_API_KEY`，模型 `qwen-vl-max`）和 Gemini（`GEMINI_API_KEY`）。没 Key，或 `HILATV_LIVE` 不是 1，都落到 mock。两边总分差 ≥ 2 时取更严的一边。像素规则标出的硬伤不能被 VLM 翻掉。Mock 按 JSON Schema 填出来的全 0 当作「没有意见」，不把它当成 0 分。
+- 没有可审像素的镜头不能通过。缺文件、打不开、`mock://` 和坏链接记成错误，`hard_fail` 为 `not_reviewed`，总分为 0，notes 里写明 missing / broken / unreadable。故意无画面（`text_only` 或 `motion_graphics` 且没有媒体地址）同样不能通过，但 notes 写 `media=text_only`，不当成文件错误。导演对这两种都不会返回 pass。
+- `QAReport.visual_reviewed` 只有在至少一家视觉评审真正看过实帧（不是 `mock://`、不是缺图或坏图）并且五项分数都合法时才是 true。没图、坏图、mock 评审、评审报错、超时、解析失败、缺维度，以及只靠规则打出的约 8.6 分，都是 false，并且 `hard_fail` 含 `not_reviewed` 或 `judge_unavailable`，不能当成通过。这个字段不在 SPEC 样例里，默认 false，旧 JSON 仍能读。T18 用它区分有没有看过画面。
+- `HILATV_LIVE=1` 时两个评审都没有合法意见，镜头失败：`hard_fail` 含 `judge_unavailable`，总分为 0。只回来一个合法评审时，notes 写 `judges_used=1; degraded=true`，`visual_reviewed` 仍可以是 true。缺维度是错误，不补默认分。Mock 不把规则分当成通过。
+- 形变余弦、人脸余弦、长边、闪烁阈值和项目级重生上限在环境变量里，默认 0.90、0.75、240、0.22 和 12。相似度必须在 (0, 1]，次数和边长必须是 ≥ 1 的整数。超出范围会在评审开始时抛错，不会悄悄改回默认值。每镜 3 次和 7.5 分不变。项目上限只存在这次进程里，不落盘，持久化留给 T13。用完后再要重生，决策改成 fallback。
+- 本地图片和视频路径用 `resolve()` 收进 `HILATV_PROJECT_DIR`（没设时是系统临时目录下的 `hilatv-projects`）。目录外的路径记 `not_reviewed`，不读文件。
+- 单评审降级是 QAReport 上的 `judges_used` 和 `degraded`，不只写在 notes 里。一家评审看过实帧时 `judges_used` 为 1、`degraded` 为 true。
+- 通过线是总分 ≥ 7.5 且 `hard_fail` 为空。低于 7.5、又不是模型类硬伤，决策是 `regenerate`。产品形变、人脸、闪烁走 `switch_model`。`sensitive` 走 `ask_user`。第 3 次仍失败走 `fallback`，`max_attempts_left` 为 0。降级方案的执行留给 T14，这里只出决策。`max_attempts_left = 3 - attempt`，attempt 从 1 计。
+- 导演会经 `gateway.generate_text` 问一次。模型必须给出能通过 DirectorDecision 的 JSON，并且不能把失败镜头改成通过，也不能把次数上限抬高。Mock 不返回合法决策，所以无 Key 时用上面这条规则。
+- T10 的 ProduceFilm 测试要求管线里还没有 N9/N11。这次不改那条管线，也不改 PR #31 的分支。单镜循环在 `workers.qa.loop.run_shot_loop`：每次只返回一个决策，由调用方执行重生。
+- 拦截率用的坏图是 Pillow 现画的，不是照片，也不是真人脸。平涂车间底，中间一块金属色矩形当产品；促销词和电话用仓库里的思源黑体画上去；乱码是随机笔画；形变是同一块相对锚点做剪切、收腰或鼓包；崩坏脸是椭圆上三只眼睛；另外有黑边、角落周期线、被裁切的主体、过小主体，以及长边只有 96px 的小图。视频是 4fps、8 帧：连续两帧（0.5 秒）形变，或单独一帧白闪。6 个干净对照（5 张图加 1 段视频）不能被标成内容硬伤，也不放进拦截率的分母。Mock 下它们的 `visual_reviewed` 仍是 false。
+- 200 张人工打分图不在仓库。校准读 `workers/qa/calibration/manifest.json`。文件不在，或不足 200 张，状态是 `pending_team`。满 200 张之后，排序一致率低于 80% 才会让验收失败。
+- N16 只留 `workers.qa.final.review_film`。调用会抛 `NotImplementedError`。
+- 画面上的字、Logo、价格、电话仍然只由后期叠加。重生决策的 `changes` 带上现有的无文字负面约束。
+- 同一个镜头的候选逐张评审，避免网关日志并发写。
 
 ## SEC-01 假设
 
