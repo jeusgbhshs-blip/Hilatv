@@ -104,6 +104,7 @@ class SpokenLine(BaseModel):
     voiceover: str
     subtitle: str
     transcript: str = ""
+    heard_check: str = "not_verified_in_mock"
 
 
 class TrackSource(BaseModel):
@@ -136,8 +137,8 @@ class DeliveryVersion(BaseModel):
     tracks: list[TrackSource] = Field(default_factory=list)
     safe: dict[str, float]
     modes: dict[str, str]
-    subject_box_source: str = "provided"
-    qa_status: str = "pass"
+    subject_box_source: str = "default"
+    qa_status: str = "needs_review"
 
 
 def _inside(x: float, y: float, w: float, h: float) -> None:

@@ -56,6 +56,7 @@ class ShotVoiceover(BaseModel):
     timestamps: list[WordStamp]
     transcript: str
     cer: float = Field(ge=0)
+    heard_check: str = ""
     loudness_dbfs: float
     clipped: bool
     lexicon: list[str] = Field(default_factory=list)

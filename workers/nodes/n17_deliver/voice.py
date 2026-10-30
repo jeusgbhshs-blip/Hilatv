@@ -64,12 +64,20 @@ def dub(
             attempt=attempt,
             params={"reference_text": shot.voiceover},
         )
+        mock_hearing = isinstance(heard, dict) and heard.get("mock") is True
         transcript = heard.get("text") if isinstance(heard, dict) else ""
         if not isinstance(transcript, str):
             transcript = ""
-        cer = character_error_rate(shot.voiceover, transcript)
-        if cer >= 0.02:
-            raise QAError(f"{shot.shot_id} dub character error {cer:.3f}")
+        if mock_hearing:
+            # Mock ASR repeats reference_text, so it is not an independent hearing.
+            transcript = ""
+            cer = 0.0
+            heard_check = "not_verified_in_mock"
+        else:
+            cer = character_error_rate(shot.voiceover, transcript)
+            if cer >= 0.02:
+                raise QAError(f"{shot.shot_id} dub character error {cer:.3f}")
+            heard_check = "verified"
         level = analyze_wav(wav)
         if level.clipped:
             raise QAError(f"{shot.shot_id} dub is clipped")
@@ -103,8 +111,9 @@ def dub(
                 hold_s=round(hold, 3),
                 duration_s=target,
                 timestamps=stamps,
-                transcript=transcript or shot.voiceover,
+                transcript=transcript,
                 cer=round(cer, 4),
+                heard_check=heard_check,
                 loudness_dbfs=level.loudness_dbfs,
                 clipped=False,
                 role=plan.role,

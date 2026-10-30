@@ -70,20 +70,28 @@ def _version(version: DeliveryVersion, seen_pictures: set[str]) -> None:
 
 
 def _language(version: DeliveryVersion) -> None:
-    """Subtitles and the heard dub are separate outputs. Neither is copied from the other."""
+    """Subtitles must match the version language.
+
+    A live ASR transcript is an independent hearing and must match the subtitle.
+    Mock ASR repeats the reference line, so that path is not a hearing.
+    """
 
     family = language_family(version.language)
     if not version.spoken:
         raise QAError(f"{version.language} export has no spoken lines")
     for line in version.spoken:
+        _expect_language(family, line.subtitle, f"{line.shot_id} subtitles")
+        if line.heard_check == "not_verified_in_mock":
+            continue
+        if line.heard_check != "verified":
+            raise QAError(f"{line.shot_id} hearing was not checked")
         if not line.transcript.strip():
             raise QAError(f"{line.shot_id} has no heard transcript")
         if _compact(line.subtitle) != _compact(line.transcript):
             raise QAError(f"{line.shot_id} subtitles do not match the heard dub")
         _expect_language(family, line.transcript, f"{line.shot_id} heard dub")
-        _expect_language(family, line.subtitle, f"{line.shot_id} subtitles")
-    heard = {line.transcript for line in version.spoken}
-    if family != "zh" and all(_cjk(text) and not _latin(text) for text in heard):
+    heard = [line.transcript for line in version.spoken if line.heard_check == "verified"]
+    if heard and family != "zh" and all(_cjk(text) and not _latin(text) for text in heard):
         raise QAError(f"{version.language} dub is still Chinese")
 
 

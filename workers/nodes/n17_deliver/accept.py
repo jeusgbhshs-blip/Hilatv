@@ -20,7 +20,10 @@ def main() -> int:
         for item in failures:
             print(f"[fail] {item}")
         return 1
-    print("T17 accept: 16:9, 9:16, and 1:1 keep the subject inside; zh and en match")
+    print(
+        "T17 accept: 16:9, 9:16, and 1:1 keep the subject inside; zh and en match; "
+        "heard-dub check: not verified in mock"
+    )
     return 0
 
 
@@ -74,16 +77,16 @@ def _case(work: Path) -> None:
 
 
 def _heard(language: str, line: dict[str, str]) -> None:
-    subtitle = "".join(char for char in line["subtitle"] if not char.isspace())
-    transcript = "".join(char for char in line["transcript"] if not char.isspace())
-    if subtitle != transcript:
-        raise AssertionError("subtitles do not match the heard dub")
+    if line.get("heard_check") != "not_verified_in_mock":
+        raise AssertionError("mock export must not claim a verified hearing")
+    if line.get("transcript", "").strip():
+        raise AssertionError("mock ASR echo was stored as a transcript")
     if language == "zh":
-        if not _cjk(line["subtitle"]) or not _cjk(line["transcript"]):
-            raise AssertionError("Chinese heard dub or subtitles have no Chinese")
+        if not _cjk(line["subtitle"]):
+            raise AssertionError("Chinese subtitles have no Chinese")
         return
-    if not _latin(line["subtitle"]) or not _latin(line["transcript"]):
-        raise AssertionError("English heard dub or subtitles have no Latin text")
+    if not _latin(line["subtitle"]):
+        raise AssertionError("English subtitles have no Latin text")
 
 
 def _cjk(text: str) -> bool:

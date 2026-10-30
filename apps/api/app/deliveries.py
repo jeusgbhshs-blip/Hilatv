@@ -296,8 +296,8 @@ def _public(project_id: str, version: dict[str, Any]) -> dict[str, Any]:
         "width": version["width"],
         "height": version["height"],
         "modes": version["modes"],
-        "subject_box_source": version.get("subject_box_source") or "provided",
-        "qa_status": version.get("qa_status") or "pass",
+        "subject_box_source": version.get("subject_box_source") or "default",
+        "qa_status": version.get("qa_status") or "needs_review",
         "download_path": f"/v1/projects/{project_id}/versions/{version_id}/download",
         "share_path": None,
     }
@@ -353,7 +353,11 @@ def _write_unlocked(directory: Path, record: dict[str, Any]) -> None:
 def _replace_json(path: Path, record: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(record, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(record, ensure_ascii=False, indent=2) + "\n"
+    with temporary.open("w", encoding="utf-8") as handle:
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
     os.replace(temporary, path)
 
 

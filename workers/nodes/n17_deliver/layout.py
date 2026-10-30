@@ -89,16 +89,17 @@ def burn_overlays(
             cue.start_s,
             cue.end_s,
         )
-    heard = {item.shot_id: item.transcript for item in takes}
     for shot_id, rows in by_shot.items():
         voice = next(shot.voiceover for shot in script.shots if shot.shot_id == shot_id)
         joined = "".join(row.text for row in rows)
+        take = next(item for item in takes if item.shot_id == shot_id)
         spoken.append(
             SpokenLine(
                 shot_id=shot_id,
                 voiceover=voice,
                 subtitle=joined,
-                transcript=heard.get(shot_id, ""),
+                transcript=take.transcript,
+                heard_check=take.heard_check or "not_verified_in_mock",
             )
         )
     offset = 0.0

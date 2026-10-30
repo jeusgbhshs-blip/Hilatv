@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
+
 from fastapi.testclient import TestClient
 
-from app.deliveries import _write
+from app.deliveries import _public, _replace_json, _write
 from app.main import app
 from workers.nodes.n17_deliver.node import run as deliver
 from workers.nodes.n17_deliver.sample import acceptance_request, storyboard
@@ -135,6 +137,82 @@ def test_export_cap_returns_429(tmp_path, monkeypatch) -> None:
     with TestClient(app) as client:
         response = client.post("/v1/projects/cap17/deliveries", json={})
     assert response.status_code == 429
+
+
+def test_missing_qa_fields_do_not_count_as_pass() -> None:
+    from workers.nodes.n17_deliver.schema import DeliveryVersion
+
+    stored = {
+        "version_id": "v",
+        "aspect_ratio": "16:9",
+        "language": "zh",
+        "duration_s": 1,
+        "width": 16,
+        "height": 9,
+        "path": "a.mp4",
+        "picture_path": "b.mp4",
+        "filters": "",
+        "burn_filters": "",
+        "geometry": [],
+        "overlays": [],
+        "spoken": [],
+        "safe": {},
+        "modes": {},
+    }
+    version = DeliveryVersion.model_validate(stored)
+    assert version.subject_box_source == "default"
+    assert version.qa_status == "needs_review"
+    public = _public(
+        "p",
+        {
+            "version_id": "v",
+            "aspect_ratio": "16:9",
+            "language": "zh",
+            "duration_s": 1,
+            "width": 16,
+            "height": 9,
+            "modes": {},
+        },
+    )
+    assert public["subject_box_source"] == "default"
+    assert public["qa_status"] == "needs_review"
+    blank = _public(
+        "p",
+        {
+            "version_id": "v",
+            "aspect_ratio": "16:9",
+            "language": "zh",
+            "duration_s": 1,
+            "width": 16,
+            "height": 9,
+            "modes": {},
+            "subject_box_source": "",
+            "qa_status": "",
+        },
+    )
+    assert blank["subject_box_source"] == "default"
+    assert blank["qa_status"] == "needs_review"
+
+
+def test_deliveries_json_fsyncs_before_replace(tmp_path, monkeypatch) -> None:
+    order: list[str] = []
+    real_fsync = os.fsync
+    real_replace = os.replace
+
+    def fsync(fd: int) -> None:
+        order.append("fsync")
+        real_fsync(fd)
+
+    def replace(src: str, dst: str) -> None:
+        order.append("replace")
+        real_replace(src, dst)
+
+    monkeypatch.setattr("app.deliveries.os.fsync", fsync)
+    monkeypatch.setattr("app.deliveries.os.replace", replace)
+    path = tmp_path / "deliveries.json"
+    _replace_json(path, {"versions": []})
+    assert order == ["fsync", "replace"]
+    assert path.read_text(encoding="utf-8").strip().startswith("{")
 
 
 def test_share_expires(tmp_path, monkeypatch) -> None:

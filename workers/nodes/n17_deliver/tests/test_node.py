@@ -26,12 +26,13 @@ def test_exports_keep_the_subject_and_the_language(tmp_path, gateway, monkeypatc
     assert zh["spoken"][0]["voiceover"] != en["spoken"][0]["voiceover"]
     for item in (zh, en):
         line = item["spoken"][0]
-        assert _compact(line["subtitle"]) == _compact(line["transcript"])
+        assert line["heard_check"] == "not_verified_in_mock"
+        assert line["transcript"] == ""
         assert any(
             box["kind"] == "ai_label" and box["text"] == "AI生成" for box in item["overlays"]
         )
-    assert _cjk(zh["spoken"][0]["transcript"]) and _cjk(zh["spoken"][0]["subtitle"])
-    assert _latin(en["spoken"][0]["transcript"]) and _latin(en["spoken"][0]["subtitle"])
+    assert _cjk(zh["spoken"][0]["subtitle"])
+    assert _latin(en["spoken"][0]["subtitle"])
     assert "drawtext" not in zh["filters"]
     assert result.payload["rights"]["subtitles"]
     assert result.payload["verify_pixels"] is True
@@ -58,10 +59,6 @@ def test_missing_subject_box_is_blur_and_needs_review(tmp_path, gateway, monkeyp
         assert item["qa_status"] == "needs_review"
         assert set(item["modes"].values()) == {"blur"}
         assert any(box["text"] == "AI生成" for box in item["overlays"])
-
-
-def _compact(text: str) -> str:
-    return "".join(char for char in text if not char.isspace())
 
 
 def _cjk(text: str) -> bool:

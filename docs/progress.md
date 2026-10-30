@@ -49,6 +49,10 @@
 
 <!-- hilatv:alerts -->
 
+## 上线前
+
+- 导出并发上限只在单个 API 进程里计数（`apps/api/app/deliveries.py` 的 `_EXPORTS_IN_FLIGHT` 和线程锁，环境变量 `HILATV_N17_EXPORT_SLOTS`，默认 2）。多 worker 时每个进程各算各的，总并发会按进程数放大。上多进程之前要换成跨进程锁（Redis 或数据库）。
+
 ## 每日日志
 
 <!-- 模板：
@@ -66,7 +70,7 @@
 ## T17 假设
 
 - N17 不进 T10 的 `PIPELINE`。那条链路仍停在 `n15_compose`。成片页在母版就绪后调用 `POST /v1/projects/{id}/deliveries`。导出在这次请求里做完，不另起 Temporal。
-- 母版是没有烧字的 16:9（`master_plate`）。主体框由调用方传入，视觉追踪留给 T12。某个镜头没有框时，用居中的 0.2×0.4，这个框放得进 9:16 裁切。
+- 母版是没有烧字的 16:9（`master_plate`）。主体框由调用方传入，视觉追踪留给 T12。某个镜头没有框时不裁切，整幅模糊填充，并标 `needs_review`。
 - 主体能放进目标窗口时，按主体中心裁切，框沿直线移动。主体比窗口更宽或更高时，整幅母版缩小放进画面（contain），空出来的地方用去色模糊填充，这样主体不会被裁掉。`HILATV_N17_REGENERATE=1` 时，竖版改为经网关要一张竖版底图再把母版叠上去；1:1 仍用模糊填充。底图提示词带「无文字」。
 - 输出长边默认等于母版长边。`long_edge` 或 `HILATV_N17_LONG_EDGE` 可以改小。验收用 320。
 - 语种默认中文和英文，再加 Brief 里的其他语种。本地化先走网关 LLM。Mock 交回空草稿，就用 N4 的规则作者按资料重写，不是逐句翻译。英文句子里可以嵌资料里的中文产品名。配音和 ASR 仍走现有 gateway `tts` / `asr`，不新接 ElevenLabs。画面时长锁在母版上；旁白更长就用 atempo 压进镜头。
@@ -79,7 +83,7 @@
 - 成片页的比例、语种、时长切换接在 T11 的成片页上，读上面的版本接口。T11 原来的占位换成这组切换。
 - 请求体不能指定母版路径。母版只取项目快照或检查点里的地址，`resolve` 之后必须落在该项目目录内，否则 422。符号链接若指到目录外，同样拒绝。
 - 没有真实主体框的镜头不裁切，整幅用模糊填充。版本标 `subject_box_source=default`、`qa_status=needs_review`，不算质检通过。有真实框时，几何检查对照调用方的框，并做红框像素检查。
-- 同时导出最多 `HILATV_N17_EXPORT_SLOTS`（默认 2）路，超出 429。`deliveries.json` 加锁后原子替换。分享链接默认 7 天，`DELETE .../share` 可撤销。每个版本都要有「AI生成」。字幕和听到的配音分开比对。
+- 同时导出最多 `HILATV_N17_EXPORT_SLOTS`（默认 2）路，超出 429。这个上限只在当前进程里计数，多 worker 见「上线前」。`deliveries.json` 在锁内先 fsync 再原子替换。分享链接默认 7 天，`DELETE .../share` 可撤销。每个版本都要有「AI生成」。`subject_box_source` 和 `qa_status` 缺省是 `default` / `needs_review`，缺字段不算通过。Mock ASR 会回显参考句，配音是否听清记为 `not_verified_in_mock`，验收报告写明 heard-dub check 未在 mock 中核对。真实 ASR（`mock` 不为 true）才把字幕和听到的文本比对。
 
 ## T11 假设
 
