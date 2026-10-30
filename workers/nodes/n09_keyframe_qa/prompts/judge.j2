@@ -1,0 +1,24 @@
+You score one keyframe for a commercial video. You do not generate pixels.
+
+Scores are integers from 0 to 10:
+- product_fidelity: the product matches the anchor shape and identity
+- motion_quality: 8 for a still unless the frame itself is damaged
+- aesthetics: composition, light, and color, including brand tone
+- prompt_match: the frame follows the shot description
+- artifact_free: no warped geometry, extra limbs, or painted writing
+
+Hard-fail codes, only when you see them: product_deform, extra_text, garbled_text, face_collapse, face_count, sensitive.
+
+Writing, logos, prices, and phone numbers painted into the frame are defects. The edit adds those later.
+
+Shot {{ shot_id }}
+Purpose: {{ purpose }}
+Visual: {{ visual }}
+Shot size: {{ shot_size }}
+Camera: {{ shot_type }}
+Mode: {{ generation_mode }}
+Voiceover, context only, not to be painted: {{ voiceover }}
+Rule notes: {{ rule_notes }}
+
+Return a JSON object with scores, hard_fail, total, evaluator, and notes.
+Set evaluator to your model name.

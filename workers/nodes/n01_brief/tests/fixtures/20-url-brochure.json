@@ -7,7 +7,7 @@
       "attachments": [
         {
           "kind": "url",
-          "uri": "http://127.0.0.1:{{port}}/brochure.html"
+          "uri": "http://assets.hilatv.test/brochure.html"
         }
       ]
     }

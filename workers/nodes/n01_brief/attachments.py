@@ -15,6 +15,7 @@ from pypdf import PdfReader
 from workers.nodes.n01_brief.prompts import render_classify, system_prompt
 from workers.nodes.n01_brief.schema import AttachmentRef, ImageLabel
 from workers.nodes.n01_brief.signals import AttachmentFacts, extract_facts
+from workers.nodes.n01_brief.ssrf import fetch_bytes
 
 _IMAGE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("logo", ("logo", "标志", "商标", "徽标")),
@@ -22,7 +23,6 @@ _IMAGE_KEYWORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("scene", ("scene", "workshop", "场景", "车间", "工厂", "店内", "环境", "门头")),
     ("product", ("product", "产品", "sku", "商品", "包装", "正面", "侧面")),
 )
-_USER_AGENT = "HiLatvN1/0.1"
 
 
 @dataclass
@@ -101,13 +101,18 @@ def parse_attachment(
     shot_id: str | None = None,
     attempt: int | None = None,
 ) -> ParsedAttachment:
+    """Read one attachment.
+
+    ``client`` is ignored. URL fetches always go through ``ssrf.fetch_bytes``
+    so a caller-supplied client cannot follow redirects or use a proxy first.
+    """
+
+    _ = client
     deadline.check()
     trace = {"project_id": project_id, "shot_id": shot_id, "attempt": attempt}
     try:
         if attachment.kind == "url":
-            return _parse_url(
-                attachment, deadline=deadline, gateway=gateway, client=client, trace=trace
-            )
+            return _parse_url(attachment, deadline=deadline, gateway=gateway, trace=trace)
         if attachment.kind == "pdf":
             return _parse_pdf(attachment)
         return _parse_image(attachment, deadline=deadline, gateway=gateway, trace=trace)
@@ -180,14 +185,13 @@ def _parse_url(
     *,
     deadline: Deadline,
     gateway: Any,
-    client: httpx.Client | None,
     trace: dict[str, Any],
 ) -> ParsedAttachment:
     parsed = urlparse(attachment.uri)
     if parsed.scheme not in {"http", "https"}:
         raise ValueError("url attachment must be http or https")
     timeout, max_bytes = _fetch_limits(deadline)
-    body, content_type = _get(attachment.uri, timeout=timeout, max_bytes=max_bytes, client=client)
+    body, content_type = _get(attachment.uri, timeout=timeout, max_bytes=max_bytes)
     if "pdf" in content_type or attachment.uri.lower().endswith(".pdf"):
         text = _pdf_bytes(body)
         facts = extract_facts(text)
@@ -231,7 +235,6 @@ def _parse_url(
         page_url=attachment.uri,
         deadline=deadline,
         gateway=gateway,
-        client=client,
         trace=trace,
     )
     return ParsedAttachment(
@@ -253,7 +256,6 @@ def _page_images(
     page_url: str,
     deadline: Deadline,
     gateway: Any,
-    client: httpx.Client | None,
     trace: dict[str, Any],
 ) -> list[dict[str, Any]]:
     images: list[dict[str, Any]] = []
@@ -264,9 +266,7 @@ def _page_images(
         filename = Path(urlparse(absolute).path).name
         size = 0
         try:
-            body, _content_type = _get(
-                absolute, timeout=timeout, max_bytes=max_bytes, client=client
-            )
+            body, _content_type = _get(absolute, timeout=timeout, max_bytes=max_bytes)
             size = len(body)
         except Exception:
             size = 0
@@ -374,28 +374,5 @@ def _fetch_limits(deadline: Deadline) -> tuple[float, int]:
     return min(configured, deadline.remaining()), max(1, max_bytes)
 
 
-def _get(
-    url: str,
-    *,
-    timeout: float,
-    max_bytes: int,
-    client: httpx.Client | None,
-) -> tuple[bytes, str]:
-    headers = {"User-Agent": _USER_AGENT}
-    owns_client = client is None
-    http = client or httpx.Client(timeout=timeout, follow_redirects=True, headers=headers)
-    try:
-        with http.stream("GET", url) as response:
-            response.raise_for_status()
-            content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip()
-            chunks: list[bytes] = []
-            size = 0
-            for chunk in response.iter_bytes():
-                chunks.append(chunk)
-                size += len(chunk)
-                if size >= max_bytes:
-                    break
-            return b"".join(chunks)[:max_bytes], content_type.lower()
-    finally:
-        if owns_client:
-            http.close()
+def _get(url: str, *, timeout: float, max_bytes: int) -> tuple[bytes, str]:
+    return fetch_bytes(url, timeout=timeout, max_bytes=max_bytes)
