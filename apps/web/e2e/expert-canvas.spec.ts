@@ -12,6 +12,9 @@ async function expectNoHorizontalOverflow(page: Page) {
 test("expert canvas shows candidates and a re-run charges the budget", async ({ page }) => {
   test.skip(!projectId, "needs HILATV_EXPERT_PROJECT");
   await page.goto(`/projects/${projectId}/expert`);
+  if (test.info().project.name === "mobile") {
+    expect(page.viewportSize()?.width).toBe(390);
+  }
   await expect(page.getByRole("heading", { name: "节点画布" })).toBeVisible();
   await page.getByTestId("node-n08_keyframe").click();
   await expect(page.getByText("3 个关键帧候选")).toBeVisible();

@@ -1,15 +1,21 @@
 """How many regeneration charges a manual re-run spends.
 
-The only counter is ``open_project_budget``. Each generative node in the span
-(this node and everything after it) spends one via ``try_take``.
+The only counter is ``open_project_budget``. SPEC.md line 213 gives each shot
+its own retries; ``shot_director`` spends one ``try_take`` per regeneration.
+A manual re-run reserves that same unit: one per shot each generative node
+will actually regenerate. Downstream nodes cover every billable shot.
+``shot_id`` limits only the node the user started.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 from workers.qa.budget_store import open_project_budget
 from workers.workflow.contract import PIPELINE
 
 GENERATIVE = frozenset({"n06_voiceover", "n08_keyframe", "n10_video"})
+_PICTURE = frozenset({"n08_keyframe", "n10_video"})
 
 
 class BudgetExhausted(RuntimeError):
@@ -28,18 +34,64 @@ def span(start: str) -> list[str]:
     return list(PIPELINE[PIPELINE.index(start) :])
 
 
-def generation_count(start: str) -> int:
-    return sum(1 for name in span(start) if name in GENERATIVE)
+def generation_count(
+    start: str,
+    shots: list[dict[str, Any]] | None = None,
+    shot_id: str | None = None,
+) -> int:
+    """How many ``try_take`` calls this re-run must be able to pay for.
+
+    ``shots is None`` means the caller has not loaded a script, so each
+    generative node counts as one shot. An explicit list counts billable
+    shots. Motion-graphics shots do not call the image or video model.
+    A voiceover shot with an empty line does not call TTS.
+    """
+
+    total = 0
+    for name in span(start):
+        if name not in GENERATIVE:
+            continue
+        if shots is None:
+            total += 1
+            continue
+        limit = shot_id if name == start else None
+        total += _billable(name, shots, limit)
+    return total
 
 
-def reserve(project_id: str, start: str) -> int:
+def _billable(node: str, shots: list[dict[str, Any]], shot_id: str | None) -> int:
+    rows = shots
+    if shot_id:
+        rows = [item for item in shots if item.get("shot_id") == shot_id]
+        if not rows:
+            rows = [{"shot_id": shot_id}]
+    count = 0
+    for shot in rows:
+        mode = str(shot.get("generation_mode") or "")
+        if node in _PICTURE and mode == "motion_graphics":
+            continue
+        spoken = str(shot.get("voiceover") or "").strip()
+        if node == "n06_voiceover" and "voiceover" in shot and not spoken:
+            continue
+        count += 1
+    return count
+
+
+def reserve(
+    project_id: str,
+    start: str,
+    *,
+    shots: list[dict[str, Any]] | None = None,
+    shot_id: str | None = None,
+) -> int:
     """Charge the shared ledger before a manual re-run starts.
 
     A span with no image, video, or voiceover generation charges nothing.
-    When the remaining count cannot cover the span, nothing is taken.
+    When the remaining count cannot cover every shot in the span, nothing
+    is taken.
     """
 
-    count = generation_count(start)
+    count = generation_count(start, shots, shot_id)
     if count == 0:
         return 0
     budget = open_project_budget(project_id)

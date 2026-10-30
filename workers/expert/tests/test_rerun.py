@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,15 @@ def test_reserve_matches_the_generative_span(tmp_path, monkeypatch) -> None:
     assert generation_count("n14_packaging") == 0
     assert generation_count("n08_keyframe") == 2
     assert generation_count("n10_video") == 1
+    shots = [
+        {"shot_id": "S01", "generation_mode": "image_to_video", "voiceover": "甲"},
+        {"shot_id": "S02", "generation_mode": "image_to_video", "voiceover": "乙"},
+        {"shot_id": "S03", "generation_mode": "motion_graphics", "voiceover": ""},
+    ]
+    assert generation_count("n08_keyframe", shots) == 4
+    assert generation_count("n10_video", shots) == 2
+    assert generation_count("n08_keyframe", shots, "S01") == 3
+    assert generation_count("n06_voiceover", shots) == 6
     assert reserve("p", "n14_packaging") == 0
     assert open_project_budget("p").used == 0
     assert reserve("p", "n08_keyframe") == 2
@@ -36,6 +47,9 @@ def test_reserve_matches_the_generative_span(tmp_path, monkeypatch) -> None:
     with pytest.raises(BudgetExhausted, match="已用完"):
         reserve("p", "n06_voiceover")
     assert open_project_budget("p").used == 3
+    with pytest.raises(BudgetExhausted, match="已用完"):
+        reserve("wide", "n08_keyframe", shots=shots)
+    assert open_project_budget("wide").used == 0
 
 
 def test_canvas_review_selection_and_rerun(tmp_path, monkeypatch) -> None:
@@ -212,7 +226,17 @@ def test_api_refuses_a_rerun_when_the_ledger_is_full(tmp_path, monkeypatch) -> N
     from app.main import app
 
     init_project("api1", sentence="预算", status="completed")
-    save_node("api1", "n05_storyboard", {"script": {"shots": []}})
+    save_node(
+        "api1",
+        "n05_storyboard",
+        {
+            "script": {
+                "shots": [
+                    {"shot_id": "S01", "generation_mode": "image_to_video", "voiceover": "一句"}
+                ]
+            }
+        },
+    )
     budget = open_project_budget("api1")
     while budget.try_take():
         pass
@@ -235,3 +259,117 @@ def test_api_refuses_a_rerun_when_the_ledger_is_full(tmp_path, monkeypatch) -> N
     assert refused.status_code == 409
     assert "已用完" in refused.json()["detail"]
     assert open_project_budget("api1").used == 1
+
+
+def test_selecting_an_unreviewed_video_holds_without_a_deliverable(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_RENDER_WIDTH", "320")
+    monkeypatch.setenv("HILATV_RENDER_HEIGHT", "180")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    build_film("pick")
+    snapshot = read_snapshot("pick") or {}
+    master = Path(str(snapshot["deliverable"]))
+    before = hashlib.sha256(master.read_bytes()).hexdigest()
+    video = build_canvas("pick")["shots"][0]["videos"][0]
+    assert video["verdict"]["qa_passed"] is False
+    assert video["verdict"]["visual_reviewed"] is False
+    result = select_candidate(
+        "pick",
+        "n10_video",
+        "S01",
+        video["candidate_id"],
+        qa_passed=True,
+        visual_reviewed=True,
+    )
+    assert result["held"] is True
+    assert result["deliverable"] is None
+    again = read_snapshot("pick") or {}
+    assert again["status"] == "needs_human_review"
+    assert not again.get("deliverable")
+    assert hashlib.sha256(master.read_bytes()).hexdigest() == before
+
+
+def test_timeline_with_an_unreviewed_clip_holds(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_RENDER_WIDTH", "320")
+    monkeypatch.setenv("HILATV_RENDER_HEIGHT", "180")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    build_film("time")
+    snapshot = read_snapshot("time") or {}
+    master = Path(str(snapshot["deliverable"]))
+    before = hashlib.sha256(master.read_bytes()).hexdigest()
+    from workers.expert.canvas import load_timeline_dict
+
+    timeline = load_timeline_dict("time") or {}
+    state = json.loads(
+        (project_path("time") / "nodes" / "n10_video.json").read_text(encoding="utf-8")
+    )
+    uri = state["videos"][0]["uri"]
+    result = save_timeline(
+        "time",
+        {
+            "overlays": timeline["overlays"],
+            "clips": [{"clip_id": "S01", "path": uri}],
+        },
+    )
+    assert result["held"] is True
+    assert result.get("deliverable") is None
+    again = read_snapshot("time") or {}
+    assert again["status"] == "needs_human_review"
+    assert not again.get("deliverable")
+    assert hashlib.sha256(master.read_bytes()).hexdigest() == before
+
+
+def test_concurrent_reruns_cannot_both_charge(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "1")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    init_project("race", sentence="并发", status="completed")
+    save_node(
+        "race",
+        "n05_storyboard",
+        {
+            "script": {
+                "shots": [
+                    {"shot_id": "S01", "generation_mode": "image_to_video", "voiceover": "泵"}
+                ]
+            }
+        },
+    )
+    save_node("race", "n08_keyframe", {"keyframes": [{"candidate_id": "k"}]})
+    gate = threading.Event()
+    entered = threading.Event()
+    calls = {"n": 0}
+
+    def fake_invoke(name: str, **kwargs: object) -> dict:
+        del name, kwargs
+        calls["n"] += 1
+        if calls["n"] == 1:
+            entered.set()
+            assert gate.wait(3)
+        return {}
+
+    monkeypatch.setattr("workers.expert.rerun.invoke_node", fake_invoke)
+    done: dict[str, object] = {}
+
+    def run(label: str) -> None:
+        try:
+            done[label] = rerun_span("race", "n10_video")
+        except Exception as exc:
+            done[label] = exc
+
+    first = threading.Thread(target=run, args=("a",))
+    first.start()
+    assert entered.wait(3)
+    second = threading.Thread(target=run, args=("b",))
+    second.start()
+    second.join(0.4)
+    assert second.is_alive()
+    assert open_project_budget("race").used == 1
+    gate.set()
+    first.join(5)
+    second.join(5)
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert open_project_budget("race").used == 1
+    assert isinstance(done["b"], BudgetExhausted)

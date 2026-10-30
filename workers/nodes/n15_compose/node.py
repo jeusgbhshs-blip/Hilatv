@@ -232,8 +232,12 @@ def _timeline(
         duration = frames / FPS
         gains = _gains(rgb, target)
         plate = work / "plates" / f"{clip_id}.mp4"
-        if source is not None and _blocked_plate(payload.videos, source):
-            raise QAError("内容安全硬伤不能进入成片", retryable=False)
+        if source is not None:
+            block = _blocked_plate(payload.videos, source)
+            if block == "sensitive":
+                raise QAError("内容安全硬伤不能进入成片", retryable=False)
+            if block == "unreviewed":
+                raise QAError("未经视觉评审的镜头不能进入成片", retryable=False)
         if source is None:
             encode_plate(plate, rgb=rgb, width=width, height=height, frames=frames, fps=FPS)
         else:
@@ -513,18 +517,28 @@ def _overlays(
     return items
 
 
-def _blocked_plate(videos: list[Candidate], source: Path) -> bool:
-    """A content-safety hard fail never becomes the master plate."""
+def _blocked_plate(videos: list[Candidate], source: Path) -> str | None:
+    """Refuse a plate that is a candidate without a real visual pass.
 
+    ``judge_unavailable``, ``not_reviewed``, and mock judges are unreviewed.
+    A content-safety hard fail is reported separately. A file that is not one
+    of these candidates (a released fallback clip, a color plate) is unchanged.
+    """
+
+    from workers.expert.gates import qa_passed_flag
+
+    found: str | None = None
     for item in videos:
-        if not content_blocked(item.qa):
-            continue
         located = resolve_project_file(Path(item.uri))
         if isinstance(located, MediaLoad) or not located.is_file():
             continue
-        if located.resolve() == source.resolve():
-            return True
-    return False
+        if located.resolve() != source.resolve():
+            continue
+        if content_blocked(item.qa):
+            return "sensitive"
+        if not qa_passed_flag(item.qa):
+            found = "unreviewed"
+    return found
 
 
 def _with_locked_label(

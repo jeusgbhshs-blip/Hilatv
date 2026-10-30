@@ -12,6 +12,7 @@ from workers.expert.gates import (
     GateError,
     assert_ai_label,
     consent_gate,
+    qa_passed_flag,
     refuse_label_bypass,
     scrub_brand,
 )
@@ -25,6 +26,7 @@ from workers.workflow.contract import FINAL_NODE, PEERS, PHASE, PIPELINE
 from workers.workflow.film import needs_human_review
 from workers.workflow.store import (
     load_checkpoint,
+    locked_project,
     project_path,
     publish,
     read_snapshot,
@@ -73,6 +75,32 @@ def rerun_span(
     _ = (qa_passed, visual_reviewed, consent, licensed, human_release)
     if node not in PIPELINE:
         raise GateError("未知节点", status=400)
+    if not valid_project_id(project_id) or read_snapshot(project_id) is None:
+        raise GateError("项目不存在", status=404)
+    with locked_project(project_id):
+        return _rerun_locked(
+            project_id,
+            node,
+            shot_id=shot_id,
+            prompt_suffix=prompt_suffix,
+            voice_id=voice_id,
+            skip_ai_label=skip_ai_label,
+            gateway=gateway,
+        )
+
+
+def _rerun_locked(
+    project_id: str,
+    node: str,
+    *,
+    shot_id: str | None,
+    prompt_suffix: str,
+    voice_id: str | None,
+    skip_ai_label: bool | None,
+    gateway: Any | None,
+) -> dict[str, Any]:
+    """Run one re-run while the project lock is already held."""
+
     snapshot = _snapshot(project_id)
     if snapshot.get("status") == "running":
         raise GateError("项目仍在运行", status=409)
@@ -97,7 +125,11 @@ def rerun_span(
             "omit_ai_label": True if skip_ai_label else False,
         }
     )
-    charged = reserve(project_id, node)
+    script = state.get("script") if isinstance(state.get("script"), dict) else None
+    shot_rows = None
+    if isinstance(script, dict) and isinstance(script.get("shots"), list):
+        shot_rows = [item for item in script["shots"] if isinstance(item, dict)]
+    charged = reserve(project_id, node, shots=shot_rows, shot_id=shot_id)
     log_event(
         "expert_rerun",
         project_id=project_id,
@@ -198,6 +230,14 @@ def _hold_result(
     charged: int,
     state: dict[str, Any],
 ) -> dict[str, Any]:
+    paused = _pause_for_review(project_id, state)
+    paused.update({"node": node, "nodes": nodes, "charged": charged})
+    return paused
+
+
+def _pause_for_review(project_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    """Same hold as the film workflow: no master and no delivery."""
+
     notes = state.get("shot_quality") if isinstance(state.get("shot_quality"), list) else []
     update_snapshot(
         project_id,
@@ -229,9 +269,6 @@ def _hold_result(
     )
     return {
         "project_id": project_id,
-        "node": node,
-        "nodes": nodes,
-        "charged": charged,
         "held": True,
         "deliverable": None,
         "canvas": build_canvas(project_id),
@@ -289,12 +326,12 @@ def select_candidate(
         updated.append(item.model_copy(update={"selected": chosen, "qa": item.qa}))
     _replace_rows(project_id, node, key, updated)
     state[key] = [item.model_dump(mode="json") for item in updated]
-    if (
-        node == "n10_video"
-        and isinstance(state.get("script"), dict)
-        and state.get("elements")
-        and not _delivery_blocked(snapshot, state, ran_director=False)
-    ):
+    chosen = next(item for item in updated if item.candidate_id == candidate_id)
+    if not qa_passed_flag(chosen.qa) or _delivery_blocked(snapshot, state, ran_director=False):
+        paused = _pause_for_review(project_id, state)
+        paused["candidate_id"] = candidate_id
+        return paused
+    if node == "n10_video" and isinstance(state.get("script"), dict) and state.get("elements"):
         _refresh_master(project_id, state, gateway=gateway)
     return {
         "project_id": project_id,
@@ -346,6 +383,14 @@ def save_timeline(
         if not isinstance(transition, str) or not transition.strip():
             transition = clip.transition_out
         clips.append(clip.model_copy(update={"path": path, "transition_out": transition}))
+    for clip in clips:
+        if clip.clip_id in {"intro", "outro"}:
+            continue
+        review = _review_of_path(state, clip.path)
+        if review == "sensitive":
+            raise GateError("内容安全硬伤不能进入成片")
+        if review == "unreviewed":
+            return _pause_for_review(project_id, state)
     updated = current.model_copy(update={"clips": clips})
     assert_ai_label([item.model_dump() for item in updated.overlays])
     work = Path(updated.work_dir)
@@ -431,6 +476,38 @@ def _node_file(project_id: str, node: str) -> dict[str, Any]:
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
     return data if isinstance(data, dict) else {}
+
+
+def _review_of_path(state: dict[str, Any], path: str) -> str | None:
+    """``sensitive`` or ``unreviewed`` when ``path`` is a candidate that cannot ship."""
+
+    target = _resolve_media(path)
+    if target is None:
+        return None
+    for raw in list(state.get("keyframes") or []) + list(state.get("videos") or []):
+        if not isinstance(raw, dict):
+            continue
+        try:
+            candidate = Candidate.model_validate(raw)
+        except Exception:
+            continue
+        located = _resolve_media(candidate.uri)
+        if located is None or located != target:
+            continue
+        if content_blocked(candidate.qa):
+            return "sensitive"
+        if not qa_passed_flag(candidate.qa):
+            return "unreviewed"
+    return None
+
+
+def _resolve_media(uri: str) -> Path | None:
+    from workers.qa.pixels import MediaLoad, resolve_project_file
+
+    located = resolve_project_file(Path(uri))
+    if isinstance(located, MediaLoad) or not located.is_file():
+        return None
+    return located.resolve()
 
 
 def _blocked_uris(state: dict[str, Any]) -> set[str]:

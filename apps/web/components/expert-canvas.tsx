@@ -225,7 +225,7 @@ export function ExpertCanvas({ projectId }: { projectId: string }) {
       </div>
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,280px)_minmax(0,1fr)]">
-        <div className="h-[920px] w-full overflow-hidden rounded-lg border border-border bg-card">
+        <div className="h-[70dvh] w-full min-w-0 overflow-hidden rounded-lg border border-border bg-card">
           <ReactFlow
             className="h-full w-full"
             nodes={nodes}

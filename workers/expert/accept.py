@@ -107,8 +107,14 @@ def _master_changed(project_id: str, videos: list[dict]) -> bool:
     other = next((item for item in videos if not item["selected"]), None)
     if other is None:
         raise SystemExit("no alternate video candidate")
-    select_candidate(project_id, "n10_video", other["shot_id"], other["candidate_id"])
+    result = select_candidate(project_id, "n10_video", other["shot_id"], other["candidate_id"])
     again = read_snapshot(project_id) or {}
+    if result.get("held") or again.get("status") == "needs_human_review":
+        if again.get("deliverable"):
+            raise SystemExit("unreviewed select wrote a deliverable")
+        if master.is_file() and hashlib.sha256(master.read_bytes()).hexdigest() != before:
+            raise SystemExit("unreviewed select rewrote the master")
+        return False
     updated = Path(str(again.get("deliverable") or ""))
     if not updated.is_file():
         raise SystemExit("master missing after select")
