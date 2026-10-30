@@ -5,9 +5,13 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
+
+# Chapter 9.5 promotion needs 20 live runs and an 80% success rate.
+# This batch cannot record those results: status stays 「试用」.
 
 
 class ShotPreset(BaseModel):
@@ -20,7 +24,10 @@ class ShotPreset(BaseModel):
     prompt_fragment: str = Field(min_length=1)
     negative_fragment: str = Field(min_length=1)
     recommended_model: str = Field(min_length=1)
-    motion_strength: str = Field(min_length=1)
+    motion_strength: Literal["low", "medium"]
+    status: Literal["试用"]
+    formal: Literal[False] = False
+    tested_runs: Literal[0] = 0
 
 
 def presets_dir() -> Path:

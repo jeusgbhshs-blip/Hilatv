@@ -1,0 +1,18 @@
+id: doorway_enter
+label: 进门落幅
+shot_sizes:
+  - wide
+  - medium
+purposes:
+  - hook
+  - proof
+prompt_fragment: >-
+  The camera moves through an open doorway and settles inside. The move is short
+  and the interior stays in focus.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: low
+status: 试用
+formal: false
+tested_runs: 0

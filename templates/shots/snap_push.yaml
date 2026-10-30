@@ -1,0 +1,17 @@
+id: snap_push
+label: 短促推近
+shot_sizes:
+  - close_up
+  - medium
+purposes:
+  - hook
+prompt_fragment: >-
+  The camera pushes in over a short distance and then stops. The subject stays
+  sharp and the horizon stays level.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: medium
+status: 试用
+formal: false
+tested_runs: 0
