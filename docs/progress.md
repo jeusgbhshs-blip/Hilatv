@@ -21,7 +21,7 @@
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ✅ | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T16 | N18 对话改稿 + 版本管理 | T10, T12 | 🔵 | `cursor/t16-n18-revision-2fcd` | 验收中。改稿历史走 `/revisions`，不占用 T17 的 `/versions`。假设见下方 |
+| T16 | N18 对话改稿 + 版本管理 | T10, T12 | 🔵 | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 验收中。改稿历史走 `/revisions`，不占用 T17 的 `/versions`。假设见下方 |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并。比例、语种、时长仍走 `/versions`。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
