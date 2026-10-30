@@ -1,1 +1,1 @@
-"""Evaluation harness. The 60-brief benchmark is T18."""
+"""Evaluation harness. The 60-brief benchmark and score table are T18."""

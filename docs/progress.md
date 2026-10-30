@@ -23,7 +23,7 @@
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ⬜ | – | |
-| T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
+| T18 | eval/ 基准测试 + 报告 | T10, T12 | 🔵 | t18-eval-benchmark | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。T12 未合并，评审走网关桩。假设见下方 |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
 
@@ -61,6 +61,21 @@
 - 合并了哪些：T09（PR #29，无新迁移）
 - 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
+- T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5 和 gateway.judge。T12 的 `review_shot` 还没有。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后才用 `--mode live`
+
+## T18 假设
+
+- 60 条是自写的企业口吻样例，按 6 个行业各 10 条放在 `eval/briefs/*.yaml`。团队收集的真实需求还没到。替换这些句子后，同一条命令会改跑新句子。
+- `make accept-t18` 是 mock：按 T10 的顺序调用 N1、N2 读取、N3 自动选定、N4、N5，再对每个镜头打分。不启动 Temporal，也不编码 MP4。`--mode live` 才调用 `workers.workflow.service.run_and_wait`，走出片工作流。
+- T12 还没有 `workers.qa.service.review_shot`。评测先调用 `gateway.judge`。无 Key 时 mock 按 JSON Schema 填出 0 分，桩把这种指纹收成 mock-judge 的 8.4 分，硬伤为空。一旦 `review_shot` 可调用，评测改走它，不再改分。
+- 有选中视频候选时，评审节点记 `n11_video`，模型名用候选上的 `model`。mock 只有分镜，节点记 `n09_keyframe`，模型记 `not-rendered`。镜头类型用分镜里的运镜预设 id。
+- 硬伤按镜头计：`QAReport.hard_fail` 非空算 1 个硬伤镜头。阈值 5% 写进报告。`--strict` 在超过或结构不完整时返回非 0。mock 验收打开 strict。
+- 盲评包只给匿名 pair id 和成片路径。对照组成片不在本任务里，key 里标 `withheld`。
+- 费用是该项目在网关 `call_logs.cost_cny` 的合计。mock 为 0。调用仍经过网关预算守卫。
+- 耗时是单条样例的墙钟秒。mock 不拿它去卡 SPEC §1.4 的 15 分钟。
+- 画面文字、Logo、价格、电话仍只留在分镜的 `on_screen_text`。评审提示词要求模型不要把它们画进画面。
+- 不新增数据库迁移。Alembic head 仍是 `t03_gateway_0002`。
+- 样例句子都写了 15 秒，避免 mock 跑出行业模板里的 30 秒或 60 秒分镜。N1 若仍留下开放问题，不挡住评分。
 
 ## T10 假设
 
