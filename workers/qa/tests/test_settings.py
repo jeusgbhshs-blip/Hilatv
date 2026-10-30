@@ -40,6 +40,16 @@ def test_similarity_outside_the_unit_interval_raises(monkeypatch: pytest.MonkeyP
         validate_settings()
 
 
+def test_infinite_retry_cap_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "inf")
+    with pytest.raises(SettingsError, match="HILATV_QA_PROJECT_RETRIES must be an integer >= 1"):
+        validate_settings()
+    monkeypatch.setenv("HILATV_QA_MIN_EDGE", "nan")
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "12")
+    with pytest.raises(SettingsError, match="HILATV_QA_MIN_EDGE"):
+        validate_settings()
+
+
 def test_caps_below_one_raise(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_QA_MIN_EDGE", "0")
     with pytest.raises(SettingsError, match="HILATV_QA_MIN_EDGE must be an integer >= 1"):

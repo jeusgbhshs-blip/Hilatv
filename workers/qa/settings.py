@@ -8,6 +8,7 @@ replaced with the default.
 
 from __future__ import annotations
 
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -86,14 +87,14 @@ class RetryBudget:
 
 def _similarity(name: str, default: float) -> float:
     value = _number(name, default)
-    if not 0 < value <= 1:
+    if not math.isfinite(value) or not 0 < value <= 1:
         raise SettingsError(f"{name} must be in (0, 1], got {value}")
     return value
 
 
 def _cap(name: str, default: int) -> int:
     value = _number(name, float(default))
-    if value < 1 or value != int(value):
+    if not math.isfinite(value) or value < 1 or value != math.trunc(value):
         raise SettingsError(f"{name} must be an integer >= 1, got {value}")
     return int(value)
 
