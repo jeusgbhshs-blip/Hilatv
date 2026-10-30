@@ -1,1 +1,1 @@
-"""Media helpers. FFmpeg filter graphs arrive with N15 (T09)."""
+"""FFmpeg helpers used by N10 trim and N15 compositing."""

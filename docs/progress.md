@@ -14,7 +14,7 @@
 | T06 | N4 脚本 + N5 分镜 | T05 | ✅ | [t06-script-storyboard](https://github.com/jeusgbhshs-blip/Hilatv/pull/26) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | 🔵 | [t07-n6-voiceover](https://github.com/jeusgbhshs-blip/Hilatv/pull/27) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ✅ | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ⬜ | – | |
+| T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | 🔵 | t09-render | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ⬜ | – | |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
@@ -57,10 +57,33 @@
 - 需要提供什么：
 -->
 
+### 2026-10-30
+- 合并了哪些：无
+- 正在做什么：T09 N13 字幕、N14 包装、N15 FFmpeg 合成。无 Key，本地字体和 FFmpeg。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T09 本身不需要 Key
+
 ### 2026-10-29
 - 合并了哪些：T01（PR #21）、T02（PR #22，`t02_business_0001`）、T03（PR #23，`t03_gateway_0002`）、T04（PR #24，无新迁移）、T05（PR #25，无新迁移）、T06（PR #26，无新迁移）、T08（PR #28，无新迁移）
 - 正在做什么：T07 N6 配音先行，已变基到含 T08 的 main。无 Key，`make accept-t07` 走 mock TTS / mock ASR。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`
+
+## T09 假设
+
+- N13、N14、N15 不调用任何模型。字幕、徽章、价格、电话、Logo、CTA、AI 角标都由渲染层用 Pillow 画成 PNG，再由 FFmpeg `overlay` 叠上去。没有外部服务，因此也没有 mock adapter 切换。网关预算守卫碰不到这条链路。
+- 第 5 章没有字幕或时间轴模型。节点自己的模型是 `SubtitleCue`、`PackageElement` 和 `Timeline`。`Script`、`Shot`、`OnScreenText`、`Asset`、`BrandKit`、`Brief` 仍用第 5 章。不新增迁移，Alembic head 仍是 `t03_gateway_0002`。
+- 字幕时钟来自 N6 的逐词时间戳。中文时间戳是逐字的，所以「不拆词」靠 `templates/packaging/words.yaml` 加上品牌名、产品名、卖点。只有能放进一行的词才会整段保住。中文一行按非空白字符计，上限 16。英文按字符计（含空格），上限 42。句末标点另起一行。
+- 对齐误差是字幕行首尾和对应时间戳首尾的差，必须 ≤ 100ms。节点把行首尾直接落在这些时间戳上。
+- 产品主体框由调用方传入（归一化矩形）。本任务没有视觉模型，主体检测留给 T12。冲突时字幕上移，直到离开主体或顶到安全区。
+- 多平台同时出现时，安全区取各平台里最大的那一圈。抖音和视频号的底部、右侧比 YouTube 更宽。样式在 `templates/packaging/safe_areas.yaml`。
+- 片头三套模板是 `fade`、`rise`、`scale`，时长 1.6 秒，不超过 2 秒。成片不超过 15 秒，或平台是抖音 / 视频号时，默认无片头。也可以显式指定。片尾固定 2.4 秒，Logo 加 CTA（电话、官网；都空则写「联系我们」）。角标 Logo 默认开。AI 显式标识只放「AI生成」四个字，隐式元数据留给 T20。
+- 默认转场是硬切。`transition_out` 为 dissolve / fade / xfade 时，两镜之间用 0.3 秒叠化。验收片子全是硬切。
+- 调色是同一份 `templates/packaging/lut/unified.cube`，再加同一组 `eq`。白平衡是把后面镜头的底色增益拉向第一段，不是对实拍做直方图匹配。超分、插帧、多比例重构不在本任务。
+- 没有成片文件时，镜头是纯色底板，上面没有字。旁白 `mock://` 用和 N6 相同的本地 WAV。对象存储不参与验收。
+- 导出三份：成片、无字幕（仍保留徽章、Logo、CTA、AI 角标和旁白）、无配音（画面与成片相同，没有音轨）。
+- 文字像素对照发生在 H.264 之前：同一套参数重画 PNG，以及 FFmpeg `overlay=format=rgb` 把这张 PNG 叠到纯色底上，和 Pillow 合成逐像素相同。成片是 yuv420p，字边做不到逐字节相同。时间轴引用的就是这些 PNG。
+- 时间轴 JSON 重放时，libx264 `threads=1` 且 `-fflags +bitexact`，两次成片字节相同。
+- 字体是随仓库附带的 Noto Sans CJK SC（思源黑体）Regular / Bold，OFL 1.1。品牌字体名映射到这两个文件。
+- 字幕资产是 JSON 台词表，烧录用 PNG，不用 libass。ASS 的栅格和 Pillow 对不齐。
 
 ## T07 假设
 

@@ -54,12 +54,14 @@ def test_compose_services_declare_healthchecks() -> None:
 
 def test_stubs_import() -> None:
     from eval.run_eval import build_report
-    from workers.media.ffmpeg import render_not_ready
+    from workers.media.ffmpeg import ffmpeg_available
+    from workers.nodes.n15_compose.graph import filter_complex
     from workers.qa.service import review_not_ready
     from workers.workflow.pipeline import planned_nodes
 
     assert planned_nodes()[0] == "n01_brief"
     assert len(planned_nodes()) == 18
     assert build_report()["task"] == "T18"
-    assert render_not_ready()["task"] == "T09"
+    assert callable(filter_complex)
+    assert isinstance(ffmpeg_available(), bool)
     assert review_not_ready()["task"] == "T12"

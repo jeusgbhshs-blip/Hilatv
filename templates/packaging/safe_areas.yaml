@@ -1,0 +1,27 @@
+# Platform UI safe areas, as fractions of the frame. Origin is the top-left.
+# Douyin and 视频号 cover the bottom and the right. Several platforms at once
+# use the largest inset so one master still clears every UI.
+default:
+  top: 0.08
+  bottom: 0.12
+  left: 0.06
+  right: 0.06
+platforms:
+  - id: douyin
+    names: [抖音, douyin, tiktok]
+    top: 0.10
+    bottom: 0.20
+    left: 0.06
+    right: 0.14
+  - id: channels
+    names: [视频号, channels, wechat]
+    top: 0.08
+    bottom: 0.18
+    left: 0.06
+    right: 0.16
+  - id: youtube
+    names: [youtube, linkedin]
+    top: 0.06
+    bottom: 0.08
+    left: 0.05
+    right: 0.05
