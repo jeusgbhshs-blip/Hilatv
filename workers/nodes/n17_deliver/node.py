@@ -231,6 +231,9 @@ def _execute(
                 height=out_h,
             )
             audios = _audios(takes, board)
+            soundtrack = _soundtrack(root, payload.audio_track)
+            if soundtrack is not None:
+                audios = [soundtrack, *audios]
             dest = work / "versions" / f"{_slug(aspect, duration)}_{language}.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
             _args, burn = burn_command(str(silent), audios, placed, str(dest), duration)
@@ -455,6 +458,15 @@ def _board(script: Script, kept: list[KeptShot]) -> Script:
     return script.model_copy(update={"shots": shots})
 
 
+def _soundtrack(root: Path, raw: str | None) -> tuple[str, float] | None:
+    if not raw:
+        return None
+    path = _contained(root, raw, label="audio track")
+    if not path.is_file():
+        raise QAError("audio track must stay inside the project directory")
+    return str(path), 0.0
+
+
 def _audios(takes: list[Any], script: Script) -> list[tuple[str, float]]:
     by_id = {item.shot_id: item for item in takes}
     rows: list[tuple[str, float]] = []
@@ -510,13 +522,13 @@ def _contained_dir(root: Path, raw: str | None) -> Path:
     return path
 
 
-def _contained(root: Path, raw: str) -> Path:
+def _contained(root: Path, raw: str, *, label: str = "master") -> Path:
     path = Path(raw).expanduser()
     if not path.is_absolute():
         path = root / path
     resolved = path.resolve()
     if not resolved.is_relative_to(root):
-        raise QAError("master must stay inside the project directory")
+        raise QAError(f"{label} must stay inside the project directory")
     return resolved
 
 
