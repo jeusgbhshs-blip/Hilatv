@@ -52,6 +52,7 @@
 
 - 后端：Python 3.12 + FastAPI + Pydantic v2；工作流 Temporal；PostgreSQL 16 + pgvector；Redis；对象存储本地 MinIO / 生产阿里云 OSS。
 - 前端：Next.js 15 + TypeScript + Tailwind + shadcn/ui；专家模式画布 React Flow（@xyflow/react）。
+- **界面设计：所有前端界面（T11、T15、T16、T17、T19 及企业后台）开工前必须先读 `DESIGN.md`**，颜色、字号、圆角、间距只用 `apps/web/app/globals.css` 里的 token；交互流程以 SPEC 第 10 章为准，视觉与组件以 `DESIGN.md` 为准。
 - 媒体：FFmpeg 7（filter_complex 由代码生成，时间轴存 JSON）。
 - 提示词模板：Jinja2，放在各节点 `prompts/` 下。
 - 日志：结构化 JSON 日志，带 `project_id` / `node` / `shot_id` / `attempt`。
@@ -77,6 +78,7 @@
 - 无密钥时 CI 必须通过（使用 mock adapter）；密钥只读环境变量，并更新 .env.example；
 - 所有付费调用受网关费用上限约束，不得绕过；
 - 画面文字/Logo/价格/电话只能由渲染层叠加；
+- 涉及界面的任务先读 DESIGN.md，只用其中的 token 和组件规范；
 - 不复制 LibTV / BeefTV 新版任何代码、提示词、界面素材；
 - 贴出验收命令与输出，列出假设。
 ```
@@ -89,3 +91,4 @@
 - [ ] 无硬编码密钥；`.env.example` 已更新；付费调用均经网关预算守卫
 - [ ] 单元测试通过；验收命令及输出已贴出
 - [ ] 假设已列出；`docs/progress.md` 已更新
+- [ ] 涉及界面的 PR：符合 `DESIGN.md` 第 14 章验收清单，并附浅色 + 深色截图

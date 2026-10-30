@@ -1,44 +1,186 @@
 @import "tailwindcss";
 
+/*
+ * HiLatv 设计 token —— 唯一定义处（DESIGN.md 第 3–7 章）。
+ * 组件只能用这里映射出的类名（bg-surface、text-text-2、border-border、rounded-md…），
+ * 不得在组件里写死颜色、字号、圆角、间距。
+ *
+ * 主题：<html data-theme="light|dark">。默认「自动」：本地时间 07:00–18:59 浅色，其余深色
+ * （DESIGN.md 第 4 章）。视频舞台等区域加 data-theme="dark" 局部保持深色。
+ */
+
+/* ---------- 浅色（默认） ---------- */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f5f7;
+  --surface: #ffffff;
+  --raised: #ffffff;
+  --hover: #ededf0;
+  --border: #e6e6ea;
+  --border-strong: #d9d9df;
+  --text-1: #0c0c0e;
+  --text-2: #5b5b66;
+  --text-3: #76767f;
+  --text-disabled: #b4b4bc;
+  --blue: #2e5bff;
+  --blue-hover: #2449d9;
+  --blue-press: #1e3db8;
+  --blue-soft: rgba(46, 91, 255, 0.08);
+  --blue-text: #2e5bff;
+  --success: #157a4e;
+  --success-soft: rgba(21, 122, 78, 0.1);
+  --warning: #95600a;
+  --warning-soft: rgba(149, 96, 10, 0.1);
+  --danger: #d93a41;
+  --danger-soft: rgba(217, 58, 65, 0.1);
+  --overlay: rgba(12, 12, 14, 0.48);
+  --stage: #0c0c0e;
+  --pop-shadow: 0 8px 32px rgba(12, 12, 14, 0.12);
+}
+
+/* ---------- 深色 ---------- */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c0c0e;
+  --surface: #141417;
+  --raised: #1c1c21;
+  --hover: #24242a;
+  --border: #26262c;
+  --border-strong: #33333b;
+  --text-1: #f5f5f7;
+  --text-2: #a1a1aa;
+  --text-3: #8a8a94;
+  --text-disabled: #4a4a52;
+  --blue: #2e5bff;
+  --blue-hover: #4a72ff;
+  --blue-press: #2449d9;
+  --blue-soft: rgba(46, 91, 255, 0.14);
+  --blue-text: #7d98ff;
+  --success: #2fb57a;
+  --success-soft: rgba(47, 181, 122, 0.14);
+  --warning: #f2a93b;
+  --warning-soft: rgba(242, 169, 59, 0.14);
+  --danger: #f2545b;
+  --danger-soft: rgba(242, 84, 91, 0.14);
+  --overlay: rgba(0, 0, 0, 0.64);
+  --stage: #000000;
+  --pop-shadow: none;
+}
+
+/* ---------- Tailwind 映射 ---------- */
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
   --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-destructive: var(--destructive);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --font-sans: "PingFang SC", "Noto Sans SC", "Source Han Sans SC", "Microsoft YaHei", ui-sans-serif, system-ui, sans-serif;
+  --color-border-strong: var(--border-strong);
+  --color-text-1: var(--text-1);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-text-disabled: var(--text-disabled);
+  --color-blue: var(--blue);
+  --color-blue-hover: var(--blue-hover);
+  --color-blue-press: var(--blue-press);
+  --color-blue-soft: var(--blue-soft);
+  --color-blue-text: var(--blue-text);
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-overlay: var(--overlay);
+  --color-stage: var(--stage);
+  /* shadcn/ui 兼容别名：现有组件的类名映射到 DESIGN.md token（新代码请直接用上面的名字） */
+  --color-background: var(--bg);
+  --color-foreground: var(--text-1);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text-1);
+  --color-primary: var(--blue);
+  --color-primary-foreground: #ffffff;
+  --color-muted: var(--hover);
+  --color-muted-foreground: var(--text-2);
+  --color-accent: var(--blue-soft);
+  --color-input: var(--border-strong);
+  --color-ring: var(--blue);
+  --color-destructive: var(--danger);
+
+  --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* 字号 / 行高（DESIGN.md 第 5 章） */
+  --text-display: 32px;
+  --text-display--line-height: 42px;
+  --text-h1: 24px;
+  --text-h1--line-height: 32px;
+  --text-h2: 18px;
+  --text-h2--line-height: 26px;
+  --text-h3: 15px;
+  --text-h3--line-height: 22px;
+  --text-body-lg: 16px;
+  --text-body-lg--line-height: 26px;
+  --text-body: 14px;
+  --text-body--line-height: 22px;
+  --text-small: 13px;
+  --text-small--line-height: 20px;
+  --text-caption: 12px;
+  --text-caption--line-height: 18px;
+  --text-micro: 11px;
+  --text-micro--line-height: 16px;
+
+  /* 圆角（第 6 章） */
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  --shadow-pop: var(--pop-shadow);
+
+  /* 动效（第 7 章） */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 :root {
-  --background: #f3efe6;
-  --foreground: #1c1915;
-  --card: #fffdf8;
-  --card-foreground: #1c1915;
-  --primary: #0f5c56;
-  --primary-foreground: #f6f3ec;
-  --muted: #e7e0d4;
-  --muted-foreground: #5c564c;
-  --accent: #efe6d4;
-  --border: #ddd4c4;
-  --input: #ddd4c4;
-  --ring: #0f5c56;
-  --destructive: #9c3412;
-  --radius: 0.8rem;
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 320ms;
+  --duration-theme: 400ms;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--bg);
+  color: var(--text-1);
   font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 22px;
+}
+
+/* 主题切换只过渡颜色（ThemeProvider 切换时给 <html> 加 .theme-transition） */
+.theme-transition,
+.theme-transition * {
+  transition:
+    background-color var(--duration-theme) var(--ease-out),
+    color var(--duration-theme) var(--ease-out),
+    border-color var(--duration-theme) var(--ease-out) !important;
+}
+
+:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
