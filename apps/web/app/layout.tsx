@@ -22,7 +22,11 @@ export default function RootLayout({
               <Link href="/" className="text-sm font-semibold tracking-wide">
                 HiLatv
               </Link>
-              <p className="text-sm text-muted-foreground">一句成片</p>
+              <nav className="flex items-center gap-4 text-sm">
+                <Link href="/brand">品牌资料</Link>
+                <Link href="/concepts">方案</Link>
+                <p className="text-muted-foreground">一句成片</p>
+              </nav>
             </div>
           </header>
           <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-12">{children}</main>

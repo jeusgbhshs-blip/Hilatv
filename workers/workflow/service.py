@@ -41,6 +41,8 @@ def make_request(
     checkpoint: dict[str, Any] | None = None,
     fail_nodes: list[str] | None = None,
     pause_after: str | None = None,
+    enterprise_id: str | None = None,
+    concept_selection: str | None = None,
 ) -> dict[str, Any]:
     return {
         "project_id": project_id,
@@ -63,6 +65,8 @@ def make_request(
         "checkpoint": checkpoint,
         "fail_nodes": list(fail_nodes or []),
         "pause_after": pause_after,
+        "enterprise_id": enterprise_id,
+        "concept_selection": concept_selection,
     }
 
 
@@ -79,6 +83,8 @@ def prepare(
     checkpoint: dict[str, Any] | None = None,
     fail_nodes: list[str] | None = None,
     pause_after: str | None = None,
+    enterprise_id: str | None = None,
+    concept_selection: str | None = None,
     workflow_id: str | None = None,
 ) -> tuple[dict[str, Any], str]:
     request = make_request(
@@ -93,6 +99,8 @@ def prepare(
         checkpoint=checkpoint,
         fail_nodes=fail_nodes,
         pause_after=pause_after,
+        enterprise_id=enterprise_id,
+        concept_selection=concept_selection,
     )
     if workflow_id is None:
         if start_from:
@@ -121,6 +129,8 @@ def prepare(
             video_candidates=request["video_candidates"],
             work_dir=request["work_dir"],
             workflow_id=workflow_id,
+            enterprise_id=enterprise_id,
+            concept_selection=concept_selection,
         )
     log_event(
         "workflow_started",

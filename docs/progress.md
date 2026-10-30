@@ -20,7 +20,7 @@
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ✅ | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 已合并（7a7725f）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
-| T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
+| T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | 🔵 | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | 🔵 | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 重构图、中英配音字幕、版本 API，成片页可切换比例、语种、时长。假设见下方 |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | 🔵 | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 验收中。已合并 main `7a7725f`。只有 `visual_reviewed is True` 算已评审。假设见下方 |
@@ -141,6 +141,25 @@
 - 超时仍是 `min(HILATV_N1_FETCH_TIMEOUT_S, 节点剩余时间)`，并且包住整条重定向链。`getaddrinfo` 最多用掉剩余时间，超时就停。请求带 `Accept-Encoding: identity`。若响应仍是 gzip 或 deflate，解压时按块计数，超过 `HILATV_N1_FETCH_MAX_BYTES`（默认 2_000_000）就停，避免压缩包膨胀。抓取失败记在附件 `error` 上，不中断 Brief。不新增环境变量，也不新增依赖。
 - T05 画册验收不再监听 `127.0.0.1`。夹具用保留域名 `assets.hilatv.test`，测试解析器把它指到公网地址 `93.184.216.34`，MockTransport 按路径读本地文件。
 - 画面上的文字、Logo、价格、电话仍只由后期叠加。本改动不调用模型，无密钥，无费用。
+
+### 2026-10-30 T15
+- 合并了哪些：T11（PR #38）、T25（PR #41，`66306cc`）已在 main。本分支已并入这份 main。
+- 正在做什么：T15 N2 品牌资料和 N3 方案卡。抠图、去底、单色版、色彩、肖像授权和锚点补全放在 `workers/brand_kit`，给 T13 复用。无 Key，`make accept-t15` 走 mock。inline 资料不写档案；未授权人物不进入下游；模型稿过不了相似度就明确降级。
+- 需要提供什么：没有新的 Key。Logo 和产品图用自绘样张，不使用客户实拍。
+
+## T15 假设
+
+- 抠图、Logo 去底、白版和黑版、安全边距、色彩、卖点、肖像授权、偏好回写、侧面/背面锚点，都在 `workers/brand_kit`。N2 只编排。T13 应调用这个包，不要在节点里再写一套。当前抠图是本地纯色去底，用来在没有 BiRefNet / RMBG 权重时通过质检；接口是 `matte()` 返回透明 PNG 和边缘报告。
+- 第 5 章 `LogoAsset` 只有 `mono_white`，没有黑版字段。黑版写在资料旁边的 `mono_black`，不改 BrandKit 模型，也不新增迁移。Alembic head 仍是 `t03_gateway_0002`。
+- 多角度补全走图像网关，提示词写明不直接上屏，并且带上「无文字」约束。生成结果只放在 `anchors`（`on_screen` 为 false），不写入 `photos` 或 `cutouts`。
+- 卖点只保留人工填写的句子，以及原文里已经出现的句子。模型多写的参数丢掉。用户改卖点或删掉的句子写回资料；删掉的句子追加进 `banned_words`，下一条片子不会再念。
+- 肖像授权只认品牌资料流程写入档案的 `consent=true`。项目里附带的资料（inline kit）即使自报 `consent=true` 也不算授权，人物和照片都不会进入下游。未授权的人可以留在档案里，但照片和声音编号会被清掉；`people_for_use` / `release_kit` 给 T13 和其他节点的结果里没有他们。`usable_people` 每次按当前授权重算，不沿用旧列表。未授权却填写 `voice_id` 时直接失败。
+- TODO(auth): `/v1/brands` 和创建项目时的 `enterprise_id` 由客户端自己填写，T15 没有登录态，也不校验调用者属于该企业。全局认证不在本任务。认证任务落地前，不能把这些接口当成已隔离的生产入口。
+- 企业资料存在 `HILATV_BRAND_DIR`（默认 `<项目目录>/_brands`）的 JSON 里。同一 `enterprise_id` 再开项目、且请求里不带 inline kit 时，按 Logo、色彩、字体、CTA、卖点套用。inline kit 只用于这一次项目，不会写回档案。`brand://` 必须带本企业的 UUID，路径必须落在该企业的存储目录内。按 `brand_id` 查文件只查当前企业，不扫描别的企业。没有 `enterprise_id` 时拒绝这次查询，不再按 `brand_id` 去 Postgres 做不限企业的读取。
+- N3 读取 T25 写进行业模板的 `narrative_structures`（每行业 3–5 套），从中取 3 套做方案卡。不改 `templates/`。模型稿若两两余弦 ≥ 0.85、含禁用词或不可用，会带反馈再生成，最多 3 次；仍然不行就明确降级为 `source=template_fallback` 且 `degraded=true`，不能假装是模型通过。嵌入是本地字符二元组，不调用嵌入接口。
+- 封面和锚点图必须读到真实图片字节。`mock://` 或读不出来的地址是 `not_ready`，不写入可用锚点，也不用纯色图冒充封面。无 Key 时方案卡因此是降级结果，主流程仍可继续，但 `ok` 不是 true。
+- 主流程不暂停等选卡。没有 `concept_selection` 时 N3 仍生成三张卡，并自动记下「你帮我选」，所以 T10 的出片验收继续往下走。用户在方案页点了某一张，创建项目时带上那个方向 id。
+- 画面上的字、Logo、价格、电话仍然只由后期叠加。本任务不改 N15、`workers/qa`、`eval/`。
 
 ## T11 假设
 

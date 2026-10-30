@@ -15,8 +15,6 @@ from temporalio.exceptions import ApplicationError
 
 from workers.logging import log_event
 from workers.workflow.bookkeeping import mark_failed
-from workers.workflow.brand import BrandReadError, resolve_brand_kit
-from workers.workflow.concept import ConceptError, choose_direction
 from workers.workflow.contract import NODE_MESSAGE, PHASE, SHOT_ACTION, TIMEOUT_S
 from workers.workflow.messages import shot_message
 from workers.workflow.store import publish, read_snapshot, save_node, update_snapshot
@@ -171,15 +169,23 @@ def n02_brand_kit(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n02_brand_kit")
     project_id = _project(payload)
     request = _request(payload)
-    try:
-        kit = resolve_brand_kit(
-            inline=request.get("brand_kit"),
-            brand_id=request.get("brand_id"),
-            project_id=project_id,
-            attempt=attempt,
-        )
-    except BrandReadError as exc:
-        raise ApplicationError(str(exc), non_retryable=True) from exc
+    from workers.nodes.n02_brand_kit.node import run
+
+    result = _call(
+        run,
+        {
+            "project_id": project_id,
+            "payload": {
+                "mode": "resolve",
+                "inline": request.get("brand_kit"),
+                "brand_id": request.get("brand_id"),
+                "enterprise_id": request.get("enterprise_id"),
+            },
+            "attempt": attempt,
+        },
+        "n02_brand_kit",
+    )
+    kit = result.payload.get("brand_kit")
     message = "已读取品牌资料" if kit else "未找到品牌资料，按行业默认继续"
     _emit(project_id, "n02_brand_kit", message=message, attempt=attempt)
     return _finish(project_id, "n02_brand_kit", {"brand_kit": kit}, attempt)
@@ -189,16 +195,29 @@ def n02_brand_kit(payload: dict[str, Any]) -> dict[str, Any]:
 def n03_concept(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n03_concept")
     project_id = _project(payload)
-    try:
-        concept = choose_direction(_require_dict(_state(payload), "brief"))
-    except ConceptError as exc:
-        raise ApplicationError(str(exc), non_retryable=True) from exc
-    _emit(
-        project_id,
+    request = _request(payload)
+    state = _state(payload)
+    from workers.nodes.n03_concept.node import run
+
+    result = _call(
+        run,
+        {
+            "project_id": project_id,
+            "payload": {
+                "brief": _require_dict(state, "brief"),
+                "brand_kit": state.get("brand_kit"),
+                "selection": request.get("concept_selection"),
+            },
+            "attempt": attempt,
+        },
         "n03_concept",
-        message=f"已自动选定：{concept['selection']}",
-        attempt=attempt,
     )
+    concept = result.payload["concept"]
+    if concept.get("auto"):
+        message = f"已自动选定：{concept['selection']}"
+    else:
+        message = f"已选定方案：{concept.get('title') or concept['selection']}"
+    _emit(project_id, "n03_concept", message=message, attempt=attempt)
     return _finish(project_id, "n03_concept", {"concept": concept}, attempt)
 
 
