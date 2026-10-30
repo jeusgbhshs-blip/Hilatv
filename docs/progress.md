@@ -15,8 +15,8 @@
 | T07 | N6 TTS + 时间戳回写 | T04, T06 | ✅ | [t07-n6-voiceover](https://github.com/jeusgbhshs-blip/Hilatv/pull/27) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T08 | N8 关键帧 + N10 图生视频 | T04, T06 | ✅ | [t08-keyframe-video](https://github.com/jeusgbhshs-blip/Hilatv/pull/28) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ✅ | [t09-render](https://github.com/jeusgbhshs-blip/Hilatv/pull/29) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | 🔵 | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
+| T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ✅ | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T11 | 前端：输入页、进度页、成片页 | T10 | 🔵 | cursor/t11-frontend-pages-3df2 | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
@@ -58,9 +58,21 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：T09（PR #29，无新迁移）
-- 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
+- 合并了哪些：T09（PR #29，无新迁移）、T10（PR #30，无新迁移）
+- 正在做什么：T11 输入页、进度页、成片页。无 Key，`make accept-t11` 用 mock 后端。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T11 本身不调用模型
+
+## T11 假设
+
+- 仓库已经用 npm（`apps/web/package-lock.json`，CI 按这个文件缓存）。`make accept-t11` 跑 `npm run test:e2e`，不另起 pnpm workspace。issue 注释里的 `pnpm --filter web` 指的是同一条桌面加手机的 Playwright。包名是 `hilatv-web`，对不上 filter `web`。
+- 浏览器在设置了 `NEXT_PUBLIC_API_BASE` 时直连 API。没设置时，页面走同源 `/v1`，由 Next rewrite 转到 `HILATV_API_ORIGIN`。WebSocket 在设置了 base 时直连 API；浏览器对 WebSocket 不看 CORS。REST 的跨域来源由 `HILATV_WEB_ORIGINS` 决定，进程启动时读一次。
+- 图片和 PDF 经新增的 `POST /v1/uploads` 写到 `HILATV_PROJECT_DIR/uploads/`。创建项目时带上 N1 已有的 `AttachmentRef`（`kind` / `uri` / `filename`）。不新增表。链接只收 http 或 https。单文件默认不超过 8MB（`HILATV_UPLOAD_MAX_BYTES`）。
+- 成片下载接口仍返回 `Content-Disposition: attachment`。播放器先把成片取成 blob 再交给 `<video>`，下载按钮再取一次并保存为 `master.mp4`。不做 Range。
+- 版本切换和改稿框只是占位，不调用重跑，也不改稿。方案卡、分镜预览、专家画布、企业后台不在本任务。五个用户状态用 T10 已有的 phase。镜头行显示 WebSocket 事件里的「第 N 镜：…」；断线后靠轮询快照补上。分镜出来之前页面写当前环节，不用转圈当唯一反馈。
+- 六个行业入口对应 `templates/industries` 的名称。点击只是填一句可改的示例，不单独调模型。
+- 画面上的字、Logo、价格、电话仍然只由 N13/N14/N15 叠加。前端不调用模型，也不绕过 gateway。
+- `make accept-t11` 用一句 15 秒中文宣传片，画布 320×180，并清掉对象存储变量，这样 mock 不连 MinIO。桌面 1440×900、手机 390×844 各跑一遍。手机视口用 Chromium 模拟触摸和手机 UA，不另装 WebKit。
+- shadcn/ui 是复制进 `apps/web/components/ui` 的组件。不引入 React Flow。新依赖登记在 `docs/licenses.md`。
 
 ## T10 假设
 
