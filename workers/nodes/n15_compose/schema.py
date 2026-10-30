@@ -92,6 +92,8 @@ class VideoClip(BaseModel):
     grade_rr: float = 1
     grade_gg: float = 1
     grade_bb: float = 1
+    # Mock-only stand-in. Live compose refuses this instead of painting a color plate.
+    placeholder: bool = False
 
 
 class AudioClip(BaseModel):

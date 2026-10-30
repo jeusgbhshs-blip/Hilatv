@@ -17,6 +17,8 @@ class ShotDelivery(BaseModel):
     degraded: bool = False
     qa_passed: bool = False
     reviewed: bool = False
+    # True when this clip was delivered without a vision review. Not a QA pass.
+    needs_review: bool = False
     hard_fail: list[str] = Field(default_factory=list)
     note: str = ""
     media_path: str = ""

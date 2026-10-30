@@ -13,6 +13,54 @@ from workers.nodes.n15_compose.node import run
 from workers.nodes.n15_compose.qa import QAError, check
 
 
+def test_live_refuses_a_shot_with_no_picture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    with pytest.raises(QAError, match="color plate"):
+        run({"project_id": "n15-live-plate", "payload": _payload(tmp_path)}, max_attempts=1)
+
+
+def test_mock_color_plate_is_labelled(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    logo = tmp_path / "logo.png"
+    Image.new("RGBA", (16, 16), (255, 255, 255, 255)).save(logo)
+    payload = _payload(tmp_path)
+    payload["elements"] = [
+        {
+            "element_id": "outro-logo",
+            "kind": "outro_logo",
+            "text": "",
+            "start_s": 0.0,
+            "end_s": 0.4,
+            "anchor": "center",
+            "y_ratio": 0.4,
+            "png_path": str(logo),
+        },
+        {
+            "element_id": "outro-cta",
+            "kind": "outro_cta",
+            "text": "联系我们",
+            "start_s": 0.0,
+            "end_s": 0.4,
+            "anchor": "center",
+            "y_ratio": 0.6,
+            "png_path": str(logo),
+        },
+    ]
+    result = run(
+        {"project_id": "n15-mock-plate", "payload": payload},
+        timeout_s=60,
+        max_attempts=1,
+    )
+    assert result.payload["placeholder_shots"] == ["S01"]
+    flags = {clip["clip_id"]: clip["placeholder"] for clip in result.payload["timeline"]["clips"]}
+    assert flags["S01"] is True
+    assert flags["outro"] is False
+
+
 def test_missing_license_blocks_before_export(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     wav = tmp_path / "mix.wav"

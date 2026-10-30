@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import uuid
 from pathlib import Path
 from typing import Any
@@ -166,6 +167,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
             "width": width,
             "height": height,
             "fps": FPS,
+            "placeholder_shots": [clip.clip_id for clip in timeline.clips if clip.placeholder],
             **_license_payload(payload),
         },
     )
@@ -181,17 +183,23 @@ def _timeline(
 ) -> Timeline:
     shots = list(payload.script.shots)
     supplied = {item.shot_id: item for item in payload.shot_clips}
-    pieces: list[tuple[str, float, str, tuple[int, int, int], Path | None, list[MotionCard]]] = []
+    pieces: list[tuple] = []
     if intro_s > 0:
-        pieces.append(("intro", intro_s, "cut", (16, 32, 64), None, []))
+        pieces.append(("intro", intro_s, "cut", (16, 32, 64), None, [], False))
+    live = os.getenv("HILATV_LIVE", "0").strip() == "1"
     for index, shot in enumerate(shots):
         duration = quantize_s(float(shot.duration_s))
         media = supplied.get(shot.shot_id)
         if payload.shot_clips and media is None:
             raise QAError(f"{shot.shot_id} has no picture to edit", retryable=False)
         if media is None:
+            if live:
+                raise QAError(
+                    f"{shot.shot_id} has no picture; live compose will not paint a color plate",
+                    retryable=False,
+                )
             color = _PALETTE[index % len(_PALETTE)]
-            pieces.append((shot.shot_id, duration, shot.transition_out, color, None, []))
+            pieces.append((shot.shot_id, duration, shot.transition_out, color, None, [], True))
             continue
         source = _inside_project(media.path)
         pieces.append(
@@ -202,15 +210,16 @@ def _timeline(
                 (128, 128, 128),
                 source,
                 list(media.cards),
+                False,
             )
         )
-    pieces.append(("outro", outro_s, "cut", (12, 24, 48), None, []))
+    pieces.append(("outro", outro_s, "cut", (12, 24, 48), None, [], False))
     colors = [item[3] for item in pieces]
     target = colors[0]
     cursor = 0.0
     clips: list[VideoClip] = []
     card_rows: list[tuple[MotionCard, float]] = []
-    for clip_id, duration, transition, rgb, source, cards in pieces:
+    for clip_id, duration, transition, rgb, source, cards, placeholder in pieces:
         frames = max(1, int(round(duration * FPS)))
         duration = frames / FPS
         gains = _gains(rgb, target)
@@ -229,6 +238,7 @@ def _timeline(
                 grade_rr=gains[0],
                 grade_gg=gains[1],
                 grade_bb=gains[2],
+                placeholder=placeholder,
             )
         )
         for card in cards:

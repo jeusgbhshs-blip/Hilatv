@@ -30,12 +30,13 @@ def test_level1_regenerates_through_the_gateway(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "1")
     project = "lvl1"
     folder = project_folder(project)
     folder.mkdir(parents=True)
     made = folder / "clean.mp4"
     motion_graphic(made, size=(WIDTH, HEIGHT), frames=8, cutout=None)
-    gateway = _VideoOk(made)
+    gateway = _VideoOk(made, judge=True)
 
     clip, note = _run(project, gateway, key=None)
 
@@ -44,6 +45,7 @@ def test_level1_regenerates_through_the_gateway(
     assert note.degraded is True
     assert note.qa_passed is False
     assert note.reviewed is False
+    assert note.needs_review is False
     assert "建议补拍" not in note.note
     assert gateway.routes == ["product"]
     assert _budget_used(project) == 1
@@ -75,10 +77,10 @@ def test_level3_ken_burns_when_the_video_model_keeps_failing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
-    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.setenv("HILATV_LIVE", "1")
     project = "lvl3"
     key = _scene(project_folder(project) / "key.png")
-    gateway = _VideoDown()
+    gateway = _ReviewedDown()
 
     clip, note = _run(project, gateway, key=key)
 
@@ -86,6 +88,7 @@ def test_level3_ken_burns_when_the_video_model_keeps_failing(
     assert note.camera == "ken_burns"
     assert note.qa_passed is False
     assert note.reviewed is False
+    assert note.needs_review is False
     frames = sample_frames(Path(clip.path))
     assert len(frames) >= 2
     assert frames[0].tobytes() != frames[-1].tobytes()
@@ -96,11 +99,12 @@ def test_level3_parallax_uses_a_product_cutout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "1")
     project = "lvl3p"
     root = project_folder(project)
     key = _scene(root / "key.png")
     cutout = _cutout(root / "cutout.png")
-    gateway = _VideoDown()
+    gateway = _ReviewedDown()
 
     _clip, note = _run(project, gateway, key=key, brand=_brand(cutout))
 
@@ -126,6 +130,7 @@ def test_level4_motion_graphics_always_renders(
     assert note.subject == "cutout"
     assert note.qa_passed is False
     assert note.reviewed is False
+    assert note.needs_review is True
     assert clip.cards and clip.cards[0].text == "压力稳定"
     assert "建议补拍" not in json.dumps(note.model_dump(), ensure_ascii=False)
     plate = sample_frames(Path(clip.path))
@@ -161,8 +166,10 @@ def test_a_qa_rejected_shot_is_absent_from_the_film(
         gateway=gateway,
     )
     note = result.notes[0]
-    assert note.fallback_level in {3, 4}
+    assert note.fallback_level == 4
+    assert note.needs_review is True
     assert note.qa_passed is False
+    assert note.reviewed is False
     assert _has_magenta(Path(note.media_path)) is False
 
     logo = root / "logo.png"
@@ -403,15 +410,39 @@ def _has_magenta(path: Path) -> bool:
     return False
 
 
+def _clean_opinion() -> dict[str, object]:
+    return {
+        "scores": {
+            "product_fidelity": 9,
+            "motion_quality": 8,
+            "aesthetics": 8,
+            "prompt_match": 9,
+            "artifact_free": 9,
+        },
+        "hard_fail": [],
+        "total": 8.6,
+        "evaluator": "vlm-judge-test",
+        "notes": "clean",
+    }
+
+
 class _VideoOk:
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, *, judge: bool = False) -> None:
         self.path = path
         self.routes: list[str] = []
+        self.seeds: list[object] = []
+        self._judge = judge
 
     def generate_video(self, _prompt: str, **kwargs: object) -> dict[str, str]:
         shot_type = kwargs.get("shot_type")
         self.routes.append(str(shot_type or ""))
+        self.seeds.append(kwargs.get("seed"))
         return {"uri": str(self.path)}
+
+    def judge(self, _prompt: str, **_kwargs: object) -> dict[str, object]:
+        if not self._judge:
+            raise RuntimeError("vlm unavailable")
+        return _clean_opinion()
 
 
 class _ImageToVideo:
@@ -427,19 +458,7 @@ class _ImageToVideo:
         raise RuntimeError("video model failed")
 
     def judge(self, _prompt: str, **_kwargs: object) -> dict[str, object]:
-        return {
-            "scores": {
-                "product_fidelity": 9,
-                "motion_quality": 8,
-                "aesthetics": 8,
-                "prompt_match": 9,
-                "artifact_free": 9,
-            },
-            "hard_fail": [],
-            "total": 8.6,
-            "evaluator": "vlm-judge-test",
-            "notes": "clean",
-        }
+        return _clean_opinion()
 
 
 class _VideoDown:
@@ -448,3 +467,71 @@ class _VideoDown:
 
     def generate_image(self, _prompt: str, **_kwargs: object) -> dict[str, str]:
         raise RuntimeError("image model failed")
+
+
+class _ReviewedDown(_VideoDown):
+    def judge(self, _prompt: str, **_kwargs: object) -> dict[str, object]:
+        return _clean_opinion()
+
+
+def test_vlm_error_drops_to_level_4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    project = "lvl-vlm-err"
+    folder = project_folder(project)
+    folder.mkdir(parents=True)
+    made = folder / "clean.mp4"
+    motion_graphic(made, size=(WIDTH, HEIGHT), frames=8, cutout=None)
+    gateway = _VideoOk(made, judge=False)
+
+    clip, note = _run(project, gateway, key=None)
+
+    assert note.fallback_level == 4
+    assert note.needs_review is True
+    assert note.qa_passed is False
+    assert note.reviewed is False
+    assert "judge_unavailable" in note.hard_fail or note.hard_fail
+    _playable(Path(clip.path))
+
+
+def test_mock_judge_drops_to_level_4(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    project = "lvl-mock-judge"
+    folder = project_folder(project)
+    folder.mkdir(parents=True)
+    made = folder / "clean.mp4"
+    motion_graphic(made, size=(WIDTH, HEIGHT), frames=8, cutout=None)
+
+    class MockJudge(_VideoOk):
+        def judge(self, _prompt: str, **_kwargs: object) -> dict[str, object]:
+            return {
+                "scores": {
+                    "product_fidelity": 0,
+                    "motion_quality": 0,
+                    "aesthetics": 0,
+                    "prompt_match": 0,
+                    "artifact_free": 0,
+                },
+                "hard_fail": [],
+                "total": 0,
+                "evaluator": "mock",
+                "notes": "mock",
+            }
+
+    _clip, note = _run(project, MockJudge(made, judge=True), key=None)
+
+    assert note.fallback_level == 4
+    assert note.needs_review is True
+    assert note.qa_passed is False
+    assert note.reviewed is False
+
+
+def test_seed_changes_when_the_budget_or_attempt_changes() -> None:
+    from workers.fallback.direct import _seed
+
+    first = _seed("S01", 1, budget_used=1, attempt=1)
+    spent = _seed("S01", 1, budget_used=2, attempt=1)
+    retried = _seed("S01", 1, budget_used=1, attempt=2)
+    assert first == _seed("S01", 1, budget_used=1, attempt=1)
+    assert len({first, spent, retried}) == 3

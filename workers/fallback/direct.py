@@ -9,8 +9,11 @@ Order, after the owner decision that replaced SPEC §6.10 levels 3 and 4:
 4. Motion graphics: a T13 cutout when one is available, render-layer text cards, and generated
    background motion. This step always produces a clip.
 
-Each clip is reviewed with ``review_shot``. A content hard-fail is not put on the timeline.
-Downgraded shots are not reported as a QA pass or as reviewed.
+Each clip is reviewed with ``review_shot``. Levels 1–3 keep a clip only when
+``visual_reviewed`` is true and ``hard_fail`` is empty. Anything else, including
+``not_reviewed``, ``judge_unavailable``, and a mock judge, drops to the next
+level. Level 4 still produces a clip when review is unavailable and marks
+``needs_review``. A downgraded shot is never a QA pass and never reviewed.
 """
 
 from __future__ import annotations
@@ -291,7 +294,7 @@ def _from_level(
                     subject="model_frame",
                 ),
             )
-    path, report, subject = _graphics(
+    path, report, subject, needs_review = _graphics(
         shot,
         folder=folder,
         cutout=cutout,
@@ -301,6 +304,9 @@ def _from_level(
         gateway=gateway,
         key_path=key_path,
     )
+    detail = "文字由渲染层动画叠加，不画进画面。"
+    if needs_review:
+        detail += "视觉评审没有完成，需要人工复核。"
     return _clip(
         shot,
         path,
@@ -309,9 +315,10 @@ def _from_level(
             4,
             report,
             path,
-            "文字由渲染层动画叠加，不画进画面。",
+            detail,
             camera="background_motion",
             subject=subject,
+            needs_review=needs_review,
         ),
         cards=_cards(shot),
     )
@@ -327,6 +334,7 @@ def _regenerate(
     previous: Candidate | None,
     spend: bool,
     image: Path | None,
+    attempt: int = 1,
 ) -> tuple[Path, QAReport] | None:
     if spend and not open_project_budget(project_id).try_take():
         return None
@@ -335,7 +343,9 @@ def _regenerate(
         "" if previous is None else str(previous.params.get("prompt") or shot.visual),
         [card.text for card in shot.on_screen_text],
     )
-    seed = _seed(shot.shot_id, 2 if image is not None else 1)
+    level = 2 if image is not None else 1
+    used = open_project_budget(project_id).used
+    seed = _seed(shot.shot_id, level, budget_used=used, attempt=attempt)
     params: dict[str, Any] = {"materialize": True, "shot_type": route}
     if image is not None:
         params["image_b64"] = base64.b64encode(image.read_bytes()).decode("ascii")
@@ -370,7 +380,7 @@ def _regenerate(
     if path is None:
         return None
     report = _review(path, shot, project_id, gateway, node="n11_video_qa")
-    if _flaws(report):
+    if not _accepted(report):
         return None
     return path, report
 
@@ -388,6 +398,7 @@ def _repair(
 ) -> tuple[Path, QAReport, str] | None:
     del width, height
     stashed: dict[str, Any] = {}
+    calls = {"n": 0}
 
     def review(rows: list[Candidate]) -> list[QAReport]:
         reports: list[QAReport] = []
@@ -400,6 +411,7 @@ def _repair(
         return reports
 
     def apply(_decision: Any) -> list[Candidate]:
+        calls["n"] += 1
         made = _regenerate(
             shot,
             project_id=project_id,
@@ -409,6 +421,7 @@ def _repair(
             previous=candidate,
             spend=False,
             image=None,
+            attempt=calls["n"],
         )
         if made is None:
             return [candidate]
@@ -460,8 +473,8 @@ def _repair(
                 return path, report, "导演判通过。"
     path = stashed.get("path")
     report = stashed.get("report")
-    if isinstance(path, Path) and isinstance(report, QAReport) and not _flaws(report):
-        return path, report, "重生成没有内容硬伤。"
+    if isinstance(path, Path) and isinstance(report, QAReport) and _accepted(report):
+        return path, report, "重生成已通过视觉评审，且没有硬伤。"
     return None
 
 
@@ -493,7 +506,7 @@ def _camera(
         else:
             parallax(image, layer, dest, size=size, frames=count)
         report = _review(dest, shot, project_id, gateway, node="n11_video_qa")
-        if not _flaws(report):
+        if _accepted(report):
             return dest, report, name
     return None
 
@@ -508,11 +521,11 @@ def _graphics(
     project_id: str,
     gateway: Any,
     key_path: Path | None,
-) -> tuple[Path, QAReport, str]:
+) -> tuple[Path, QAReport, str, bool]:
     rgb = _average(key_path) if key_path is not None else (24, 52, 96)
     count = frame_count(float(shot.duration_s))
     size = (width, height)
-    last_report: QAReport | None = None
+    pending: tuple[Path, QAReport, str] | None = None
     for use_cutout, label in ((cutout, "cutout"), (None, "generated_shape")):
         if use_cutout is None and label == "cutout":
             continue
@@ -525,12 +538,14 @@ def _graphics(
             rgb=rgb,
         )
         report = _review(dest, shot, project_id, gateway, node="n11_video_qa")
-        last_report = report
-        if not _flaws(report):
-            return dest, report, subject
-    if last_report is None:
-        raise RuntimeError(f"{shot.shot_id} motion graphics produced no review")
-    raise RuntimeError(f"{shot.shot_id} motion graphics still has {last_report.hard_fail}")
+        if _accepted(report):
+            return dest, report, subject, False
+        if pending is None and not _flaws(report):
+            pending = (dest, report, subject)
+    if pending is not None:
+        path, report, subject = pending
+        return path, report, subject, True
+    raise RuntimeError(f"{shot.shot_id} motion graphics has a content hard-fail")
 
 
 def _ensure_still(
@@ -543,13 +558,14 @@ def _ensure_still(
 ) -> Path | None:
     """Ask the image model for a keyframe when the storyboard only stored a mock uri."""
 
-    if not open_project_budget(project_id).try_take():
+    budget = open_project_budget(project_id)
+    if not budget.try_take():
         return None
     prompt = f"{shot.visual}\n{NO_RENDERED_TEXT}"
     try:
         output = gateway.generate_image(
             prompt,
-            seed=_seed(shot.shot_id, 3),
+            seed=_seed(shot.shot_id, 3, budget_used=budget.used, attempt=1),
             shot_type="product",
             language=language,
             project_id=project_id,
@@ -637,6 +653,7 @@ def _note(
     *,
     camera: str,
     subject: str,
+    needs_review: bool = False,
 ) -> ShotDelivery:
     name, _title = level_title(level)
     return ShotDelivery(
@@ -646,6 +663,7 @@ def _note(
         degraded=True,
         qa_passed=False,
         reviewed=False,
+        needs_review=needs_review,
         hard_fail=list(report.hard_fail),
         note=quality_note(level, detail),
         media_path=str(path),
@@ -745,6 +763,17 @@ def _pick(rows: list[Candidate], shot_id: str, frame: str | None) -> Candidate |
     return pool[0] if pool else None
 
 
+def _accepted(report: QAReport) -> bool:
+    """Levels 1–3. A clip counts only after a vision review with no hard failure.
+
+    ``not_reviewed``, ``judge_unavailable``, and a mock judge all leave
+    ``visual_reviewed`` false. Those clips drop to the next level. ``sensitive``
+    is a hard failure even when a vision model is the only thing that can see it.
+    """
+
+    return report.visual_reviewed is True and not report.hard_fail
+
+
 def _flaws(report: QAReport) -> list[str]:
     return [code for code in report.hard_fail if code in _CONTENT]
 
@@ -763,8 +792,9 @@ def _rewrite(prompt: str, blocked: list[str]) -> str:
     return f"{text.strip()}\nDifferent camera and a new seed. {NO_RENDERED_TEXT}"
 
 
-def _seed(shot_id: str, level: int) -> int:
-    digest = hashlib.sha256(f"fallback:{shot_id}:{level}".encode()).hexdigest()
+def _seed(shot_id: str, level: int, *, budget_used: int, attempt: int) -> int:
+    raw = f"fallback:{shot_id}:{level}:{budget_used}:{attempt}"
+    digest = hashlib.sha256(raw.encode()).hexdigest()
     return int(digest[:8], 16) % 1_000_000 + 1
 
 

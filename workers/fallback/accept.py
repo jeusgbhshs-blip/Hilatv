@@ -70,8 +70,11 @@ def main() -> int:
     if "建议补拍" in blob:
         print("delivery asked for a reshoot", file=sys.stderr)
         return 1
-    if any(level not in {3, 4} for level in levels):
-        print(f"expected AI levels 3 or 4, got {levels}", file=sys.stderr)
+    if any(level != 4 for level in levels):
+        print(f"mock review must not accept levels 1-3, got {levels}", file=sys.stderr)
+        return 1
+    if not all(item.get("needs_review") is True for item in notes):
+        print("an unreviewed fallback was not marked needs_review", file=sys.stderr)
         return 1
     if picture != [shot.get("shot_id") for shot in shots]:
         print(f"shot clips {picture} do not match the script", file=sys.stderr)
@@ -88,6 +91,7 @@ def main() -> int:
         f"duration_s={duration:.3f} timeline_s={expected:.3f} "
         f"shots={len(picture)} levels={levels} "
         f"codec={info['codec']} reshoot=absent "
+        f"needs_review=true reviewed=false qa_passed=false "
         f"flat_mock_frame_delta={delta} live_vlm=未测"
     )
     return 0
