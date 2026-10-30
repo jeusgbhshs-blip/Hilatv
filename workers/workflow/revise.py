@@ -260,6 +260,7 @@ def _execute(
     kept: list[str] = []
     reviews = {shot.shot_id: _cached_review(shot.shot_id) for shot in script.shots}
 
+    enterprise_id = _enterprise_id(snapshot)
     if "n06_voiceover" in nodes:
         script, voiceovers = _voice(
             project_id,
@@ -270,10 +271,20 @@ def _execute(
             brief if "n10_video" in nodes else None,
             gateway,
             keep_duration="n10_video" not in nodes,
+            enterprise_id=enterprise_id,
         )
         executed.append("n06_voiceover")
     if "n08_keyframe" in nodes and video_shots:
-        keyframes = _keyframes(project_id, script, keyframes, video_shots, brand, brief, gateway)
+        keyframes = _keyframes(
+            project_id,
+            script,
+            keyframes,
+            video_shots,
+            brand,
+            brief,
+            gateway,
+            enterprise_id=enterprise_id,
+        )
         executed.append("n08_keyframe")
         executed.append("n09_keyframe_qa")
     if "n10_video" in nodes and video_shots:
@@ -287,6 +298,7 @@ def _execute(
             brand,
             brief,
             gateway,
+            enterprise_id=enterprise_id,
         )
         fresh.update(made)
         kept.extend(skipped)
@@ -378,7 +390,27 @@ def _execute(
     }
 
 
-def _voice(project_id, script, voiceovers, targets, brand, brief, gateway, *, keep_duration: bool):
+def _enterprise_id(snapshot: dict[str, Any]) -> str | None:
+    """Enterprise on the stored project. Never a value from the edit request."""
+
+    value = snapshot.get("enterprise_id")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _voice(
+    project_id,
+    script,
+    voiceovers,
+    targets,
+    brand,
+    brief,
+    gateway,
+    *,
+    keep_duration: bool,
+    enterprise_id: str | None = None,
+):
     from workers.nodes.n06_voiceover.node import run
 
     wanted = set(targets)
@@ -397,6 +429,7 @@ def _voice(project_id, script, voiceovers, targets, brand, brief, gateway, *, ke
                 "script": board.model_dump(mode="json"),
                 "brand_kit": brand,
                 "brief": brief,
+                "enterprise_id": enterprise_id,
             },
         },
         timeout_s=120,
@@ -430,7 +463,17 @@ def _voice(project_id, script, voiceovers, targets, brand, brief, gateway, *, ke
     ]
 
 
-def _keyframes(project_id, script, existing, shot_ids, brand, brief, gateway):
+def _keyframes(
+    project_id,
+    script,
+    existing,
+    shot_ids,
+    brand,
+    brief,
+    gateway,
+    *,
+    enterprise_id: str | None = None,
+):
     from workers.nodes.n08_keyframe.node import run
 
     merged = [
@@ -446,6 +489,7 @@ def _keyframes(project_id, script, existing, shot_ids, brand, brief, gateway):
                     "brief": brief,
                     "brand_kit": brand,
                     "keyframe_candidates": 3,
+                    "enterprise_id": enterprise_id,
                 },
             },
             timeout_s=120,
@@ -456,7 +500,19 @@ def _keyframes(project_id, script, existing, shot_ids, brand, brief, gateway):
     return merged
 
 
-def _videos(directory, project_id, script, existing, keyframes, shot_ids, brand, brief, gateway):
+def _videos(
+    directory,
+    project_id,
+    script,
+    existing,
+    keyframes,
+    shot_ids,
+    brand,
+    brief,
+    gateway,
+    *,
+    enterprise_id: str | None = None,
+):
     from workers.nodes.n10_video.node import run
 
     merged = [
@@ -476,6 +532,7 @@ def _videos(directory, project_id, script, existing, keyframes, shot_ids, brand,
                         "brief": brief,
                         "brand_kit": brand,
                         "video_candidates": 3,
+                        "enterprise_id": enterprise_id,
                     },
                 },
                 timeout_s=180,

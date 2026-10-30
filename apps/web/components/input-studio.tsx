@@ -43,6 +43,7 @@ export function InputStudio() {
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [skipStoryboard, setSkipStoryboard] = useState(false);
   filesRef.current = files;
 
   useEffect(() => {
@@ -135,6 +136,7 @@ export function InputStudio() {
             ...uploaded,
             ...links.map((item) => ({ kind: "url", uri: item.uri })),
           ],
+          skip_storyboard: skipStoryboard,
         }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
@@ -299,6 +301,30 @@ export function InputStudio() {
                 {item.label}
               </Button>
             ))}
+          </div>
+        </fieldset>
+
+        <fieldset className="mt-8">
+          <legend className="text-sm font-medium">分镜</legend>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="storyboard-choice"
+                checked={!skipStoryboard}
+                onChange={() => setSkipStoryboard(false)}
+              />
+              先看分镜
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="storyboard-choice"
+                checked={skipStoryboard}
+                onChange={() => setSkipStoryboard(true)}
+              />
+              直接出片
+            </label>
           </div>
         </fieldset>
 

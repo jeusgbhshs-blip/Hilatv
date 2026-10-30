@@ -27,6 +27,7 @@
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
+| T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
 
@@ -73,6 +74,11 @@
 - 正在做什么：
 - 需要提供什么：
 -->
+
+### 2026-10-30
+- 合并了哪些：main 现为 `70e1553`（T16 PR #45）。同日已在 main：T13、T21。都无新迁移
+- 正在做什么：T23 分镜预览。关键帧质检之后可以停下看卡片、改一镜旁白；选了直接出片就不停。无 Key，`make accept-t23` 走 mock。mock 没有可看的关键帧，画面预览记未测。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权仍未批。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测
 
 ### 2026-10-30
 - 合并了哪些：main 现为 `18cf1ff`（T21 PR #46）。更早同日已在 main：T09–T12、T15、T17、T18、T25、SEC-01。都无新迁移
@@ -219,6 +225,20 @@
 - 封面和锚点图必须读到真实图片字节。`mock://` 或读不出来的地址是 `not_ready`，不写入可用锚点，也不用纯色图冒充封面。无 Key 时方案卡因此是降级结果，主流程仍可继续，但 `ok` 不是 true。
 - 主流程不暂停等选卡。没有 `concept_selection` 时 N3 仍生成三张卡，并自动记下「你帮我选」，所以 T10 的出片验收继续往下走。用户在方案页点了某一张，创建项目时带上那个方向 id。
 - 画面上的字、Logo、价格、电话仍然只由后期叠加。本任务不改 N15、`workers/qa`、`eval/`。
+
+## T23 假设
+
+- 分镜暂停点在 `n09_keyframe_qa` 活动返回之后、`n10_video` 之前。请求里 `skip_storyboard` 不是 true 才等。页面默认「先看分镜」，会显式传 false。省略这个字段时按「直接出片」，这样现有的命令行、T10 验收和评测不会停在没人点的确认上。
+- 这一步的 N9 只调用 `review_shot` 记下 `visual_reviewed`，不调用导演决策，也不扣重生次数。Mock 关键帧过不了质检；如果在这里按未通过去重生，会把 N8 选中的帧清掉，后面的图生视频没有首帧，还会在用户还没看卡片时花掉项目重生额度。完整的 N9 重生循环仍留在 `workers/nodes/n09_keyframe_qa`，给单独调用。
+- 卡片上的旁白由前端画。改字写回 Script，只重跑该镜的 N6，并经 T16 的 `_voice` / `_keyframes` 重做该镜画面。不把旁白或画面字写进图像、视频提示词。其他镜头的配音文件不打开重写。
+- 画面能不能当预览：`mock://`、http(s)、项目目录外的路径、打不开的文件，以及整张只有一种颜色的色块，都是 `unavailable`，不给图片地址。`visual_reviewed` 只有预览可用且 `review_shot` 的该字段为 true 时才是 true。Mock 下关键帧像素记「未测」。
+- 改旁白先连扣两次 `open_project_budget.try_take()`（新配音一次、新关键帧一次），都在 TTS 之前。任一次失败就整次拒绝，不改脚本、不调用 TTS、不重生画面。次数只在 `regen_budget.json`，不写入 `project.json`。
+- 改过的旁白在 TTS 之前走内容审核。`HILATV_LIVE=1` 时，未评审、mock 或报错都是 422，不落任何文件。mock 模式仍会调用审核；只有明确拦截才拒绝。
+- 分镜等待默认 86400 秒（`HILATV_STORYBOARD_WAIT_S`）。超时把项目标成 `timed_out` 且 `cancellable`，不自动往下出片。
+- 配音和关键帧重跑带上项目记录里的 `enterprise_id`，不读请求体。这样档案里已授权的克隆声线和人物才能过 T20 的同意校验。`revise.py` 同样从快照读取，对应 #52。
+- 这一步不改时长去贴整片 Brief。该镜时长跟新的配音走，其他镜时长不动。总长可能因此和 Brief 有偏差，成片仍由后面的 N15 按脚本时长剪。
+- 「AI生成」是页面上单独的一块，不在旁白框里，请求体多一个字段会被拒绝。旁白如果是在要求去掉这个标识，走 T20 的 `refuse_label_removal`，不写入脚本。继续出片之后 N14 仍会叠上这一行。
+- 不新增表，也不新增环境变量。Alembic head 仍是 `t03_gateway_0002`。人物、链接抓取、客户图片都不经过这条编辑接口。
 
 ## T16 假设
 
