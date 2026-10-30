@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-TASKS = frozenset({"llm", "image", "video", "tts", "asr", "music", "judge", "content_safety"})
+TASKS = frozenset(
+    {"llm", "image", "video", "tts", "asr", "music", "judge", "matte", "relight", "content_safety"}
+)
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"

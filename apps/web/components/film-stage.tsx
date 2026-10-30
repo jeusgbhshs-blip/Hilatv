@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { apiUrl, errorMessage } from "@/lib/api";
+import { conceptNotice } from "@/lib/concept";
 import { readShots, type ProjectSnapshot, type ShotSummary } from "@/lib/progress";
 import {
   aspectLabel,
@@ -24,6 +25,13 @@ import {
   type VersionChoice,
 } from "@/lib/versions";
 
+type EditVersion = {
+  version_id: string;
+  index: number;
+  current: boolean;
+  quality_pass: boolean;
+};
+
 export function FilmStage({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
   const [shots, setShots] = useState<ShotSummary[]>([]);
@@ -34,6 +42,13 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const [choice, setChoice] = useState<VersionChoice>({ aspect: "", language: "", duration: null });
   const [exporting, setExporting] = useState(false);
   const [versionNote, setVersionNote] = useState<string | null>(null);
+  const [edits, setEdits] = useState<EditVersion[]>([]);
+  const [instruction, setInstruction] = useState("");
+  const [shotId, setShotId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [question, setQuestion] = useState<string | null>(null);
+  const [playerToken, setPlayerToken] = useState(0);
 
   useEffect(() => {
     let closed = false;
@@ -100,7 +115,29 @@ export function FilmStage({ projectId }: { projectId: string }) {
       closed = true;
       controller.abort();
     };
-  }, [projectId, ready]);
+  }, [projectId, ready, playerToken]);
+
+  useEffect(() => {
+    if (!ready) return;
+    let closed = false;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/revisions`), {
+          signal: controller.signal,
+        });
+        if (!response.ok || closed) return;
+        const body = (await response.json()) as { versions?: EditVersion[] };
+        if (!closed) setEdits(Array.isArray(body.versions) ? body.versions : []);
+      } catch (caught) {
+        if (caught instanceof DOMException && caught.name === "AbortError") return;
+      }
+    })();
+    return () => {
+      closed = true;
+      controller.abort();
+    };
+  }, [projectId, ready, playerToken]);
 
   useEffect(() => {
     if (!mediaPath) return;
@@ -123,7 +160,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
       controller.abort();
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [mediaPath]);
+  }, [mediaPath, playerToken]);
 
   async function downloadFilm() {
     if (!mediaPath) return;
@@ -172,6 +209,55 @@ export function FilmStage({ projectId }: { projectId: string }) {
     setChoice((current) => reconcile(versions, { ...current, ...next }));
   }
 
+  async function chooseEdit(versionId: string) {
+    const current = edits.find((item) => item.current);
+    if (!versionId || current?.version_id === versionId) return;
+    setBusy(true);
+    setEditError(null);
+    try {
+      const response = await fetch(
+        apiUrl(
+          `/v1/projects/${encodeURIComponent(projectId)}/revisions/${encodeURIComponent(versionId)}/restore`,
+        ),
+        { method: "POST" },
+      );
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const body = (await response.json()) as { versions?: EditVersion[] };
+      if (Array.isArray(body.versions)) setEdits(body.versions);
+      setSrc(null);
+      setPlayerToken((value) => value + 1);
+    } catch (caught) {
+      setEditError(caught instanceof Error ? caught.message : "没有回到那个版本");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendEdit() {
+    const text = instruction.trim();
+    if (!text || busy) return;
+    setBusy(true);
+    setEditError(null);
+    try {
+      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/revisions`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ instruction: text, shot_id: shotId }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const body = (await response.json()) as { status?: string; question?: string; notice?: string };
+      setInstruction("");
+      setQuestion(body.question || body.notice || null);
+      if (body.status === "needs_clarification" || body.status === "not_supported") return;
+      setSrc(null);
+      setPlayerToken((value) => value + 1);
+    } catch (caught) {
+      setEditError(caught instanceof Error ? caught.message : "改稿没有成功");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   if (missing) {
     return (
       <div>
@@ -199,6 +285,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const languages = uniqueLanguages(versions, choice.aspect);
   const durations = uniqueDurations(versions, choice.aspect, choice.language);
   const portrait = selected ? selected.height > selected.width : false;
+  const notice = conceptNotice(snapshot);
+  const currentEdit = edits.find((item) => item.current)?.version_id ?? "";
+  const focused = shots.find((shot) => shot.shot_id && shot.shot_id === shotId);
 
   return (
     <div className="grid min-w-0 items-start gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.8fr)]">
@@ -207,6 +296,15 @@ export function FilmStage({ projectId }: { projectId: string }) {
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">可以发布了</h1>
         {snapshot?.sentence ? (
           <p className="mt-3 break-words text-base leading-7 text-muted-foreground">{snapshot.sentence}</p>
+        ) : null}
+        {notice ? (
+          <p
+            role="status"
+            data-testid="concept-degraded"
+            className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-sm"
+          >
+            {notice}
+          </p>
         ) : null}
         <div className="mt-6 overflow-hidden rounded-lg border border-border bg-black">
           <video
@@ -224,11 +322,21 @@ export function FilmStage({ projectId }: { projectId: string }) {
           <div className="mt-4">
             <h2 className="text-sm font-medium">时间轴</h2>
             <ul className="mt-2 flex flex-wrap gap-2">
-              {shots.map((shot) => (
-                <li key={shot.shot_id || shot.order} className="rounded-full bg-muted px-3 py-1 text-sm">
-                  第 {shot.order} 镜{shot.purpose ? ` · ${shot.purpose}` : ""}
-                </li>
-              ))}
+              {shots.map((shot) => {
+                const pressed = Boolean(shot.shot_id && shot.shot_id === shotId);
+                return (
+                  <li key={shot.shot_id || shot.order}>
+                    <button
+                      type="button"
+                      aria-pressed={pressed}
+                      className={`rounded-full px-3 py-1 text-sm ${pressed ? "bg-foreground text-background" : "bg-muted"}`}
+                      onClick={() => setShotId(shot.shot_id ?? null)}
+                    >
+                      第 {shot.order} 镜{shot.purpose ? ` · ${shot.purpose}` : ""}
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         ) : null}
@@ -286,15 +394,71 @@ export function FilmStage({ projectId }: { projectId: string }) {
         </fieldset>
 
         <div className="grid gap-2">
+          <Label htmlFor="edit-version">改稿版本</Label>
+          <select
+            id="edit-version"
+            value={currentEdit}
+            disabled={busy || edits.length === 0}
+            className="h-11 w-full rounded-md border border-input bg-card px-3 text-base disabled:opacity-60"
+            onChange={(event) => void chooseEdit(event.target.value)}
+          >
+            {edits.length === 0 ? <option value="">正在读取改稿</option> : null}
+            {edits.map((version) => (
+              <option key={version.version_id} value={version.version_id}>
+                {editLabel(version)}
+              </option>
+            ))}
+          </select>
+          <p className="text-sm text-muted-foreground">未通过质检的改稿不会被标成通过。</p>
+        </div>
+
+        <div className="grid gap-2">
           <Label htmlFor="revision">改稿</Label>
-          <Textarea id="revision" disabled placeholder="点某一镜，说出要改的地方。对话改稿尚未开放。" />
-          <Button type="button" variant="outline" disabled>
-            发送改稿
+          <Textarea
+            id="revision"
+            value={instruction}
+            disabled={busy}
+            placeholder={
+              focused
+                ? `改第 ${focused.order} 镜，说要改什么、留下什么。`
+                : "说要改什么。也可以先点时间轴上的某一镜。"
+            }
+            onChange={(event) => setInstruction(event.target.value)}
+          />
+          <Button
+            type="button"
+            variant="outline"
+            disabled={busy || instruction.trim().length === 0}
+            onClick={() => void sendEdit()}
+          >
+            {busy ? "正在改稿" : "发送改稿"}
           </Button>
+          {question ? (
+            <p role="status" data-testid="revision-notice" className="text-sm text-muted-foreground">
+              {question}
+            </p>
+          ) : null}
+          {snapshot?.revision_notice ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {snapshot.revision_notice}
+            </p>
+          ) : null}
+          {editError ? (
+            <p role="alert" className="text-sm text-destructive">
+              {editError}
+            </p>
+          ) : null}
         </div>
       </div>
     </div>
   );
+}
+
+function editLabel(version: EditVersion): string {
+  const parts = [`版本 ${version.index}`];
+  if (version.current) parts.push("当前");
+  if (!version.quality_pass) parts.push("未通过质检");
+  return parts.join("，");
 }
 
 function VersionSelect({

@@ -35,6 +35,15 @@ class MockAdapter:
         return True
 
     def invoke(self, call: Invocation) -> AdapterResult:
+        if call.task in {"matte", "relight"}:
+            from gateway.adapters.local_vision import invoke_local
+
+            return AdapterResult(
+                provider=self.provider,
+                model=call.model or f"mock-{call.task}",
+                output=invoke_local(call),
+                cost_cny=Decimal("0"),
+            )
         if call.json_schema is not None:
             output = fill_json_schema(call.json_schema)
             if not isinstance(output, dict):

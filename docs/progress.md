@@ -18,14 +18,14 @@
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | ✅ | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ✅ | [cursor/t11-frontend-pages-3df2](https://github.com/jeusgbhshs-blip/Hilatv/pull/38) | 已合并（9c7e524）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ✅ | [cursor/t12-qa-director-cdd4](https://github.com/jeusgbhshs-blip/Hilatv/pull/40) | 已合并（7a7725f）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
-| T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
+| T13 | N7 锚点 + 产品合成模式 | T08, T12 | ✅ | [cursor/t13-anchors-composite-f261](https://github.com/jeusgbhshs-blip/Hilatv/pull/47) | 已合并（d326c69）。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ✅ | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 已合并（5e15a75）。假设见下方 |
-| T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
-| T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。假设见下方 |
-| T18 | eval/ 基准测试 + 报告 | T10, T12 | ✅ | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 已合并（bbe69f9）。假设见下方 |
+| T16 | N18 对话改稿 + 版本管理 | T10, T12 | ✅ | [cursor/t16-n18-revision-2fcd](https://github.com/jeusgbhshs-blip/Hilatv/pull/45) | 已合并（70e1553）。改稿历史走 `/revisions`。假设见下方 |
+| T17 | 多比例、多语种导出 | T06, T09, T10 | ✅ | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 已合并（a44d931）。比例、语种、时长仍走 `/versions`。假设见下方 |
+| T18 | eval/ 基准测试 + 报告 | T10, T12 | ✅ | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 已合并（bbe69f9）。只有 `visual_reviewed is True` 算已评审。假设见下方 |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
-| T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标、AIGC 元数据、内容安全 mock、授权与素材说明。授权记录用 main 上 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
@@ -75,8 +75,8 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：main 现为 `bbe69f9`（T15 `5e15a75`、T17 `a44d931`、T18 `bbe69f9`）。更早同日已在 main：T09–T12、T11、T25、SEC-01。都无新迁移
-- 正在做什么：T21 N12 音乐与音效，已把这份 main 合并进本分支。mock 曲库和音效都是仓库里合成的测试音，不买曲、不调 Mureka/Suno。N15 只多了一条音轨输入。无 Key，`HILATV_LIVE` 保持关闭。Alembic 仍是单一 head `t03_gateway_0002`
+- 合并了哪些：main 现为 `18cf1ff`（T21 PR #46）。更早同日已在 main：T09–T12、T15、T17、T18、T25、SEC-01。都无新迁移
+- 正在做什么：T16 对话改稿。改稿历史用 `/revisions`，比例语种时长仍用 T17 的 `/versions`。无 Key，改稿走 mock。方案卡若是模板兜底（`/v1/concepts` 可 200 且 ok=false），成片页会标明，版本不能标成质检通过。重生次数只记在 `regen_budget.json`。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权（Mureka/Suno 或正版曲库）要另批，未批之前保持 mock。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测。T18 的 60 条样例仍待换成真实企业需求
 
 ## T21 假设
@@ -93,16 +93,17 @@
 - 画面上的字、Logo、价格、电话仍只由 N13/N14/N15 叠加。音乐提示词要求无歌词、无口播、无文字。
 
 - T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5，并调用已合并的 T12 `review_shot`。mock 没有画面，镜头标为未评审。T12 导入不到时记 `review_error`，不再用网关单独打分。报告分开写「管线和报告结构」和「质量是否达标」。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后，`--mode live` 才会让视觉评审看实帧
-- T20：合规标识、内容审核和素材授权说明。无内容安全 Key，`make accept-t20` 走 mock。需要法务在上线前对照《人工智能生成合成内容标识办法》核对角标样式；内容安全厂商选定前不要打开 live
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络
+- T20：合规标识、内容审核和素材授权说明。无内容安全 Key，`make accept-t20` 走 mock。内容安全厂商、服务提供者编码和 HMAC 密钥待 song 确认
 
 ## T20 假设
 
-- 显式标识用角标「AI生成」（含「AI」和「生成」）。依据《人工智能生成合成内容标识办法》第四条第四项：视频在起始画面的适当位置添加显著提示标识；第五条：文件元数据写入内容属性、服务提供者名称或编码、内容编号。办法成文 2025-03-07，国家网信办 2025-03-14 公布（国信办通字〔2025〕2号），2025-09-01 施行。文本：https://www.gov.cn/zhengce/zhengceku/202503/content_7014286.htm 。推断：白字深底、放在安全区内的边角、字号至少为画面短边的 5%（放得下时用 28px），整段播放都显示。5% 和不少于 2 秒来自配套标准 GB 45438-2025 第 5.4 条，不是办法正文里的像素数。短于 2 秒的成片不会为了标识被拉长。
+- 显式标识用角标「AI生成」（含「AI」和「生成」）。依据《人工智能生成合成内容标识办法》第四条第四项：视频在起始画面的适当位置添加显著提示标识；第五条：文件元数据写入内容属性、服务提供者名称或编码、内容编号。办法成文 2025-03-07，国家网信办 2025-03-14 公布（国信办通字〔2025〕2号），2025-09-01 施行。文本：https://www.gov.cn/zhengce/zhengceku/202503/content_7014286.htm 。字高按墨迹包围盒量，不少于画面短边的 5%（GB 45438-2025 §5.4），从第一帧起停留不少于 2 秒。短于 `HILATV_AI_LABEL_MIN_S`（默认 2）的成片拒绝导出，是否放宽待 song 确认。
 - 隐式标识按 GB 45438-2025 附录 E 和 TC260 视频实践指南，用 ffmpeg `-metadata AIGC` 加 `-movflags use_metadata_tags` 写入 `moov.udta.meta`。七个字段是 Label、ContentProducer、ProduceID、ReservedCode1、ContentPropagator、PropagateID、ReservedCode2。ContentProducer 读 `HILATV_CONTENT_PRODUCER`（占位 `PENDING-SONG-CONFIRM`，待 song 确认，不用产品名 HiLatv）。每次渲染新建 ProduceID。ReservedCode1 是这些字段的 HMAC；mock 用测试密钥，live 没有 `HILATV_AIGC_HMAC_KEY` 就拒绝签名。
 - 推断：不实现办法第九条的「无显式标识导出」。改稿指令「去掉 AI 标识」、`omit_ai_label` 之类的开关、以及 N18 的 `RevisionDirective` 都会被拒绝。N15 即使收到一份没有角标的元素表，也会自己再画一层。
 - 内容安全是网关任务 `content_safety`。无 Key 或 `HILATV_LIVE` 关闭时走 mock，费用记 0。mock 在文本含 `HILATV_UNSAFE_SAMPLE` 时判定不通过。推断：live adapter 向 `{CONTENT_SAFETY_BASE_URL}/moderate` 发送 `{"text","stage"}`，这只是占位，不是某一家云厂商的正式协议。
 - 输入审查在编码前，输出审查在成片写入之后。任一次不通过都不会把结果当成交付。极限词沿用品牌 `banned_words`，没有品牌表时用广告法默认表（「最」是子串，可能命中「最后」这类词，这是现有 `find_banned_words` 的行为）。医疗、食品、金融是关键词标记，不单独阻断文件。行业模板上的 `manual_review`（目前只有政企为 true）同样只打人工审核标记，不阻断。
-- 人物和克隆声必须来自 `people_for_use` / `release_kit`，并且 `brand_archived` 为真。贴在项目里的资料即使 `consent=true` 也不能进 N8 / N10 生成，也不能当克隆声进 N6 / N17。库存 TTS 音色不是克隆声。
+- 人物和克隆声只从 `enterprise_id` 对应的品牌档案取出，再经 `people_for_use` / `release_kit`。请求里的 `brand_archived` 和自报 `consent=true` 不作数。库存 TTS 音色不是克隆声。
 - 授权记录只用 main 上 N12 的 `LicenseRecord` / `LicensingSummary`（`workers/nodes/n12_music/schema.py`），没有第二套类。T20 只把 `kind` 扩成也包含 `font` 和 `voice`，给字体和库存旁白用。缺来源、许可、证明、到期或使用范围时，沿用 N12 的 `incomplete_reason` 阻断。`expires_on` 为 `none` 表示不到期；ISO 日期早于今天（上海时区，当天仍有效）也阻断。`HILATV_LIVE=1` 时拒绝 `hilatv-test-` 来源和 `CC0-1.0` 测试曲库许可，与 N12 相同。
 - 素材说明写在项目目录 `compliance/materials-and-licences.txt`，路径由服务端生成。客户给的绝对路径必须落在项目目录内。http(s) 证明默认只做 SSRF 分类，不下载；`HILATV_FETCH_LICENCE_PROOF=1` 时才经 SEC-01 的 `fetch_bytes` 拉取。
 - 不新增 Alembic revision，head 仍是 `t03_gateway_0002`。备案登记和私有化部署不在本任务。
@@ -130,6 +131,26 @@
 - 合并了哪些：T09（PR #29）、T10（PR #30）、T11（9c7e524）、T25（66306cc）、SEC-01（d845705）、T12（7a7725f）。都无新迁移
 - 正在做什么：T17 多比例、多语种导出和成片页版本切换。合并前补上：缺质检字段不算通过，deliveries.json 先 fsync，mock 听写不计入核对，并发上限按进程。无 Key，`make accept-t17` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络
+
+### 2026-10-30 T13
+- 合并了哪些：main 为 `5e15a75`（T15、T17、T12、SEC-01 已在 main）。本分支从这份 main 拉出，没有改 SPEC。
+- 正在做什么：N7 产品锚点、人物三视图、场景和风格锚点、`product_composite`。`make accept-t13`：deformation=未测形变，pixel_matches=6405，face_cosine_min=0.939（阈值 0.75，正/侧/背不是镜像）。三视图失败不写锚点、不扣重生次数。
+- 需要提供什么：没有新的 Key。BiRefNet / RMBG / IC-Light 权重未接入。测试图是代码绘制的。
+
+## T13 假设
+
+- 抠图和重打光是网关任务 `matte`、`relight`。路由指向 `local_matting`（接口名 `birefnet-rmbg-2.0-local`）和 `local_relight`（接口名 `ic-light-local`）。没有下载 BiRefNet、RMBG-2.0 或 IC-Light 的权重。抠图仍调用 `workers.brand_kit.matting` 的纯色去底。重打光只在产品下方压暗并加一条浅反射，然后把 alpha 为 255 的产品像素按原图 RGB 抄回去。这两项 `billable` 为 false，费用记 0，不看 `HILATV_LIVE`。注册表里没有本地适配器时，mock 走同一段代码。
+- 产品合成不做透视重采样，所以不能拿「把同一张抠图再贴一遍」的余弦当成形变分。候选参数写 `deformation=未测形变`，不写 similarity。N11 的 0.90 阈值仍只用于 N11。这里核对的是 alpha 为 255 的像素和原图 RGB 是否一致。
+- 透视四边形记在候选参数里（上边内收最多 4 像素），不拿去重采样抠图。重采样会改掉 Logo 和包装。比对的是合成图里 alpha 为 255 的区域和原图 RGB，原图与合成图不是同一个文件。半透明边缘可以和背景混合。
+- 人物三视图只采用图像网关交回的三张图。余弦低于 0.75、三张里有重复或镜像、或画面有乱码，节点失败，状态是需要人工确认，不把任何锚点写入品牌库，也不为了换一张卡通脸去扣重生次数。节点不会自己画脸。验收用的正、侧、背是三张不同的图（侧视是侧面，背面是头发和脖子，不是正面的镜像）。嵌入仍是 N11 的 8×8 肤色亮度网格，阈值 0.75。人物只从 `release_kit` / `people_for_use` 来。档案外的 inline kit 即使自报 `consent=true` 也没有人。未授权的人及其照片不会出现在结果里。
+- 场景图走图像网关，提示词带「无文字」。`garbled_text` 或 `extra_text` 会通过 `open_project_budget` 再花一次项目重生额度，额度用完就停。没有单独的 3 次上限。风格锚点是品牌色条，另外保存一张通过文字检查的氛围图。画面上的字、Logo、价格、电话不交给模型画。
+- `/v1/concepts` 的结果可以是降级的。`template_fallback`、`degraded=true` 或 `ok=false` 记成 `concept_status=degraded`、`concept_passed=false`，风格改用 Brief，不用方案卡上的风格词。节点 `ok` 只表示锚点做完了，不表示方案卡通过。
+- 重生预算只在 `workers.qa.budget_store.open_project_budget`。这是其他任务（包括 T16）要调用的唯一接口。文件是 `{HILATV_PROJECT_DIR}/{project_id}/regen_budget.json`，加锁并 fsync，只增不减。它不写入项目快照或版本快照。版本回滚不能把 `used` 改小，也不能用旧文件盖掉它。上限仍是 `HILATV_QA_PROJECT_RETRIES`（默认 12）。N7、N9、N11 都读这一份。
+- 合成镜头的 `counts_as_reviewed` 等于 `review_shot` 返回的 `visual_reviewed`。只有该值为 true 且 `is_quality_pass` 时才 `selected`。Mock 评审看不到实帧，`visual_reviewed` 为 false，不把这张图当成已审通过。
+- 产品图地址只接受 `image_b64`、本企业的 `brand://`，或 http(s)。http(s) 走 SEC-01 的 `fetch_bytes`。调用方传来的文件路径直接拒绝。写出的文件由节点生成，`resolve` 之后必须在项目目录里。
+- N7 没有放进 T10 的 `PIPELINE`。那条链路仍是配音之后直接关键帧。产品合成候选的 `node` 是 `N7`，调用方单独跑 `n07_anchor`。
+- 侧面和背面仍用 `workers.brand_kit.complete_angles`，`on_screen` 为 false，复制进品牌库的 `anchors`，不写入 `photos` 或 `cutouts`。同一企业下一次再跑，若抠图和角度还在，就不再调用 `matte`。
+- 不新增表，也不新增依赖。Alembic head 仍是 `t03_gateway_0002`。测试用的产品和脸是代码画的，不是客户照片，也不是真实品牌。
 
 ## T17 假设
 
@@ -198,6 +219,25 @@
 - 封面和锚点图必须读到真实图片字节。`mock://` 或读不出来的地址是 `not_ready`，不写入可用锚点，也不用纯色图冒充封面。无 Key 时方案卡因此是降级结果，主流程仍可继续，但 `ok` 不是 true。
 - 主流程不暂停等选卡。没有 `concept_selection` 时 N3 仍生成三张卡，并自动记下「你帮我选」，所以 T10 的出片验收继续往下走。用户在方案页点了某一张，创建项目时带上那个方向 id。
 - 画面上的字、Logo、价格、电话仍然只由后期叠加。本任务不改 N15、`workers/qa`、`eval/`。
+
+## T16 假设
+
+- 解析以网关 LLM 为主。规则只做安全校验：拒绝未知镜头、空改动、以及没说「全部」却重做每一镜。做不到的类别（合成镜头、换衣服、改字幕语种、改节奏、改 Logo 大小或位置、改成傍晚或夜景）直接返回不支持，不会改成全片重生。对不上镜头或改动时返回需要澄清的问题，不提交新版本，也不调用图像或视频生成。
+- 手写 25 句和另写的 32 句未见集分开计成功率。85% 只要求未见集。mock LLM 不读句子，只填占位，所以支持的改动会变成澄清，未见集在 mock 下过不了 85%，验收会如实打印，不以这句话去凑分。
+- 「再短两秒」按缩短一档（时长 × 0.8）理解，不按字面减 2 秒。
+- 旁白或时长变化会重跑该镜的 N6，并重做该镜视频长度（N10）。只改音色时不重做视频，并把镜头时长留在改前。Logo、价格、电话只重渲 N14/N15。去掉 Logo 去掉片头和角标；片尾仍留一张 Logo，因为 N15 的片尾合同要求 Logo 加 CTA。
+- 局部重跑在进程里做。现有 Temporal 工作流只会从某个节点一路往后、并且每个镜头都跑，做不到「只动这一镜」。导演仍只返回 `RevisionDirective`，由这段运行器执行。
+- 版本号是服务端 `uuid4` 的 32 位十六进制。请求里不能带路径；镜头号必须是当前分镜里的 id。版本目录、成片回放文件都落在项目目录内。索引和清单先写入临时文件，`fsync` 后再改名，整个写入拿着项目锁。
+- 重生镜头只在 `review_shot` 的 `visual_reviewed` 为真且 `is_quality_pass` 为真时才算通过。mock 评审达不到，所以改稿版本的 `quality_pass` 在无密钥时是 false。项目级重生上限沿用 `HILATV_QA_PROJECT_RETRIES`；到顶后不再调用视频生成，决定记为 fallback。
+- 方案卡如果带 `degraded`、`ok: false` 或 `text_source` / 卡片 `source` 为 `template_fallback`（含 `POST /v1/concepts` 返回 200 的这种降级），成片页会写明不能当作质检通过，版本也不会标成通过。改稿不重新请求 `/v1/concepts`。没有这些标记的旧 N3 结果不当成降级。
+- 人物只经 `people_for_use` / `release_kit`。项目上的 Brand Kit 是内联副本，不是品牌档案，所以 `trust_consent` 为 false，肖像和克隆声线都不会进改稿。模块暂时不可导入时，人物列表直接清空，同样不读取原始人物字段。
+- 改稿走 `get_gateway()`。`HILATV_LIVE` 未开或没有预算时是 mock，不挂对象存储，配音是 `mock://`。生产路径里，镜头文件缺失或视频没有字节时保留上一版画面，状态是未完成，并告诉用户哪些镜头留了原文件；不用色块冒充新画面。色块只出现在测试夹具里。
+- 去掉 Logo 会说明片头和角标已去掉、片尾仍保留 Logo 和行动号召。接口的 `notice` 和成片页的 `revision_notice` 都写这句话。
+- 项目重生次数只走 `workers.qa.budget_store.open_project_budget`。文件是 `regen_budget.json`，加锁并 fsync，只增不减。不写进 `project.json`，也不写进版本清单。回滚不打开这个文件，版本目录里的同名文件也不会盖掉它。上限仍是 `HILATV_QA_PROJECT_RETRIES`。
+- 版本恢复先写入临时目录再换入。换到一半留下 `.restore-inflight` 时，下次读取会把 `.restore-prev` 整树换回，包括快照和成片。
+- 项目锁只包住状态的读和写。单镜重生（每镜最长约 180 秒）在锁外执行，进度查询不会被挡在锁上。
+- 画面文字、Logo、价格、电话仍只由 N13/N14/N15 叠加。换 Logo 若句子里带 http(s) 地址，只走 SEC-01 的 `fetch_bytes`。测试图是代码画的色块。
+- 不新增迁移。Alembic head 仍是 `t03_gateway_0002`。改稿历史是 `/v1/projects/{id}/revisions`，不占用 T17 的 `/versions`（比例、语种、时长）。
 
 ## T11 假设
 
