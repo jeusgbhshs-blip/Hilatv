@@ -31,6 +31,8 @@
 | T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
+| SEC-54 | enterprise_id 只来自登录会话 | T15, T20 | 🔵 | cursor/sec54-enterprise-identity-2c9f | 请求体和查询不能指定企业。跨企业访问 404。假设见下方 |
+| SEC-53 | TTS 必须经过 consent_gate | T20 | 🔵 | 同上 | `Gateway.tts` 要授权门发出的声音令牌。 |
 
 状态：⬜ 未开始 · 🟡 开发中 · 🔵 验收中 · ✅ 已合并 · ⛔ 阻塞
 
@@ -77,7 +79,7 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：本分支从 main `16b1213`（T19 专家画布 #55）拉出。PR #56 仍开着，这次没有新的 HTTP 入口
+- 合并了哪些：已并入 main `43d2401`（SEC-54 会话身份 #56）。终审命令用 `project_for`；别的企业访问交付接口是 404
 - 正在做什么：T22 N16 成片终审。抽帧和转写走 gateway judge/asr（mock）。硬伤拦截 47/47，干净片 6/6 放行且不重跑。`visual_reviewed` 在 mock 下是 false，VLM 实帧和 ASR 听写记未测。`HILATV_LIVE=1` 时未评审不放行，项目停在 `needs_human_review`，交付 409
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。无 Key，终审走 mock
 
@@ -100,7 +102,7 @@
 
 - 产品负责人（2026-10-30）改了 SPEC §6.10 的第 3、4 级：不调用企业素材库里的真实视频，也不在交付信息里写「此镜头建议补拍」。新顺序是：① 换视频路由、改写提示词、换种子，经网关再生，花费只走 `open_project_budget`；② 只用已经通过质检（`visual_reviewed` 且达到 7.5）的 AI 关键帧做图生视频；③ 这张关键帧加本地程序化运镜（Ken Burns，有抠图时再加 2.5D 视差）；④ 动态图形（T13 抠图 + 渲染层文字动画 + 生成的背景运动）。第 ④ 级必须能做出来，所以片子一定能交。SPEC.md 正文没有改。
 - 第 1–3 级只接受 `visual_reviewed is True` 且 `hard_fail` 为空的片段。`not_reviewed`、`judge_unavailable` 和 mock 评审都落到下一级，不能当成通过。第 4 级在评审不可用时仍做出片段，但只要有一镜 `needs_review`，工作流在合成前停下，项目状态是 `needs_human_review`，不写 master，也不写 deliveries。只有 `POST /v1/projects/{id}/human-review/release`（或 `hilatv release`）才继续合成。`HILATV_LIVE=1` 不会自动放行。分镜确认（`POST /storyboard/continue`）也不是放行：确认之后若仍有 `needs_review`，同样停在 `needs_human_review`。N15 在 live 时没有镜头文件就拒绝画纯色底板；mock 可以保留底板，并在时间轴上标 `placeholder`。
-- 放行时 API 和 `hilatv release` 都从服务端项目记录读取 `enterprise_id` 与 `concept_selection`，并写入 `human_review_released` 事件（`events.jsonl`，带 `ts`）。放行人身份留给 #54，这次不写。
+- 放行时 API 和 `hilatv release` 都从服务端项目记录读取 `enterprise_id` 与 `concept_selection`，并写入 `human_review_released` 事件（`events.jsonl`，带 `ts`）。SEC-54 在同一条事件上补上放行人 `member_id`。
 - `make accept-t23` 在 mock 下会先停在 `needs_human_review`（直接出片和分镜确认之后都一样）。验收脚本在确认没有成片之后显式放行，再检查成片。没有放行时不写 master。
 - 再生的 seed 混入项目预算已用次数和本次尝试序号，同镜同级再跑不会重复同一个 seed。
 - Mock 评审不会把 `visual_reviewed` 设为 true。因此无 Key 时第 ② 级不会被选中。验收里的第 ② 级测试在进程内打开 `HILATV_LIVE=1`，用一个不联网的假评审返回完整分数。`make accept-t14` 的端到端流程保持 `HILATV_LIVE=0`。
@@ -121,7 +123,7 @@
 - mock ASR 回显 `reference_text`（缺省是脚本旁白）。听到的声音和旁白是否一致记未测。成片没有音轨时写一段静音再调用 gateway `asr`，仍然算调用过。`HILATV_LIVE=1` 且 ASR 结果仍是 mock，视为没听过，不放行。
 - 有内容硬伤才生成 `DirectorDecision`，`target.shot_id` 只有这一镜，节点是 `N10`。产品形变、人脸、闪烁走 `switch_model`，其他硬伤走 `regenerate`。敏感内容走 `ask_user`，不扣次数。满 3 次走 AI fallback。`changes.source` 固定 `ai_generated`，不写补拍、实拍或客户素材。每一次 `regenerate` / `switch_model` 调用一次 `open_project_budget.try_take`。额度不够就拒绝这一镜，不放行；项目已有快照时状态改为 `needs_human_review`。没有第二本账。
 - 只有每一镜 `visual_reviewed is True` 才把总分当成 VLM 分。否则 `vlm_total` 写「未测」，规则分仅供参考（干净画面约 8.6），`quality_pass` 不是 true。`HILATV_LIVE=1` 且评审没看过画面时不放行，写入和 T14 相同的 `needs_human_review`，`POST /v1/projects/{id}/deliveries` 返回 409。
-- `enterprise_id` 只从项目快照读。请求体里的同名字段在校验前丢掉。PR #56 还没合并，本任务没有新的 HTTP 入口，所以没有接它的 session helper。
+- `enterprise_id` 只从项目快照读。请求体里的同名字段在校验前丢掉。单独重跑的命令要求登录会话，并用 SEC-54 的 `project_for` 核对项目属于该企业；对不上时和接口一样当作项目不存在（HTTP 交付是 404，命令行退出码 2，文案「项目不存在」）。本任务没有新的 HTTP 路由。
 - N16 不进 T10 的 `PIPELINE`。调用方单独跑 `n16_final_review`。无硬伤且 mock 下结构、品牌、合规都通过时 `release` 为 true，不改写项目为 completed，也不扣重生次数。
 - 不新增表，也不新增 Python 依赖。Alembic head 仍是 `t03_gateway_0002`。
 
@@ -250,6 +252,15 @@
 - N16 只留 `workers.qa.final.review_film`。调用会抛 `NotImplementedError`。
 - 画面上的字、Logo、价格、电话仍然只由后期叠加。重生决策的 `changes` 带上现有的无文字负面约束。
 - 同一个镜头的候选逐张评审，避免网关日志并发写。
+
+## SEC-54 假设
+
+- 登录会话是服务端签发的 HMAC 令牌，企业编号写在令牌里。`POST /v1/session` 在 mock 下创建新企业，请求体不能指定 `enterprise_id`。`HILATV_LIVE=1` 时这个接口返回 403，除非请求头 `X-Hilatv-Admin-Secret` 与 `HILATV_SESSION_ADMIN_SECRET` 用 `compare_digest` 对上。Live 启动时没有 `HILATV_SESSION_SECRET` 就拒绝启动。令牌带 `jti`，`POST /v1/session/revoke` 之后不能再使用。`?session=` 只接受在分镜画面和进度 WebSocket 上，其它接口带这个查询参数返回 422。
+- 还没有成员账号表。谁拿到令牌，谁就是该企业。生产环境要配置 `HILATV_SESSION_SECRET`，否则密钥只活在当前进程里，重启后旧令牌失效。这不是厂商密钥。
+- 项目、品牌、上传、分镜、改稿、导出和专家画布（`/canvas`、`/expert/rerun`、`/expert/select`、`/expert/timeline`、`/expert/media`）都先核对会话企业。对不上或项目上没有企业编号时返回 404，响应里不带对方的句子、人名或声音编号。`/v1/shares/{token}` 仍是分享能力链接，不要求企业会话。专家模式没有单独的命令行入口。
+- 人工放行 `POST /v1/projects/{id}/human-review/release` 和 `hilatv release` 先核对项目属于当前企业，再写 `human_review_released`（放行人 `member_id`、企业编号、`ts`），然后才 `start_film`。别的企业返回 404，不写这条事件。
+- `Gateway.tts` 和 `execute("tts")` 必须带 consent_gate 签发的短时声音令牌。令牌绑定声音编号和企业编号，第一次合成后作废。业务节点走 `gated_tts`。网关自己的测试和 `accept_media` 仍调用 `tts`，但要先向授权门要令牌。静态检查会拦住 `getattr(..., "tts")`。`people_for_use` / `release_kit`、`LicenseRecord` 和 `open_project_budget` 的判断没有改，只是企业编号改从会话或项目记录来。
+- 无密钥，`HILATV_LIVE=0`。不新增迁移。Alembic head 仍是 `t03_gateway_0002`。
 
 ## SEC-01 假设
 
@@ -455,4 +466,8 @@
 - 没配对象存储时，mock 仍返回 `mock://`，好让 T03 单测不用 MinIO。配了存储之后，图像/视频/TTS 必须转存成功才返回 `oss://`。Live adapter 没有存储配置时失败，网关回退 mock。
 - 不新增数据库迁移。媒体只进对象存储，调用日志沿用 `call_logs`。Alembic 仍然只有 head `t03_gateway_0002`。
 - 没有 Key，本轮不贴真实厂商样例。`HILATV_LIVE=1` 且预算和对应 Key 都有时，`make accept-t04` 会额外各跑一条 live。
+
+### 2026-10-30 SEC-54
+- 正在做什么：企业编号只从登录会话或项目记录读取。跨企业访问品牌、项目、分镜、改稿、导出和上传返回 404/422，不改对方的文件。TTS 直接调用会被拒绝。
+- 需要提供什么：没有新的 Key。生产要自行设置 `HILATV_SESSION_SECRET`。T14 已并入，放行路由已接上会话和放行人。
 

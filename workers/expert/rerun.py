@@ -287,11 +287,37 @@ def select_candidate(
 ) -> dict[str, Any]:
     """Mark one candidate selected. Client QA flags are ignored."""
 
+    with locked_project(project_id):
+        return _select_candidate_locked(
+            project_id,
+            node,
+            shot_id,
+            candidate_id,
+            gateway=gateway,
+            qa_passed=qa_passed,
+            visual_reviewed=visual_reviewed,
+        )
+
+
+def _select_candidate_locked(
+    project_id: str,
+    node: str,
+    shot_id: str,
+    candidate_id: str,
+    *,
+    gateway: Any | None = None,
+    qa_passed: bool | None = None,
+    visual_reviewed: bool | None = None,
+) -> dict[str, Any]:
+    """Select one candidate while the project lock is already held."""
+
     _ = (qa_passed, visual_reviewed)
+    snapshot = _snapshot(project_id)
+    if snapshot.get("status") == "running":
+        raise GateError("项目仍在运行", status=409)
     key = {"n08_keyframe": "keyframes", "n10_video": "videos"}.get(node)
     if key is None:
         raise GateError("这个节点没有候选", status=400)
-    snapshot = _snapshot(project_id)
     state = load_checkpoint(project_id)
     raw_rows = state.get(key) or []
     rows = [Candidate.model_validate(item) for item in raw_rows if isinstance(item, dict)]
@@ -348,8 +374,22 @@ def save_timeline(
 ) -> dict[str, Any]:
     """Apply a timeline edit. Dropping 「AI生成」 or a blocked clip is refused."""
 
+    with locked_project(project_id):
+        return _save_timeline_locked(project_id, body, gateway=gateway)
+
+
+def _save_timeline_locked(
+    project_id: str,
+    body: dict[str, Any],
+    *,
+    gateway: Any | None = None,
+) -> dict[str, Any]:
+    """Write a timeline while the project lock is already held."""
+
     _ = gateway
     snapshot = _snapshot(project_id)
+    if snapshot.get("status") == "running":
+        raise GateError("项目仍在运行", status=409)
     state = load_checkpoint(project_id)
     if _delivery_blocked(snapshot, state, ran_director=False):
         raise GateError("有镜头未经视觉评审，成片暂停，需要人工放行", status=409)
@@ -483,7 +523,7 @@ def _review_of_path(state: dict[str, Any], path: str) -> str | None:
 
     target = _resolve_media(path)
     if target is None:
-        return None
+        raise GateError("路径不在项目目录内", status=422)
     for raw in list(state.get("keyframes") or []) + list(state.get("videos") or []):
         if not isinstance(raw, dict):
             continue

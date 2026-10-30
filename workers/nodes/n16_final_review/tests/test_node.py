@@ -131,14 +131,26 @@ def test_budget_exhaustion_refuses_the_regen(gateway, tmp_path: Path, monkeypatc
 def test_live_unreviewed_film_holds_and_delivery_is_blocked(
     gateway, tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "t22-live-session")
     monkeypatch.setenv("HILATV_LIVE", "1")
-    init_project("t22live", sentence="一句", status="running", deliverable=None)
+    from workers.identity.session import open_session
+
+    owner = open_session()
+    other = open_session()
+    init_project(
+        "t22live",
+        sentence="一句",
+        status="running",
+        deliverable=None,
+        enterprise_id=owner.enterprise_id,
+    )
     film = write_film("t22live", [_plate("rect")])
     result = run(request_for("t22live", film, ["S01"], seconds_each=1.0), gateway=gateway)
     assert result.payload["release"] is False
     assert result.payload["disposition"] == "hold"
     assert result.payload["visual_reviewed"] is False
     assert result.payload["decisions"] == []
+    assert result.payload["enterprise_id"] == owner.enterprise_id
     snapshot = read_snapshot("t22live") or {}
     assert snapshot["status"] == "needs_human_review"
     assert not snapshot.get("deliverable")
@@ -147,8 +159,18 @@ def test_live_unreviewed_film_holds_and_delivery_is_blocked(
     from app.main import app
 
     with TestClient(app) as client:
-        denied = client.post("/v1/projects/t22live/deliveries", json={})
+        denied = client.post(
+            "/v1/projects/t22live/deliveries",
+            json={},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
         assert denied.status_code == 409
+        hidden = client.post(
+            "/v1/projects/t22live/deliveries",
+            json={},
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert hidden.status_code == 404
     assert not (tmp_path / "t22live" / "deliveries.json").is_file()
 
 

@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { apiUrl, errorMessage } from "@/lib/api";
+import { apiFetch, errorMessage } from "@/lib/api";
 import { INDUSTRIES } from "@/lib/industries";
 
 type PickedFile = {
@@ -113,7 +113,7 @@ export function InputStudio() {
       for (const item of files) {
         const body = new FormData();
         body.append("file", item.file, item.file.name);
-        const response = await fetch(apiUrl("/v1/uploads"), { method: "POST", body });
+        const response = await apiFetch("/v1/uploads", { method: "POST", body });
         if (!response.ok) throw new Error(await errorMessage(response));
         const stored = (await response.json()) as {
           kind?: string;
@@ -127,7 +127,7 @@ export function InputStudio() {
           filename: stored.filename || item.file.name,
         });
       }
-      const response = await fetch(apiUrl("/v1/projects"), {
+      const response = await apiFetch("/v1/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

@@ -39,12 +39,22 @@ def test_release_is_required_before_a_master_exists(tmp_path: Path, monkeypatch)
 
 def test_delivery_api_writes_nothing_while_held(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
-    init_project("heldapi", sentence="一句", status="needs_human_review", deliverable=None)
+    from workers.identity.session import open_session
+
+    ident = open_session()
+    init_project(
+        "heldapi",
+        sentence="一句",
+        status="needs_human_review",
+        deliverable=None,
+        enterprise_id=ident.enterprise_id,
+    )
     from fastapi.testclient import TestClient
 
     from app.main import app
 
-    with TestClient(app) as client:
+    headers = {"Authorization": f"Bearer {ident.token}"}
+    with TestClient(app, headers=headers) as client:
         status = client.get("/v1/projects/heldapi")
         assert status.status_code == 200
         assert status.json()["status"] == "needs_human_review"
@@ -66,8 +76,13 @@ def test_storyboard_continue_still_stops_for_needs_review(tmp_path: Path, monkey
     from fastapi.testclient import TestClient
 
     from app.main import app
+    from workers.identity.session import open_session
 
-    with TestClient(app) as client:
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "review-hold-session")
+    ident = open_session()
+    update_snapshot("boardhold", enterprise_id=ident.enterprise_id)
+    headers = {"Authorization": f"Bearer {ident.token}"}
+    with TestClient(app, headers=headers) as client:
         denied = client.post("/v1/projects/boardhold/deliveries", json={})
         assert denied.status_code == 409
     assert not (tmp_path / "boardhold" / "deliveries.json").is_file()
@@ -85,13 +100,18 @@ def test_release_passes_project_fields_and_records_the_event(tmp_path: Path, mon
         captured["api"] = kwargs
         return "wf-release"
 
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "t14-release-test")
     monkeypatch.setattr("workers.workflow.cli.run_and_wait", fake_run)
     monkeypatch.setattr("workers.workflow.service.start_film", fake_start)
+    from workers.identity.session import mint_session_for_tests
+
+    cli_ident = mint_session_for_tests("11111111-1111-4111-8111-111111111111")
+    api_ident = mint_session_for_tests("22222222-2222-4222-8222-222222222222")
     init_project(
         "relcli",
         sentence="一句",
         status="needs_human_review",
-        enterprise_id="ent-cli",
+        enterprise_id=cli_ident.enterprise_id,
         concept_selection="concept-cli",
         brand_id="brand-cli",
     )
@@ -99,17 +119,18 @@ def test_release_passes_project_fields_and_records_the_event(tmp_path: Path, mon
         "relapi",
         sentence="一句",
         status="needs_human_review",
-        enterprise_id="ent-api",
+        enterprise_id=api_ident.enterprise_id,
         concept_selection="concept-api",
         brand_id="brand-api",
     )
     from workers.workflow.cli import main
 
-    assert main(["release", "relcli"]) == 0
+    assert main(["release", "--session", cli_ident.token, "relcli"]) == 0
     cli_event = _released_event("relcli")
     assert cli_event["project_id"] == "relcli"
     assert isinstance(cli_event["ts"], float) and cli_event["ts"] > 0
-    assert captured["cli"]["enterprise_id"] == "ent-cli"
+    assert cli_event["releaser"] == cli_ident.member_id
+    assert captured["cli"]["enterprise_id"] == cli_ident.enterprise_id
     assert captured["cli"]["concept_selection"] == "concept-cli"
     assert captured["cli"]["human_release"] is True
     assert captured["cli"]["start_from"] == "n12_music"
@@ -118,13 +139,15 @@ def test_release_passes_project_fields_and_records_the_event(tmp_path: Path, mon
 
     from app.main import app
 
-    with TestClient(app) as client:
+    headers = {"Authorization": f"Bearer {api_ident.token}"}
+    with TestClient(app, headers=headers) as client:
         response = client.post("/v1/projects/relapi/human-review/release")
-    assert response.status_code == 202
+    assert response.status_code == 202, response.text
     api_event = _released_event("relapi")
     assert api_event["project_id"] == "relapi"
     assert isinstance(api_event["ts"], float) and api_event["ts"] > 0
-    assert captured["api"]["enterprise_id"] == "ent-api"
+    assert api_event["releaser"] == api_ident.member_id
+    assert captured["api"]["enterprise_id"] == api_ident.enterprise_id
     assert captured["api"]["concept_selection"] == "concept-api"
     assert captured["api"]["human_release"] is True
     assert captured["api"]["start_from"] == "n12_music"

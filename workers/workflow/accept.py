@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -15,6 +16,13 @@ PHASES = ("理解需求", "选方案", "看分镜", "生成中", "成片")
 
 
 def main() -> int:
+    os.environ.setdefault("HILATV_SESSION_SECRET", "accept-t10-session")
+    from workers.identity.session import open_session
+
+    identity = open_session()
+    env = os.environ.copy()
+    env["HILATV_SESSION"] = identity.token
+    env["HILATV_SESSION_SECRET"] = os.environ["HILATV_SESSION_SECRET"]
     proc = subprocess.run(
         [sys.executable, "-m", "workers.workflow.cli", "run", SENTENCE],
         cwd=ROOT,
@@ -22,6 +30,7 @@ def main() -> int:
         text=True,
         timeout=600,
         check=False,
+        env=env,
     )
     sys.stdout.write(proc.stdout)
     sys.stderr.write(proc.stderr)
@@ -39,6 +48,7 @@ def main() -> int:
             text=True,
             timeout=600,
             check=False,
+            env=env,
         )
         sys.stdout.write(released.stdout)
         sys.stderr.write(released.stderr)
@@ -78,7 +88,7 @@ def main() -> int:
     if not any("你帮我选" in message for message in messages):
         print("N3 did not auto-select 你帮我选", file=sys.stderr)
         return 1
-    _websocket(str(result["project_id"]))
+    _websocket(str(result["project_id"]), identity.token)
     print(f"accept-t10 ok duration_s={duration:.3f} elapsed_s={elapsed}")
     return 0
 
@@ -137,13 +147,17 @@ def _playable(path: Path) -> float:
     return duration
 
 
-def _websocket(project_id: str) -> None:
+def _websocket(project_id: str, token: str) -> None:
     from fastapi.testclient import TestClient
 
     from app.main import app
 
+    headers = {"Authorization": f"Bearer {token}"}
     with TestClient(app) as client:
-        with client.websocket_connect(f"/v1/projects/{project_id}/progress") as socket:
+        with client.websocket_connect(
+            f"/v1/projects/{project_id}/progress",
+            headers=headers,
+        ) as socket:
             seen: list[dict] = []
             while True:
                 item = socket.receive_json()

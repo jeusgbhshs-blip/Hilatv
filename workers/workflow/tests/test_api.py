@@ -9,6 +9,7 @@ import httpx
 from fastapi.testclient import TestClient
 
 from app.main import app
+from workers.identity.session import open_session
 from workers.workflow.fakes import CALLS, FAIL, FAKE_ACTIVITIES, reset
 from workers.workflow.runtime import set_activities, shutdown_runtime
 
@@ -21,7 +22,9 @@ def test_create_progress_and_rerun(tmp_path, monkeypatch) -> None:
     reset()
     set_activities(FAKE_ACTIVITIES)
     try:
-        first, second = asyncio.run(_run())
+        ident = open_session()
+        headers = {"Authorization": f"Bearer {ident.token}"}
+        first, second = asyncio.run(_run(headers))
     finally:
         set_activities(None)
     assert first["status"] == "completed"
@@ -30,7 +33,10 @@ def test_create_progress_and_rerun(tmp_path, monkeypatch) -> None:
     assert CALLS.count("n01_brief") == 2
     assert CALLS.count("n08_keyframe") == 3
     with TestClient(app) as client:
-        with client.websocket_connect(f"/v1/projects/{first['project_id']}/progress") as socket:
+        with client.websocket_connect(
+            f"/v1/projects/{first['project_id']}/progress",
+            headers=headers,
+        ) as socket:
             seen = []
             while True:
                 item = socket.receive_json()
@@ -40,16 +46,20 @@ def test_create_progress_and_rerun(tmp_path, monkeypatch) -> None:
     assert any(item.get("message") == "第 3 镜：正在生成画面" for item in seen)
 
 
-async def _run() -> tuple[dict, dict]:
+async def _run(headers: dict[str, str]) -> tuple[dict, dict]:
     transport = httpx.ASGITransport(app=app)
     try:
-        return await _drive(transport)
+        return await _drive(transport, headers)
     finally:
         await shutdown_runtime()
 
 
-async def _drive(transport: httpx.ASGITransport) -> tuple[dict, dict]:
-    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+async def _drive(transport: httpx.ASGITransport, headers: dict[str, str]) -> tuple[dict, dict]:
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers=headers,
+    ) as client:
         created = await client.post(
             "/v1/projects",
             json={"sentence": "给我们的柱塞泵做个15秒宣传片"},

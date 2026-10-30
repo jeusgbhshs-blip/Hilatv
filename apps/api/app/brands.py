@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import base64
-import uuid
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field, ValidationError, field_validator
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
+from app.identity import require_identity
 from workers.brand_kit.store import export_record, load_record, read_asset
+from workers.identity.session import Identity, canonical_enterprise
 from workers.nodes.n01_brief.node import run as run_brief
 from workers.nodes.n02_brand_kit.node import run as run_brand
 from workers.nodes.n02_brand_kit.qa import QAError as BrandQAError
@@ -17,10 +18,6 @@ from workers.nodes.n02_brand_kit.schema import PersonIntake, ProductIntake
 from workers.nodes.n03_concept.node import run as run_concept
 from workers.nodes.n03_concept.qa import QAError as ConceptQAError
 from workers.schemas.brand import Industry
-
-# TODO(auth): enterprise_id is client-supplied and unauthenticated.
-# Global authentication is out of scope for T15. The auth task must bind
-# enterprise_id to the signed-in member before these routes are exposed.
 
 _MAX_B64_CHARS = 8_000_000
 
@@ -34,6 +31,8 @@ def _cap_b64(value: str) -> str:
 
 
 class ProductBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str = Field(min_length=1, max_length=80)
     photo_b64: str = Field(min_length=1)
     selling_points: list[str] = Field(default_factory=list)
@@ -47,13 +46,16 @@ class ProductBody(BaseModel):
 
 
 class PersonBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     role: str = Field(min_length=1, max_length=40)
     consent: bool = False
     voice_id: str | None = None
 
 
 class BrandBody(BaseModel):
-    enterprise_id: str
+    model_config = ConfigDict(extra="forbid")
+
     company_name: str = Field(min_length=1, max_length=80)
     industry: str
     logo_b64: str = Field(min_length=1)
@@ -74,27 +76,30 @@ class BrandBody(BaseModel):
 
 
 class ReplacementBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     old: str = Field(min_length=1)
     new: str = Field(min_length=1)
 
 
 class PreferenceBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     product_name: str | None = None
     replacements: list[ReplacementBody] = Field(default_factory=list)
     drop_lines: list[str] = Field(default_factory=list)
 
 
 class ConceptBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     sentence: str = Field(min_length=1, max_length=4000)
-    enterprise_id: str | None = None
     selection: str | None = Field(default=None, max_length=80)
 
 
-def _enterprise(value: str) -> str:
-    try:
-        return str(uuid.UUID(value))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail="enterprise_id 需要是 UUID") from exc
+def _same_enterprise(path_id: str, identity: Identity) -> None:
+    if canonical_enterprise(path_id) != identity.enterprise_id:
+        raise HTTPException(status_code=404, detail="还没有品牌资料")
 
 
 def _public(payload: dict[str, Any], enterprise_id: str) -> dict[str, Any]:
@@ -145,8 +150,8 @@ def _run_brand(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @router.post("/v1/brands")
-def save_brand(body: BrandBody) -> dict[str, Any]:
-    enterprise_id = _enterprise(body.enterprise_id)
+def save_brand(body: BrandBody, identity: Identity = Depends(require_identity)) -> dict[str, Any]:
+    enterprise_id = identity.enterprise_id
     try:
         Industry(body.industry)
     except ValueError as exc:
@@ -173,8 +178,12 @@ def save_brand(body: BrandBody) -> dict[str, Any]:
 
 
 @router.get("/v1/brands/{enterprise_id}")
-def read_brand(enterprise_id: str) -> dict[str, Any]:
-    enterprise_id = _enterprise(enterprise_id)
+def read_brand(
+    enterprise_id: str,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    _same_enterprise(enterprise_id, identity)
+    enterprise_id = identity.enterprise_id
     record = load_record(enterprise_id)
     if record is None:
         raise HTTPException(status_code=404, detail="还没有品牌资料")
@@ -183,8 +192,13 @@ def read_brand(enterprise_id: str) -> dict[str, Any]:
 
 
 @router.patch("/v1/brands/{enterprise_id}/preferences")
-def write_preference(enterprise_id: str, body: PreferenceBody) -> dict[str, Any]:
-    enterprise_id = _enterprise(enterprise_id)
+def write_preference(
+    enterprise_id: str,
+    body: PreferenceBody,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    _same_enterprise(enterprise_id, identity)
+    enterprise_id = identity.enterprise_id
     payload = _run_brand(
         {
             "mode": "preference",
@@ -196,8 +210,11 @@ def write_preference(enterprise_id: str, body: PreferenceBody) -> dict[str, Any]
 
 
 @router.post("/v1/concepts")
-def create_concepts(body: ConceptBody) -> dict[str, Any]:
-    enterprise_id = _enterprise(body.enterprise_id) if body.enterprise_id else None
+def create_concepts(
+    body: ConceptBody,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    enterprise_id = identity.enterprise_id
     brand = None
     if enterprise_id:
         record = load_record(enterprise_id)
