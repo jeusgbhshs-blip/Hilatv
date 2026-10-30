@@ -20,6 +20,7 @@ from workers.logging import log_event
 from workers.nodes.n06_voiceover.node import load_take
 from workers.qa.budget_store import open_project_budget
 from workers.qa.service import review_shot
+from workers.schemas.label_lock import LabelLocked, refuse_label_removal
 from workers.schemas.script import Script
 from workers.workflow.revise import _keyframes, _voice
 from workers.workflow.store import locked_project, project_path, publish, valid_project_id
@@ -123,6 +124,10 @@ def edit_voiceover(
     spoken = text.strip()
     if not spoken or len(spoken) > 400 or "\x00" in spoken:
         raise StoryboardError("旁白无效")
+    try:
+        refuse_label_removal(spoken)
+    except LabelLocked as exc:
+        raise StoryboardError(str(exc)) from exc
     if not _SHOT.fullmatch(shot_id):
         raise StoryboardError("镜头编号无效")
     if not valid_project_id(project_id):

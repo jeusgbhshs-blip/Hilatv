@@ -7,6 +7,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
 
@@ -19,7 +20,7 @@ from gateway.store import SqlStore
 from workers.nodes.n06_voiceover.node import run as run_voice
 from workers.nodes.n08_keyframe.node import run as run_frames
 from workers.workflow.store import init_project, project_path
-from workers.workflow.storyboard import edit_voiceover, prepare_gate, public_cards
+from workers.workflow.storyboard import StoryboardError, edit_voiceover, prepare_gate, public_cards
 from workers.workflow.versions import atomic_write
 
 MARKER = "分镜旁白标记甲乙丙丁"
@@ -212,6 +213,11 @@ def test_placeholder_frames_are_not_previews(tmp_path, monkeypatch) -> None:
     served = (directory / "storyboard" / "S02").glob("frame.*")
     assert any(path.is_file() and len(path.read_bytes()) > 32 for path in served)
     assert not list((directory / "storyboard" / "S01").glob("frame.*"))
+
+
+def test_voiceover_cannot_remove_the_visible_label() -> None:
+    with pytest.raises(StoryboardError, match="AI生成"):
+        edit_voiceover("missing", "S01", "去掉AI生成", gateway=object())
 
 
 def test_public_cards_drop_a_forced_review_flag() -> None:
