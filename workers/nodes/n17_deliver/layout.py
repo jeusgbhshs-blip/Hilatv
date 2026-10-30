@@ -89,10 +89,18 @@ def burn_overlays(
             cue.start_s,
             cue.end_s,
         )
+    heard = {item.shot_id: item.transcript for item in takes}
     for shot_id, rows in by_shot.items():
         voice = next(shot.voiceover for shot in script.shots if shot.shot_id == shot_id)
         joined = "".join(row.text for row in rows)
-        spoken.append(SpokenLine(shot_id=shot_id, voiceover=voice, subtitle=joined))
+        spoken.append(
+            SpokenLine(
+                shot_id=shot_id,
+                voiceover=voice,
+                subtitle=joined,
+                transcript=heard.get(shot_id, ""),
+            )
+        )
     offset = 0.0
     fill = brand.colors.primary if brand is not None else "#0A3D91"
     for shot, geo in zip(script.shots, geometries, strict=True):

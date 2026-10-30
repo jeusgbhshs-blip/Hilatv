@@ -277,9 +277,11 @@ export function FilmStage({ projectId }: { projectId: string }) {
           ) : null}
           <p id="version-note" className="text-sm text-muted-foreground">
             {versionNote ??
-              (versions.length > 0
-                ? "切换比例、语种或时长会换一条成片。"
-                : "当前播放的是母版。导出后可以换比例、语种和时长。")}
+              (selected?.qa_status === "needs_review"
+                ? "没有真实主体框，画面按整幅适配，需要再看一眼。"
+                : versions.length > 0
+                  ? "切换比例、语种或时长会换一条成片。"
+                  : "当前播放的是母版。导出后可以换比例、语种和时长。")}
           </p>
         </fieldset>
 

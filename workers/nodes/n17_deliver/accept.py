@@ -6,6 +6,7 @@ No API key. The picture is a local plate and speech goes through the mock gatewa
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from workers.nodes.n17_deliver.node import run
@@ -36,7 +37,15 @@ def run_acceptance(work: Path) -> list[str]:
 def _case(work: Path) -> None:
     from workers.nodes.n17_deliver.support import build_gateway
 
-    result = run(acceptance_request(work), gateway=build_gateway(work / "gateway"))
+    previous = os.environ.get("HILATV_PROJECT_DIR")
+    os.environ["HILATV_PROJECT_DIR"] = str(work)
+    try:
+        result = run(acceptance_request(work), gateway=build_gateway(work / "gateway"))
+    finally:
+        if previous is None:
+            os.environ.pop("HILATV_PROJECT_DIR", None)
+        else:
+            os.environ["HILATV_PROJECT_DIR"] = previous
     versions = result.payload["versions"]
     aspects = {item["aspect_ratio"] for item in versions}
     languages = {item["language"] for item in versions}
@@ -47,10 +56,42 @@ def _case(work: Path) -> None:
     modes = {mode for item in versions for mode in item["modes"].values()}
     if "crop" not in modes or "blur" not in modes:
         raise AssertionError(f"expected crop and blur, got {sorted(modes)}")
-    zh = [item["spoken"][0]["voiceover"] for item in versions if item["language"] == "zh"]
-    en = [item["spoken"][0]["voiceover"] for item in versions if item["language"] == "en"]
-    if not zh or not en or zh[0] == en[0]:
+    if any(
+        item["qa_status"] != "pass" or item["subject_box_source"] != "provided" for item in versions
+    ):
+        raise AssertionError("measured boxes should be a QA pass")
+    zh = [item for item in versions if item["language"] == "zh"]
+    en = [item for item in versions if item["language"] == "en"]
+    if not zh or not en or zh[0]["spoken"][0]["voiceover"] == en[0]["spoken"][0]["voiceover"]:
         raise AssertionError("Chinese and English dubs are not distinct")
+    for item in versions:
+        if not any(
+            box["kind"] == "ai_label" and box["text"] == "AI生成" for box in item["overlays"]
+        ):
+            raise AssertionError(f"{item['aspect_ratio']} {item['language']} is missing AI生成")
+        for line in item["spoken"]:
+            _heard(item["language"], line)
+
+
+def _heard(language: str, line: dict[str, str]) -> None:
+    subtitle = "".join(char for char in line["subtitle"] if not char.isspace())
+    transcript = "".join(char for char in line["transcript"] if not char.isspace())
+    if subtitle != transcript:
+        raise AssertionError("subtitles do not match the heard dub")
+    if language == "zh":
+        if not _cjk(line["subtitle"]) or not _cjk(line["transcript"]):
+            raise AssertionError("Chinese heard dub or subtitles have no Chinese")
+        return
+    if not _latin(line["subtitle"]) or not _latin(line["transcript"]):
+        raise AssertionError("English heard dub or subtitles have no Latin text")
+
+
+def _cjk(text: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in text)
+
+
+def _latin(text: str) -> bool:
+    return any("a" <= char.lower() <= "z" for char in text)
 
 
 if __name__ == "__main__":

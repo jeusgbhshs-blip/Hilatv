@@ -9,6 +9,8 @@ export type FilmVersion = {
   height: number;
   download_path: string;
   share_path?: string | null;
+  qa_status?: string;
+  subject_box_source?: string;
 };
 
 export type VersionChoice = {
@@ -60,6 +62,9 @@ export function readVersions(body: unknown): FilmVersion[] {
       height,
       download_path: download,
       share_path: typeof record.share_path === "string" ? record.share_path : null,
+      qa_status: typeof record.qa_status === "string" ? record.qa_status : undefined,
+      subject_box_source:
+        typeof record.subject_box_source === "string" ? record.subject_box_source : undefined,
     });
   }
   return versions;

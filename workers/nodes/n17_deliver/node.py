@@ -36,12 +36,14 @@ from workers.nodes.n17_deliver.schema import (
     NodeRequest,
     NodeResult,
     SubjectTrack,
+    TrackSource,
 )
 from workers.nodes.n17_deliver.voice import dub
 from workers.nodes.runtime import Deadline
 from workers.schemas.asset import Asset, AssetKind
 from workers.schemas.base import ASPECT_RATIO_PATTERN, LANGUAGE_PATTERN
 from workers.schemas.script import Script, Shot
+from workers.workflow.store import project_path
 
 NODE = "n17_deliver"
 ASSET_NS = uuid.UUID("6f1c0a1e-7b2d-4e5a-9c31-0c0a6e6e0717")
@@ -110,9 +112,8 @@ def _execute(
         shot_id=request.shot_id,
         attempt=attempt,
     )
-    master = Path(payload.master_path)
-    if not master.is_file():
-        raise QAError(f"master is missing: {master}")
+    root = project_path(request.project_id, create=True).resolve()
+    master = _contained_file(root, payload.master_path)
     info = probe(master)
     src_w, src_h = int(info["width"]), int(info["height"])
     if src_w < 16 or src_h < 16:
@@ -128,11 +129,7 @@ def _execute(
         picture_s=picture_s,
         platforms=list(payload.brief.platform),
     )
-    if payload.work_dir:
-        work = Path(payload.work_dir)
-    else:
-        work = Path("/tmp") / "hilatv-n17" / request.project_id
-    work.mkdir(parents=True, exist_ok=True)
+    work = _contained_dir(root, payload.work_dir)
     ready = {item.language: item for item in payload.variants}
     scripts: dict[str, Script] = {}
     prompts: list[str] = []
@@ -174,12 +171,12 @@ def _execute(
             )
     versions: list[DeliveryVersion] = []
     assets: list[Asset] = []
-    pictures: dict[tuple[str, float], tuple[Path, list[ShotGeometry], str]] = {}
+    pictures: dict[tuple[str, float], tuple[Path, list[ShotGeometry], str, list[TrackSource]]] = {}
     for aspect in aspects:
         out_w, out_h = output_size(aspect, long_edge)
         for duration, kept in cuts.items():
             deadline.check()
-            geometries = _geometries(
+            geometries, track_sources = _geometries(
                 kept,
                 tracks,
                 src_w=src_w,
@@ -203,7 +200,7 @@ def _execute(
                 {shot_id: index + 1 for index, (shot_id, _path) in enumerate(backgrounds)},
             )
             run_ffmpeg(reframe_command(str(master), geometries, backgrounds, str(silent)))
-            pictures[(aspect, duration)] = (silent, geometries, graph)
+            pictures[(aspect, duration)] = (silent, geometries, graph, track_sources)
             for geo in geometries:
                 log_event(
                     "reframe_shot",
@@ -216,7 +213,7 @@ def _execute(
                 )
     safe = safe_insets(list(payload.brief.platform))
     safe_dump = {"top": safe.top, "bottom": safe.bottom, "left": safe.left, "right": safe.right}
-    for (aspect, duration), (silent, geometries, graph) in pictures.items():
+    for (aspect, duration), (silent, geometries, graph, track_sources) in pictures.items():
         out_w, out_h = geometries[0].out_w, geometries[0].out_h
         for language in languages:
             deadline.check()
@@ -241,6 +238,7 @@ def _execute(
             version_id = str(
                 uuid.uuid5(ASSET_NS, f"{request.project_id}:{aspect}:{language}:{duration:.3f}")
             )
+            provided = all(item.provided for item in track_sources)
             versions.append(
                 DeliveryVersion(
                     version_id=version_id,
@@ -256,8 +254,11 @@ def _execute(
                     geometry=[item.record() for item in geometries],
                     overlays=boxes,
                     spoken=spoken,
+                    tracks=track_sources,
                     safe=safe_dump,
                     modes={item.shot_id: item.mode for item in geometries},
+                    subject_box_source="provided" if provided else "default",
+                    qa_status="pass" if provided else "needs_review",
                 )
             )
             assets.append(
@@ -299,7 +300,8 @@ def _execute(
             "languages": languages,
             "aspect_ratios": aspects,
             "durations_s": targets,
-            "verify_pixels": payload.verify_pixels,
+            "verify_pixels": bool(versions)
+            and all(item.subject_box_source == "provided" for item in versions),
         },
     )
 
@@ -319,14 +321,33 @@ def _geometries(
     work: Path,
     project_id: str,
     attempt: int,
-) -> list[ShotGeometry]:
+) -> tuple[list[ShotGeometry], list[TrackSource]]:
     visuals = {shot.shot_id: shot.visual for shot in script.shots}
     rows: list[ShotGeometry] = []
+    sources: list[TrackSource] = []
     for item in kept:
-        track = tracks.get(item.shot.shot_id) or _default_track(item.shot.shot_id)
+        supplied = tracks.get(item.shot.shot_id)
+        sources.append(_track_source(item.shot.shot_id, supplied))
+        if supplied is None:
+            # No measured box. Fit the whole master; do not invent a crop window.
+            geo = plan_shot(
+                shot_id=item.shot.shot_id,
+                track=_full_frame(item.shot.shot_id),
+                src_w=src_w,
+                src_h=src_h,
+                out_w=out_w,
+                out_h=out_h,
+                start_s=item.source_start,
+                duration_s=item.duration_s,
+                motion_s=item.motion_s,
+                regenerate=False,
+            )
+            geo = replace(geo, mode="blur")
+            rows.append(geo)
+            continue
         geo = plan_shot(
             shot_id=item.shot.shot_id,
-            track=track,
+            track=supplied,
             src_w=src_w,
             src_h=src_h,
             out_w=out_w,
@@ -351,7 +372,7 @@ def _geometries(
             else:
                 geo = replace(geo, mode="regenerate")
         rows.append(geo)
-    return rows
+    return rows, sources
 
 
 def _vertical_plate(
@@ -452,8 +473,51 @@ def _file_uri(uri: str) -> str:
     return uri
 
 
-def _default_track(shot_id: str) -> SubjectTrack:
-    return SubjectTrack(shot_id=shot_id, x=0.4, y=0.3, w=0.2, h=0.4)
+def _full_frame(shot_id: str) -> SubjectTrack:
+    return SubjectTrack(shot_id=shot_id, x=0, y=0, w=1, h=1)
+
+
+def _track_source(shot_id: str, track: SubjectTrack | None) -> TrackSource:
+    if track is None:
+        return TrackSource(shot_id=shot_id, provided=False)
+    return TrackSource(
+        shot_id=shot_id,
+        provided=True,
+        x=track.x,
+        y=track.y,
+        w=track.w,
+        h=track.h,
+        x_end=track.x_end,
+        y_end=track.y_end,
+    )
+
+
+def _contained_file(root: Path, raw: str) -> Path:
+    path = _contained(root, raw)
+    if not path.is_file():
+        raise QAError("master must stay inside the project directory")
+    return path
+
+
+def _contained_dir(root: Path, raw: str | None) -> Path:
+    if raw:
+        path = _contained(root, raw)
+    else:
+        path = root / "deliveries"
+        if not path.resolve().is_relative_to(root):
+            raise QAError("work directory must stay inside the project directory")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _contained(root: Path, raw: str) -> Path:
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    resolved = path.resolve()
+    if not resolved.is_relative_to(root):
+        raise QAError("master must stay inside the project directory")
+    return resolved
 
 
 def _aspects(values: list[str]) -> list[str]:

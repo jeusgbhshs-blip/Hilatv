@@ -4,30 +4,33 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from app.deliveries import _write
 from app.main import app
 from workers.nodes.n17_deliver.node import run as deliver
-from workers.nodes.n17_deliver.sample import acceptance_request
+from workers.nodes.n17_deliver.sample import acceptance_request, storyboard
 from workers.nodes.n17_deliver.support import build_gateway
-from workers.workflow.store import init_project
+from workers.workflow.store import init_project, project_path
 
 
 def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path / "projects"))
+    root = tmp_path / "projects"
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(root))
     monkeypatch.setenv("HILATV_LIVE", "0")
     gateway = build_gateway(tmp_path / "gateway")
     monkeypatch.setattr(
         "app.deliveries.run",
         lambda raw, **kwargs: deliver(raw, gateway=gateway, **kwargs),
     )
+    project_id = "delivery17"
     request = acceptance_request(
-        tmp_path / "case",
+        root,
+        project_id=project_id,
         languages=["zh"],
         aspect_ratios=["9:16"],
         long_edge=160,
     )
     payload = request["payload"]
     assert isinstance(payload, dict)
-    project_id = "delivery17"
     init_project(
         project_id,
         status="completed",
@@ -50,6 +53,8 @@ def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
         assert version["aspect_ratio"] == "9:16"
         assert version["language"] == "zh"
         assert version["width"] < version["height"]
+        assert version["qa_status"] == "pass"
+        assert version["subject_box_source"] == "provided"
         assert "download_path" in version
         listed = client.get(f"/v1/projects/{project_id}/versions")
         assert listed.status_code == 200
@@ -63,3 +68,107 @@ def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
         opened = client.get(shared.json()["share_path"])
         assert opened.status_code == 200
         assert opened.content == downloaded.content
+        assert shared.json()["expires_at"] > 0
+        revoked = client.delete(f"/v1/projects/{project_id}/versions/{version['version_id']}/share")
+        assert revoked.status_code == 204
+        gone = client.get(shared.json()["share_path"])
+        assert gone.status_code == 404
+
+
+def test_client_cannot_choose_the_master_path(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path / "projects"))
+    init_project("pathguard", status="completed")
+    with TestClient(app) as client:
+        absolute = client.post(
+            "/v1/projects/pathguard/deliveries",
+            json={"master_path": "/etc/passwd"},
+        )
+        assert absolute.status_code == 422
+        traversal = client.post(
+            "/v1/projects/pathguard/deliveries",
+            json={"master_path": "../secret.mp4"},
+        )
+        assert traversal.status_code == 422
+
+
+def test_snapshot_master_must_stay_inside_the_project(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "projects"
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(root))
+    script, brief, _tracks, _durations = storyboard()
+    outside = tmp_path / "secret.mp4"
+    outside.write_bytes(b"not-a-project-file")
+    init_project(
+        "abs17",
+        status="completed",
+        script=script,
+        brief=brief,
+        master_plate="/etc/passwd",
+    )
+    escaped = project_path("trav17") / ".." / ".." / "secret.mp4"
+    init_project(
+        "trav17",
+        status="completed",
+        script=script,
+        brief=brief,
+        master_plate=str(escaped),
+    )
+    linked = project_path("link17") / "plate.mp4"
+    init_project(
+        "link17",
+        status="completed",
+        script=script,
+        brief=brief,
+        master_plate=str(linked),
+    )
+    linked.symlink_to(outside)
+    with TestClient(app) as client:
+        for project_id in ("abs17", "trav17", "link17"):
+            response = client.post(f"/v1/projects/{project_id}/deliveries", json={})
+            assert response.status_code == 422, response.text
+            assert response.json()["detail"] == "成片母版不在项目目录内"
+
+
+def test_export_cap_returns_429(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path / "projects"))
+    monkeypatch.setenv("HILATV_N17_EXPORT_SLOTS", "0")
+    init_project("cap17", status="completed")
+    with TestClient(app) as client:
+        response = client.post("/v1/projects/cap17/deliveries", json={})
+    assert response.status_code == 429
+
+
+def test_share_expires(tmp_path, monkeypatch) -> None:
+    root = tmp_path / "projects"
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(root))
+    monkeypatch.setenv("HILATV_SHARE_TTL_S", "0")
+    init_project("share17", status="completed")
+    video = project_path("share17") / "clip.mp4"
+    video.write_bytes(b"mp4")
+    _write(
+        "share17",
+        {
+            "versions": [
+                {
+                    "version_id": "v1",
+                    "aspect_ratio": "16:9",
+                    "language": "zh",
+                    "duration_s": 2,
+                    "width": 320,
+                    "height": 180,
+                    "modes": {"S01": "blur"},
+                    "qa_status": "needs_review",
+                    "subject_box_source": "default",
+                    "download_path": "/v1/projects/share17/versions/v1/download",
+                    "share_path": None,
+                }
+            ],
+            "files": {"v1": str(video)},
+            "shares": {},
+            "rights": {},
+        },
+    )
+    with TestClient(app) as client:
+        shared = client.post("/v1/projects/share17/versions/v1/share")
+        assert shared.status_code == 200, shared.text
+        opened = client.get(shared.json()["share_path"])
+        assert opened.status_code == 410

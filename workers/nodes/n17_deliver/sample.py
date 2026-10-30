@@ -48,16 +48,22 @@ def storyboard() -> tuple[
 
 
 def acceptance_request(
-    work: Path,
+    root: Path,
     *,
+    project_id: str = "accept-t17",
     languages: list[str] | None = None,
     aspect_ratios: list[str] | None = None,
     regenerate_vertical: bool = False,
     long_edge: int = 320,
+    with_tracks: bool = True,
 ) -> dict[str, object]:
-    """Two shots: a narrow moving subject, then one too wide for a 9:16 crop."""
+    """Two shots inside ``root/project_id``. The master is not a client path.
 
-    work.mkdir(parents=True, exist_ok=True)
+    ``HILATV_PROJECT_DIR`` must be ``root`` before the node runs.
+    """
+
+    project = root / project_id
+    project.mkdir(parents=True, exist_ok=True)
     width, height = 320, 180
     script, brief, tracks, durations = storyboard()
     segments: list[tuple[float, float, SubjectTrack]] = []
@@ -65,24 +71,25 @@ def acceptance_request(
     for duration, track in zip(durations, tracks, strict=True):
         segments.append((cursor, duration, track))
         cursor += duration
-    master = work / "master.mp4"
+    master = project / "master.mp4"
     encode_marked_master(master, width=width, height=height, segments=segments)
     brand = json.loads(_BRAND.read_text(encoding="utf-8"))
     return {
-        "project_id": "accept-t17",
+        "project_id": project_id,
         "payload": {
             "script": script,
             "brief": brief,
             "brand_kit": brand,
             "master_path": str(master),
-            "subject_tracks": [item.model_dump(mode="json") for item in tracks],
+            "subject_tracks": [item.model_dump(mode="json") for item in tracks]
+            if with_tracks
+            else [],
             "aspect_ratios": aspect_ratios or ["16:9", "9:16", "1:1"],
             "languages": languages or ["zh", "en"],
             "durations_s": [5],
             "long_edge": long_edge,
             "regenerate_vertical": regenerate_vertical,
-            "verify_pixels": True,
-            "work_dir": str(work / "out"),
+            "work_dir": str(project / "out"),
         },
     }
 

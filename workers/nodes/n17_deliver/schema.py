@@ -103,6 +103,20 @@ class SpokenLine(BaseModel):
     shot_id: str
     voiceover: str
     subtitle: str
+    transcript: str = ""
+
+
+class TrackSource(BaseModel):
+    """Caller box, kept apart from the geometry the planner wrote."""
+
+    shot_id: str
+    provided: bool
+    x: float | None = None
+    y: float | None = None
+    w: float | None = None
+    h: float | None = None
+    x_end: float | None = None
+    y_end: float | None = None
 
 
 class DeliveryVersion(BaseModel):
@@ -119,8 +133,11 @@ class DeliveryVersion(BaseModel):
     geometry: list[GeometryRecord]
     overlays: list[OverlayBox]
     spoken: list[SpokenLine]
+    tracks: list[TrackSource] = Field(default_factory=list)
     safe: dict[str, float]
     modes: dict[str, str]
+    subject_box_source: str = "provided"
+    qa_status: str = "pass"
 
 
 def _inside(x: float, y: float, w: float, h: float) -> None:
