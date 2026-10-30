@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from workers.qa.budget_store import open_project_budget
@@ -22,6 +24,21 @@ def test_two_shots_share_one_counter(tmp_path, monkeypatch: pytest.MonkeyPatch) 
     other = open_project_budget("proj-b")
     assert other.allow() is True
     assert other.used == 0
+
+
+def test_the_counter_only_increases(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "5")
+    budget = open_project_budget("proj-up")
+    assert budget.try_take() is True
+    assert budget.try_take() is True
+    stored = json.loads((tmp_path / "proj-up" / "regen_budget.json").read_text(encoding="utf-8"))
+    assert stored["used"] == 2
+    assert stored["increase_only"] is True
+    again = open_project_budget("proj-up")
+    assert again.used == 2
+    assert again.try_take() is True
+    assert again.used == 3
 
 
 def test_project_id_cannot_escape_the_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:

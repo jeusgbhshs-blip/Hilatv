@@ -95,18 +95,18 @@
 
 ### 2026-10-30 T13
 - 合并了哪些：main 为 `5e15a75`（T15、T17、T12、SEC-01 已在 main）。本分支从这份 main 拉出，没有改 SPEC。
-- 正在做什么：N7 产品锚点、人物三视图、场景和风格锚点、`product_composite`。`make accept-t13` 走 mock。相似度 1.000（阈值 0.90），不透明产品像素 6405 个与原图一致，三视图人脸余弦 1.000（阈值 0.75），坏抠图会要求换图。
+- 正在做什么：N7 产品锚点、人物三视图、场景和风格锚点、`product_composite`。`make accept-t13`：deformation=未测形变，pixel_matches=6405，face_cosine_min=0.939（阈值 0.75，正/侧/背不是镜像）。三视图失败不写锚点、不扣重生次数。
 - 需要提供什么：没有新的 Key。BiRefNet / RMBG / IC-Light 权重未接入。测试图是代码绘制的。
 
 ## T13 假设
 
 - 抠图和重打光是网关任务 `matte`、`relight`。路由指向 `local_matting`（接口名 `birefnet-rmbg-2.0-local`）和 `local_relight`（接口名 `ic-light-local`）。没有下载 BiRefNet、RMBG-2.0 或 IC-Light 的权重。抠图仍调用 `workers.brand_kit.matting` 的纯色去底。重打光只在产品下方压暗并加一条浅反射，然后把 alpha 为 255 的产品像素按原图 RGB 抄回去。这两项 `billable` 为 false，费用记 0，不看 `HILATV_LIVE`。注册表里没有本地适配器时，mock 走同一段代码。
-- 产品区域相似度用 `HILATV_QA_DEFORM_MIN_SIMILARITY`，默认 0.90，和 N11 的 `product_deform` 是同一个函数。T12 没有 DINOv2 权重，用相对边框色的 32×32 占空网格余弦，低于 0.90 就否决。N7 用同一条线，合成结果过不了这里，也不会在 N11 被放过。`make accept-t13` 的相似度是 1.000。
-- 透视四边形记在候选参数里（上边内收最多 4 像素），不拿去重采样抠图。重采样会改掉 Logo 和包装。比对的是合成图里 alpha 为 255 的区域和原图 RGB，原图与合成图不是同一个文件。半透明边缘可以和背景混合。验收数到 6405 个不透明像素。
-- 人物三视图会先走图像网关。Mock 的纯色图没有人脸，余弦到不了 0.75，就改用已授权肖像；肖像上也没有可检测的人脸时，用代码画的对称脸，贴在三张位置不同的底图上，侧视再水平翻转。嵌入是 N11 那套 8×8 肤色亮度网格，阈值是 `HILATV_QA_FACE_MIN_SIMILARITY`（SPEC 的 0.75）。验收余弦是 1.000，三张图的字节不同。人物只从 `release_kit` / `people_for_use` 来。档案外的 inline kit 即使自报 `consent=true` 也没有人。未授权的人及其照片不会出现在结果里。
-- 场景图走图像网关，提示词带「无文字」。`garbled_text` 或 `extra_text` 会花掉项目重生次数再试，次数用完就停并说明是乱码。风格锚点是品牌色条，另外保存一张通过文字检查的氛围图。画面上的字、Logo、价格、电话不交给模型画。
+- 产品合成不做透视重采样，所以不能拿「把同一张抠图再贴一遍」的余弦当成形变分。候选参数写 `deformation=未测形变`，不写 similarity。N11 的 0.90 阈值仍只用于 N11。这里核对的是 alpha 为 255 的像素和原图 RGB 是否一致。
+- 透视四边形记在候选参数里（上边内收最多 4 像素），不拿去重采样抠图。重采样会改掉 Logo 和包装。比对的是合成图里 alpha 为 255 的区域和原图 RGB，原图与合成图不是同一个文件。半透明边缘可以和背景混合。
+- 人物三视图只采用图像网关交回的三张图。余弦低于 0.75、三张里有重复或镜像、或画面有乱码，节点失败，状态是需要人工确认，不把任何锚点写入品牌库，也不为了换一张卡通脸去扣重生次数。节点不会自己画脸。验收用的正、侧、背是三张不同的图（侧视是侧面，背面是头发和脖子，不是正面的镜像）。嵌入仍是 N11 的 8×8 肤色亮度网格，阈值 0.75。人物只从 `release_kit` / `people_for_use` 来。档案外的 inline kit 即使自报 `consent=true` 也没有人。未授权的人及其照片不会出现在结果里。
+- 场景图走图像网关，提示词带「无文字」。`garbled_text` 或 `extra_text` 会通过 `open_project_budget` 再花一次项目重生额度，额度用完就停。没有单独的 3 次上限。风格锚点是品牌色条，另外保存一张通过文字检查的氛围图。画面上的字、Logo、价格、电话不交给模型画。
 - `/v1/concepts` 的结果可以是降级的。`template_fallback`、`degraded=true` 或 `ok=false` 记成 `concept_status=degraded`、`concept_passed=false`，风格改用 Brief，不用方案卡上的风格词。节点 `ok` 只表示锚点做完了，不表示方案卡通过。
-- 重生预算在 `workers/qa/budget_store.py`。文件是 `{HILATV_PROJECT_DIR}/{project_id}/regen_budget.json`，一个项目一份，各镜头共用。上限仍是 `HILATV_QA_PROJECT_RETRIES`（默认 12）。N7、N9、N11 都读这一份，不再每次调用从 0 计。用完后再要重生就停。
+- 重生预算只在 `workers.qa.budget_store.open_project_budget`。这是其他任务（包括 T16）要调用的唯一接口。文件是 `{HILATV_PROJECT_DIR}/{project_id}/regen_budget.json`，加锁并 fsync，只增不减。它不写入项目快照或版本快照。版本回滚不能把 `used` 改小，也不能用旧文件盖掉它。上限仍是 `HILATV_QA_PROJECT_RETRIES`（默认 12）。N7、N9、N11 都读这一份。
 - 合成镜头的 `counts_as_reviewed` 等于 `review_shot` 返回的 `visual_reviewed`。只有该值为 true 且 `is_quality_pass` 时才 `selected`。Mock 评审看不到实帧，`visual_reviewed` 为 false，不把这张图当成已审通过。
 - 产品图地址只接受 `image_b64`、本企业的 `brand://`，或 http(s)。http(s) 走 SEC-01 的 `fetch_bytes`。调用方传来的文件路径直接拒绝。写出的文件由节点生成，`resolve` 之后必须在项目目录里。
 - N7 没有放进 T10 的 `PIPELINE`。那条链路仍是配音之后直接关键帧。产品合成候选的 `node` 是 `N7`，调用方单独跑 `n07_anchor`。

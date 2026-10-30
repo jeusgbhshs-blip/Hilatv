@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import os
 import sys
 import tempfile
@@ -11,11 +10,12 @@ from pathlib import Path
 from workers.brand_kit.store import BrandRecord, save_record, write_asset
 from workers.brand_kit.tests.images import noise_png
 from workers.nodes.media_gateway import build_media_gateway
-from workers.nodes.n07_anchor.identity import paint_face
 from workers.nodes.n07_anchor.node import run
 from workers.nodes.n07_anchor.qa import QAError, check
 from workers.nodes.n07_anchor.samples import marked_product
-from workers.qa.settings import deform_min_similarity, face_min_similarity
+from workers.nodes.n07_anchor.tests.views import png_bytes, view_image
+from workers.qa.budget_store import open_project_budget
+from workers.qa.settings import face_min_similarity
 from workers.schemas.brand import BrandKit
 
 ENTERPRISE = "44444444-4444-4444-8444-444444444444"
@@ -42,6 +42,7 @@ def main() -> int:
 
 def _run(gateway: object) -> str:
     product_id = _archive()
+    rejected = _reject_flat_views(gateway)
     result = run(
         {
             "project_id": "accept-t13",
@@ -60,7 +61,7 @@ def _run(gateway: object) -> str:
                 },
             },
         },
-        gateway=gateway,
+        gateway=_serving_views(gateway),
         max_attempts=1,
     )
     check(result)
@@ -69,22 +70,75 @@ def _run(gateway: object) -> str:
         raise AssertionError("degraded concept was treated as a pass")
     if row["qa"]["visual_reviewed"] is not False or row["selected"] is not False:
         raise AssertionError("mock composite was marked reviewed")
+    if row["params"].get("deformation") != "未测形变" or "similarity" in row["params"]:
+        raise AssertionError("deformation was reported as a self-compared score")
     edge_hits = _edge_rejection(gateway)
-    threshold = deform_min_similarity()
     face = face_min_similarity()
+    cosine = float(result.payload["face_cosine_min"])
+    if cosine < face or cosine >= 1.0:
+        raise AssertionError(f"face cosine {cosine} is not a real distinct-view score")
     return (
         "T13 accept: "
-        f"similarity={row['params']['similarity']:.3f} "
-        f"threshold={threshold:.2f} "
+        f"deformation={row['params']['deformation']} "
         f"pixel_matches={row['params']['pixel_matches']} "
-        f"face_cosine_min={result.payload['face_cosine_min']:.3f} "
+        f"face_cosine_min={cosine:.3f} "
         f"face_threshold={face:.2f} "
         f"garbled_scenes=0 "
         f"edge_reject={edge_hits} "
+        f"three_view_reject={rejected} "
         f"concept_passed={result.payload['concept_passed']} "
         f"visual_reviewed={row['qa']['visual_reviewed']} "
         f"anchors={len(result.payload['anchors'])}"
     )
+
+
+def _reject_flat_views(gateway: object) -> int:
+    from workers.brand_kit.store import load_record
+
+    try:
+        run(
+            {
+                "project_id": "accept-t13-views",
+                "payload": {
+                    "enterprise_id": ENTERPRISE,
+                    "brand_id": "brand-accept",
+                    "brief": _brief(),
+                    "script": _script("pump-accept"),
+                },
+            },
+            gateway=gateway,
+            max_attempts=1,
+        )
+    except QAError as exc:
+        if not exc.needs_human or exc.retryable or "需要人工确认" not in str(exc):
+            raise
+        record = load_record(ENTERPRISE)
+        if record is None or record.anchors:
+            raise AssertionError("failed three-view wrote anchors") from exc
+        if open_project_budget("accept-t13-views").used != 0:
+            raise AssertionError("failed three-view spent regeneration budget")
+        return 1
+    raise AssertionError("flat three-view was accepted")
+
+
+def _serving_views(inner: object) -> object:
+    class _Gateway:
+        def generate_image(self, prompt: str, **kwargs: object) -> dict[str, object]:
+            if kwargs.get("shot_type") == "person":
+                view = "expressions"
+                for name in ("expressions", "front", "side", "back"):
+                    if f"view {name}" in prompt:
+                        view = name
+                        break
+                store = inner.registry["mock"].store  # type: ignore[attr-defined]
+                uri = store.put(f"person-{view}.png", png_bytes(view_image(view)), "image/png")
+                return {"uri": uri, "mock": True, "prompt": prompt}
+            return inner.generate_image(prompt, **kwargs)  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(inner, name)
+
+    return _Gateway()
 
 
 def _edge_rejection(gateway: object) -> int:
@@ -118,9 +172,7 @@ def _edge_rejection(gateway: object) -> int:
 def _archive() -> str:
     photo = write_asset(ENTERPRISE, "pump.png", marked_product())
     logo = write_asset(ENTERPRISE, "logo.png", marked_product())
-    portrait = io.BytesIO()
-    paint_face().save(portrait, format="PNG")
-    face = write_asset(ENTERPRISE, "engineer.png", portrait.getvalue())
+    face = write_asset(ENTERPRISE, "engineer.png", png_bytes(view_image("front")))
     product_id = "pump-accept"
     kit = {
         "brand_id": "brand-accept",

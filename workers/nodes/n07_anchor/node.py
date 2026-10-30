@@ -33,10 +33,8 @@ from workers.nodes.n07_anchor.composite import audit, painted_text, placement
 from workers.nodes.n07_anchor.concept import classify_concept
 from workers.nodes.n07_anchor.identity import (
     color_bars,
-    expression_sheet,
     min_view_cosine,
-    paint_face,
-    views_from_face,
+    views_are_copies,
     views_pass,
 )
 from workers.nodes.n07_anchor.qa import QAError, check
@@ -175,11 +173,9 @@ def _execute(
         gateway=gateway,
         request=request,
         attempt=attempt,
-        enterprise_id=payload.enterprise_id,
         blocked=blocked,
         prompts=prompts,
         anchors=anchors,
-        budget=budget,
         deadline=deadline,
     )
     scenes = _scenes(
@@ -464,11 +460,9 @@ def _characters(
     gateway: Any,
     request: NodeRequest,
     attempt: int,
-    enterprise_id: str | None,
     blocked: list[str],
     prompts: list[str],
     anchors: list[dict[str, Any]],
-    budget: Any,
     deadline: Deadline,
 ) -> None:
     for person in people:
@@ -478,7 +472,7 @@ def _characters(
             prompt = _render(
                 "character.j2",
                 view=view,
-                role=_scrub(person.role, blocked),
+                role=_scrub(person.role, blocked) or "person",
                 negative=NO_RENDERED_TEXT,
             )
             prompts.append(prompt)
@@ -492,22 +486,17 @@ def _characters(
                 attempt=attempt,
             )
             plates[view] = _rgb(data)
-        views = plates
-        if not views_pass(views) or any(painted_text(image) for image in views.values()):
-            face = _portrait(person, enterprise_id)
-            views = views_from_face(face)
-            if not views_pass(views):
-                if not budget.try_take():
-                    raise QAError(
-                        "人物三视图人脸相似度低于 0.75，项目重生次数已到上限",
-                        retryable=False,
-                    )
-                views = views_from_face(paint_face())
-            if not views_pass(views):
-                raise QAError("人物三视图人脸相似度低于 0.75", retryable=False)
-        else:
-            face = plates["front"]
-        for view, image in views.items():
+        if (
+            not views_pass(plates)
+            or views_are_copies(plates)
+            or any(painted_text(image) for image in plates.values())
+        ):
+            raise QAError(
+                "人物三视图未通过人脸相似度，需要人工确认",
+                retryable=False,
+                needs_human=True,
+            )
+        for view, image in plates.items():
             path = _save(request.project_id, f"{person.person_id}-{view}.png", _png(image))
             _remember(
                 anchors,
@@ -520,7 +509,26 @@ def _characters(
                 product_name=person.role,
                 data=path.read_bytes(),
             )
-        sheet = expression_sheet(face)
+        sheet_prompt = _render(
+            "character.j2",
+            view="expressions",
+            role=_scrub(person.role, blocked) or "person",
+            negative=NO_RENDERED_TEXT,
+        )
+        prompts.append(sheet_prompt)
+        sheet = _rgb(
+            _generate(
+                gateway,
+                sheet_prompt,
+                seed=43,
+                shot_type="person",
+                request=request,
+                shot_id=person.person_id,
+                attempt=attempt,
+            )
+        )
+        if painted_text(sheet):
+            raise QAError("表情表有文字乱码，需要人工确认", retryable=False, needs_human=True)
         path = _save(request.project_id, f"{person.person_id}-expressions.png", _png(sheet))
         _remember(
             anchors,
@@ -533,23 +541,6 @@ def _characters(
             product_name=person.role,
             data=path.read_bytes(),
         )
-
-
-def _portrait(person: Person, enterprise_id: str | None) -> Image.Image:
-    for uri in person.photos:
-        data = load_archived(uri, enterprise_id=enterprise_id)
-        if not data:
-            continue
-        image = _rgb(data)
-        if face_ok(image):
-            return image
-    return paint_face()
-
-
-def face_ok(image: Image.Image) -> bool:
-    from workers.qa.rules import face_embedding
-
-    return face_embedding(image) is not None
 
 
 def _scenes(
@@ -627,10 +618,11 @@ def _clean_scene(
     budget: Any,
 ) -> tuple[Image.Image, str]:
     last = "乱码"
-    for index, seed in enumerate((7, 8, 9)):
+    seed = 7
+    while True:
         prompt = _render(
             "scene.j2",
-            scene_ref=_scrub(ref, blocked),
+            scene_ref=_scrub(ref, blocked) or "set",
             style=style_text,
             negative=NO_RENDERED_TEXT,
         )
@@ -649,8 +641,9 @@ def _clean_scene(
             prompts.append(prompt)
             return image, prompt
         last = detail
-        if index == 2 or not budget.try_take():
+        if not budget.try_take():
             break
+        seed += 1
     raise QAError(f"场景图有文字乱码，项目重生次数已到上限。{last}", retryable=False)
 
 
@@ -832,9 +825,8 @@ def _composites(
                     "scene_path": str(scene_path),
                     "cutout_path": str(cutout_path),
                     "source_path": str(source_path),
-                    "similarity": checked.similarity,
+                    "deformation": checked.deformation,
                     "pixel_matches": checked.pixel_matches,
-                    "threshold": checked.threshold,
                     "visual_reviewed": report.visual_reviewed,
                 },
                 uri=str(composite_path),

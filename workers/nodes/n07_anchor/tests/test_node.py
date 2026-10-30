@@ -6,16 +6,18 @@ import io
 import json
 
 import pytest
+from PIL import Image
 
 from workers.brand_kit.store import BrandRecord, load_record, save_record, write_asset
 from workers.brand_kit.tests.images import noise_png
 from workers.nodes.n07_anchor.concept import classify_concept
-from workers.nodes.n07_anchor.identity import min_view_cosine, paint_face, views_from_face
+from workers.nodes.n07_anchor.identity import min_view_cosine, views_are_copies
 from workers.nodes.n07_anchor.node import run
 from workers.nodes.n07_anchor.qa import QAError
 from workers.nodes.n07_anchor.samples import marked_product
+from workers.nodes.n07_anchor.tests.views import png_bytes, view_image
 from workers.qa.samples import _plate
-from workers.qa.settings import deform_min_similarity, face_min_similarity
+from workers.qa.settings import face_min_similarity
 from workers.schemas.asset import QAReport, QAScores
 from workers.schemas.brand import BrandKit
 
@@ -24,11 +26,14 @@ SECRET = "secret-unconsented-face"
 PHONE = "0532-00001111"
 
 
-def test_three_views_share_a_face_and_are_not_the_same_bitmap() -> None:
-    views = views_from_face(paint_face())
-    assert min_view_cosine(views) >= face_min_similarity()
-    blobs = {image.tobytes() for image in views.values()}
-    assert len(blobs) == 3
+def test_three_views_are_different_drawings_above_the_threshold() -> None:
+    views = {name: view_image(name) for name in ("front", "side", "back")}
+    assert not views_are_copies(views)
+    flipped = views["front"].transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+    assert views["side"].tobytes() != flipped.tobytes()
+    assert views["back"].tobytes() not in {views["front"].tobytes(), flipped.tobytes()}
+    score = min_view_cosine(views)
+    assert face_min_similarity() <= score < 1.0
 
 
 def test_degraded_concept_is_not_a_pass() -> None:
@@ -57,7 +62,7 @@ def test_product_composite_keeps_original_pixels(gateway) -> None:
     product_id = _archive()
     result = run(
         _request(product_id, concept=_degraded()),
-        gateway=gateway,
+        gateway=_serving_views(gateway),
         max_attempts=1,
     )
     assert result.ok is True
@@ -73,10 +78,10 @@ def test_product_composite_keeps_original_pixels(gateway) -> None:
     assert row["selected"] is False
     assert row["qa"]["visual_reviewed"] is False
     assert result.payload["counts_as_reviewed"]["S01"] is False
-    assert row["params"]["similarity"] >= deform_min_similarity()
+    assert row["params"]["deformation"] == "未测形变"
+    assert "similarity" not in row["params"]
     assert row["params"]["pixel_matches"] > 0
-    assert row["params"]["threshold"] == deform_min_similarity()
-    assert result.payload["face_cosine_min"] >= face_min_similarity()
+    assert face_min_similarity() <= result.payload["face_cosine_min"] < 1.0
     angles = [item for item in result.payload["anchors"] if item["kind"] == "product_angle"]
     assert {item["view"] for item in angles} == {"side", "back"}
     assert all(item["on_screen"] is False for item in angles)
@@ -110,13 +115,21 @@ def test_reviewed_only_when_review_shot_says_so(gateway, monkeypatch) -> None:
         "workers.nodes.n07_anchor.node.review_shot",
         lambda payload, **kwargs: _report(seen=False),
     )
-    hidden = run(_request(product_id, project_id="hidden"), gateway=gateway, max_attempts=1)
+    hidden = run(
+        _request(product_id, project_id="hidden"),
+        gateway=_serving_views(gateway),
+        max_attempts=1,
+    )
     assert hidden.payload["candidates"][0]["selected"] is False
     monkeypatch.setattr(
         "workers.nodes.n07_anchor.node.review_shot",
         lambda payload, **kwargs: _report(seen=True),
     )
-    shown = run(_request(product_id, project_id="shown"), gateway=gateway, max_attempts=1)
+    shown = run(
+        _request(product_id, project_id="shown"),
+        gateway=_serving_views(gateway),
+        max_attempts=1,
+    )
     assert shown.payload["candidates"][0]["selected"] is True
     assert shown.payload["counts_as_reviewed"]["S01"] is True
 
@@ -226,6 +239,25 @@ def test_inline_consent_does_not_unlock_a_person(gateway) -> None:
     assert SECRET not in json.dumps(result.payload)
 
 
+def test_failed_three_view_writes_no_anchors_and_spends_nothing(gateway) -> None:
+    product_id = _archive()
+    assert load_record(ENTERPRISE).anchors == []
+    with pytest.raises(QAError, match="需要人工确认") as caught:
+        run(
+            _request(product_id, project_id="reject-views"),
+            gateway=gateway,
+            max_attempts=1,
+        )
+    assert caught.value.needs_human is True
+    assert caught.value.retryable is False
+    record = load_record(ENTERPRISE)
+    assert record is not None
+    assert record.anchors == []
+    from workers.qa.budget_store import open_project_budget
+
+    assert open_project_budget("reject-views").used == 0
+
+
 def test_garbled_scenes_share_the_project_budget(gateway, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "1")
     product_id = _archive()
@@ -255,12 +287,37 @@ def test_garbled_scenes_share_the_project_budget(gateway, monkeypatch) -> None:
 def test_second_run_reuses_the_cutout(gateway) -> None:
     product_id = _archive()
     body = _request(product_id, project_id="reuse")
-    run(body, gateway=gateway, max_attempts=1)
+    wrapped = _serving_views(gateway)
+    run(body, gateway=wrapped, max_attempts=1)
     first = [row for row in gateway.store.list_logs(project_id="reuse") if row["task"] == "matte"]
-    run(body, gateway=gateway, max_attempts=1)
+    run(body, gateway=wrapped, max_attempts=1)
     second = [row for row in gateway.store.list_logs(project_id="reuse") if row["task"] == "matte"]
     assert len(first) == 1
     assert len(second) == 1
+
+
+def _store_view(inner: object, prompt: str) -> dict[str, object]:
+    view = "expressions"
+    for name in ("expressions", "front", "side", "back"):
+        if f"view {name}" in prompt:
+            view = name
+            break
+    store = inner.registry["mock"].store  # type: ignore[attr-defined]
+    uri = store.put(f"person-{view}.png", png_bytes(view_image(view)), "image/png")
+    return {"uri": uri, "mock": True, "prompt": prompt}
+
+
+def _serving_views(inner: object) -> object:
+    class _Gateway:
+        def generate_image(self, prompt: str, **kwargs: object) -> dict[str, object]:
+            if kwargs.get("shot_type") == "person":
+                return _store_view(inner, prompt)
+            return inner.generate_image(prompt, **kwargs)  # type: ignore[attr-defined]
+
+        def __getattr__(self, name: str) -> object:
+            return getattr(inner, name)
+
+    return _Gateway()
 
 
 class _Garbled:
@@ -269,6 +326,8 @@ class _Garbled:
         self.seen: dict[str, int] = {}
 
     def generate_image(self, prompt: str, **kwargs: object) -> dict[str, object]:
+        if kwargs.get("shot_type") == "person":
+            return _store_view(self.inner, prompt)
         if kwargs.get("shot_type") == "scene":
             ref = str(kwargs.get("shot_id") or "scene")
             self.seen[ref] = self.seen.get(ref, 0) + 1
@@ -288,7 +347,7 @@ class _Garbled:
 def _archive() -> str:
     photo = write_asset(ENTERPRISE, "pump.png", marked_product())
     portrait_buf = io.BytesIO()
-    paint_face().save(portrait_buf, format="PNG")
+    view_image("front").save(portrait_buf, format="PNG")
     portrait = write_asset(ENTERPRISE, "engineer.png", portrait_buf.getvalue())
     logo = write_asset(ENTERPRISE, "logo.png", marked_product())
     product_id = "pump-1"

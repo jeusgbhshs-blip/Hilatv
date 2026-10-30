@@ -1,7 +1,12 @@
-"""Project-wide regenerate counter, stored once per project.
+"""The only project regen-budget API. Other tasks must call this module.
 
-T12 kept this number in memory. Shots share the file, so a later shot sees
-what an earlier shot already spent. The cap is ``HILATV_QA_PROJECT_RETRIES``.
+``open_project_budget`` is the entry point. ``ProjectBudget.try_take`` and
+``consume`` spend one, and nothing in this module ever lowers the count.
+The value lives only in ``<project dir>/<project id>/regen_budget.json``.
+The file is locked and fsynced. It is not part of a project or version
+snapshot. Rolling a version back must not copy an older budget file over
+this one, and must not write a smaller ``used`` through any other store.
+T16 should call ``open_project_budget`` instead of keeping its own counter.
 """
 
 from __future__ import annotations
@@ -15,6 +20,8 @@ from workers.qa.settings import RetryBudget, SettingsError, project_dir, project
 
 
 def open_project_budget(project_id: str) -> ProjectBudget:
+    """Open the increase-only counter for one project. This is the shared API."""
+
     return ProjectBudget(project_id)
 
 
@@ -84,12 +91,15 @@ def _update(path: Path, *, limit: int, take: bool) -> tuple[bool, int]:
     with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.seek(0)
-        used = _parse(handle.read())
+        previous = _parse(handle.read())
+        used = previous
         taken = False
         if take and used < limit:
             used += 1
             taken = True
-        payload = json.dumps({"used": used, "limit": limit}) + "\n"
+        if used < previous:
+            raise SettingsError("regen budget cannot decrease")
+        payload = json.dumps({"used": used, "limit": limit, "increase_only": True}) + "\n"
         handle.seek(0)
         handle.truncate()
         handle.write(payload)

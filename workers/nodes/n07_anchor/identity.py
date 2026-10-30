@@ -1,8 +1,4 @@
-"""Three-view sheets. The face is drawn here when the image model returns none.
-
-A symmetric face is pasted at three positions. The bitmap changes. The skin
-grid that N11 uses does not, so the cosine stays above the shared 0.75 line.
-"""
+"""Measure character sheets. The node does not draw a substitute face."""
 
 from __future__ import annotations
 
@@ -12,39 +8,6 @@ from workers.qa.pixels import cosine
 from workers.qa.rules import face_embedding
 from workers.qa.settings import face_min_similarity
 from workers.schemas.brand import BrandColors
-
-_CANVAS = (200, 240)
-_SHIFTS = {"front": (28, 24), "side": (52, 36), "back": (36, 56)}
-
-
-def paint_face() -> Image.Image:
-    image = Image.new("RGB", (96, 112), (36, 52, 78))
-    draw = ImageDraw.Draw(image)
-    draw.ellipse((14, 8, 82, 102), fill=(214, 164, 132))
-    draw.ellipse((30, 42, 42, 54), fill=(18, 14, 14))
-    draw.ellipse((54, 42, 66, 54), fill=(18, 14, 14))
-    return image
-
-
-def views_from_face(face: Image.Image) -> dict[str, Image.Image]:
-    plate = face.convert("RGB")
-    plate.thumbnail((96, 112))
-    views: dict[str, Image.Image] = {}
-    for name, shift in _SHIFTS.items():
-        canvas = Image.new("RGB", _CANVAS, (24, 36, 58))
-        pasted = plate.transpose(Image.Transpose.FLIP_LEFT_RIGHT) if name == "side" else plate
-        canvas.paste(pasted, shift)
-        views[name] = canvas
-    return views
-
-
-def expression_sheet(face: Image.Image) -> Image.Image:
-    plate = face.convert("RGB")
-    plate.thumbnail((96, 112))
-    canvas = Image.new("RGB", (160, 500), (24, 36, 58))
-    for index in range(4):
-        canvas.paste(plate, (32, 10 + index * 122))
-    return canvas
 
 
 def min_view_cosine(views: dict[str, Image.Image]) -> float:
@@ -61,6 +24,25 @@ def min_view_cosine(views: dict[str, Image.Image]) -> float:
 
 def views_pass(views: dict[str, Image.Image]) -> bool:
     return min_view_cosine(views) >= face_min_similarity()
+
+
+def views_are_copies(views: dict[str, Image.Image]) -> bool:
+    """True when a view repeats another bitmap, or is a horizontal mirror."""
+
+    front = views["front"].convert("RGB")
+    side = views["side"].convert("RGB")
+    back = views["back"].convert("RGB")
+    if len({front.tobytes(), side.tobytes(), back.tobytes()}) < 3:
+        return True
+    plates = (front, side, back)
+    for left, right in ((front, side), (front, back), (side, back)):
+        if (
+            left.size == right.size
+            and left.tobytes() == right.transpose(Image.Transpose.FLIP_LEFT_RIGHT).tobytes()
+        ):
+            return True
+    del plates
+    return False
 
 
 def color_bars(colors: BrandColors, *, size: tuple[int, int] = (320, 180)) -> Image.Image:

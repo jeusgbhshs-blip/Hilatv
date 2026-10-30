@@ -7,8 +7,13 @@ from pathlib import Path
 from PIL import Image
 
 from gateway.constants import NO_RENDERED_TEXT
-from workers.nodes.n07_anchor.composite import audit, painted_text, placement
-from workers.nodes.n07_anchor.identity import min_view_cosine
+from workers.nodes.n07_anchor.composite import (
+    DEFORMATION_UNMEASURED,
+    audit,
+    painted_text,
+    placement,
+)
+from workers.nodes.n07_anchor.identity import min_view_cosine, views_are_copies
 from workers.nodes.n07_anchor.schema import NodeResult
 from workers.qa.pixels import MediaLoad, resolve_project_file
 from workers.qa.scores import is_quality_pass
@@ -17,9 +22,10 @@ from workers.schemas.asset import Candidate
 
 
 class QAError(Exception):
-    def __init__(self, message: str, *, retryable: bool = True) -> None:
+    def __init__(self, message: str, *, retryable: bool = True, needs_human: bool = False) -> None:
         super().__init__(message)
         self.retryable = retryable
+        self.needs_human = needs_human
 
 
 def check(result: NodeResult) -> dict[str, object]:
@@ -102,9 +108,8 @@ def _faces(payload: dict[str, object]) -> None:
             raise QAError("人物锚点缺少三视图", retryable=False)
         if min_view_cosine(views) < threshold:
             raise QAError("人物三视图人脸相似度低于 0.75", retryable=False)
-        blobs = [image.tobytes() for image in views.values()]
-        if len(set(blobs)) < 3:
-            raise QAError("三视图不能是同一张图", retryable=False)
+        if views_are_copies(views):
+            raise QAError("三视图不能是同一张图或镜像", retryable=False)
 
 
 def _composites(payload: dict[str, object]) -> None:
@@ -134,10 +139,16 @@ def _composites(payload: dict[str, object]) -> None:
         x, y, quad = placement(scene.size, cutout.size)
         if (x, y) != origin:
             raise QAError("composite origin does not match the scene", retryable=False)
+        if row.params.get("deformation") != DEFORMATION_UNMEASURED:
+            raise QAError("形变未测却被记成了分数", retryable=False)
+        if "similarity" in row.params:
+            raise QAError("形变未测却被记成了分数", retryable=False)
         try:
-            audit(composite, scene, cutout, original, origin, quad)
+            checked = audit(composite, scene, cutout, original, origin, quad)
         except ValueError as exc:
             raise QAError(str(exc), retryable=False) from exc
+        if checked.deformation != DEFORMATION_UNMEASURED:
+            raise QAError("形变未测却被记成了分数", retryable=False)
 
 
 def _open(uri: str) -> Image.Image:
