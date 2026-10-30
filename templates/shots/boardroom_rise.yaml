@@ -1,0 +1,17 @@
+id: boardroom_rise
+label: 公共空间缓升
+shot_sizes:
+  - wide
+purposes:
+  - hook
+  - proof
+prompt_fragment: >-
+  The camera rises a short way over a quiet public place and then holds. The horizon
+  stays level.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: low
+status: 试用
+formal: false
+tested_runs: 0

@@ -1,0 +1,17 @@
+id: demo_push
+label: 演示推近
+shot_sizes:
+  - medium
+  - close_up
+purposes:
+  - hook
+  - selling_point
+prompt_fragment: >-
+  The camera eases toward the hands and the object they are using. The move stays small.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: low
+status: 试用
+formal: false
+tested_runs: 0

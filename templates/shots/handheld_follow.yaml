@@ -1,0 +1,18 @@
+id: handheld_follow
+label: 侧向跟拍
+shot_sizes:
+  - medium
+  - wide
+purposes:
+  - hook
+  - selling_point
+prompt_fragment: >-
+  The camera stays beside the action and travels with it. The path is smooth,
+  with no whip and no spin.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: wan
+motion_strength: medium
+status: 试用
+formal: false
+tested_runs: 0

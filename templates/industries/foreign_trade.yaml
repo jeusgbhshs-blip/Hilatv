@@ -1,5 +1,6 @@
 industry: foreign_trade
 label: 外贸出海
+manual_review: false
 narrative:
   - 应用场景
   - 产品
@@ -57,3 +58,32 @@ keywords:
   - {text: 采购商, weight: 3}
   - {text: 交期, weight: 3}
 clarify_question: ""
+shot_plan:
+  - {beat: 应用场景, preset: slow_pull_back}
+  - {beat: 产品, preset: slow_push_in}
+  - {beat: 优势, preset: locked_off}
+  - {beat: 工厂, preset: lateral_slide}
+  - {beat: 联系方式, preset: locked_off}
+narrative_structures:
+  - id: spec_default
+    label: 出海产品主结构
+    beats:
+      - 应用场景
+      - 产品
+      - 优势
+      - 工厂
+      - 联系方式
+  - id: buyer_scene
+    label: 买家场景
+    beats:
+      - 应用场景
+      - 产品
+      - 认证
+      - 联系方式
+  - id: plant_trust
+    label: 工厂信任
+    beats:
+      - 产品
+      - 工厂
+      - 质检
+      - 联系方式

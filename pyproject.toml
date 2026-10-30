@@ -24,6 +24,7 @@ dependencies = [
   "pypdf>=5.1",
   "pillow>=10.4.0",
   "temporalio>=1.9,<2",
+  "python-multipart>=0.0.18",
 ]
 
 [project.scripts]
