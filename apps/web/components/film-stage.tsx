@@ -1,14 +1,20 @@
 "use client";
 
+import { Download } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
+import { useShellStage } from "@/components/hilatv/shell-stage";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { conceptNotice } from "@/lib/concept";
 import { readShots, type ProjectSnapshot, type ShotSummary } from "@/lib/progress";
+import { PROJECT_COPY } from "@/lib/status-copy";
+import { cn } from "@/lib/utils";
 import {
   aspectLabel,
   defaultChoice,
@@ -86,6 +92,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   const ready = snapshot?.status === "completed";
+  useShellStage(missing ? null : ready ? "成片" : snapshot?.phase || null, ready);
   const selected = pickVersion(versions, choice);
   const mediaPath = selected
     ? selected.download_path
@@ -259,9 +266,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
   if (missing) {
     return (
       <div>
-        <h1 className="text-3xl font-semibold">项目不存在</h1>
+        <h1 className="text-h1 font-medium">{PROJECT_COPY.missing}</h1>
         <Button asChild className="mt-6">
-          <Link href="/">返回输入</Link>
+          <Link href="/">{PROJECT_COPY.backHome}</Link>
         </Button>
       </div>
     );
@@ -270,10 +277,10 @@ export function FilmStage({ projectId }: { projectId: string }) {
   if (!ready) {
     return (
       <div className="max-w-xl">
-        <h1 className="text-3xl font-semibold">成片还没好</h1>
-        <p className="mt-3 text-muted-foreground">生成结束后再来播放和下载。</p>
-        <Button asChild className="mt-6" variant="outline">
-          <Link href={`/projects/${projectId}`}>返回进度</Link>
+        <h1 className="text-h1 font-medium">{PROJECT_COPY.filmNotReady}</h1>
+        <p className="mt-2 text-body text-text-2">{PROJECT_COPY.filmNotReadyHint}</p>
+        <Button asChild className="mt-6" variant="secondary">
+          <Link href={`/projects/${projectId}`}>{PROJECT_COPY.backToProgress}</Link>
         </Button>
       </div>
     );
@@ -284,172 +291,220 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const durations = uniqueDurations(versions, choice.aspect, choice.language);
   const portrait = selected ? selected.height > selected.width : false;
   const notice = conceptNotice(snapshot);
-  const currentEdit = edits.find((item) => item.current)?.version_id ?? "";
+  const current = edits.find((item) => item.current);
+  const currentEdit = current?.version_id ?? "";
   const focused = shots.find((shot) => shot.shot_id && shot.shot_id === shotId);
+  const corner = [
+    current ? `第 ${current.index} 版` : null,
+    selected ? aspectLabel(selected.aspect_ratio) : "母版",
+    selected ? `${Math.min(selected.width, selected.height)}p` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div className="grid min-w-0 items-start gap-8 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.8fr)]">
+    <div className="mx-auto grid w-full min-w-0 max-w-360 gap-6">
       <div className="min-w-0">
-        <p className="text-sm text-muted-foreground">成片</p>
-        <h1 className="mt-2 text-3xl font-semibold tracking-tight">可以发布了</h1>
+        <p className="text-small text-text-2">成片</p>
+        <h1 className="mt-2 text-h1 font-medium tracking-wide">可以发布了</h1>
         {snapshot?.sentence ? (
-          <p className="mt-3 break-words text-base leading-7 text-muted-foreground">{snapshot.sentence}</p>
+          <p className="mt-2 break-words text-body text-text-2">{snapshot.sentence}</p>
         ) : null}
         {notice ? (
           <p
             role="status"
             data-testid="concept-degraded"
-            className="mt-4 rounded-md border border-border bg-muted px-3 py-2 text-sm"
+            className="mt-4 rounded-sm bg-warning-soft px-3 py-2 text-small text-warning"
           >
             {notice}
           </p>
         ) : null}
-        <div className="mt-6 overflow-hidden rounded-lg border border-border bg-black">
-          <video
-            data-testid="film-player"
-            data-aspect={selected?.aspect_ratio ?? "master"}
-            className={portrait ? "mx-auto aspect-[9/16] max-h-[70vh]" : "aspect-video w-full"}
-            controls
-            playsInline
-            src={src ?? undefined}
-            aria-label="成片播放器"
-          />
-        </div>
-        {!src ? <p className="mt-2 text-sm text-muted-foreground">正在载入成片</p> : null}
-        {shots.length > 0 ? (
-          <div className="mt-4">
-            <h2 className="text-sm font-medium">时间轴</h2>
-            <ul className="mt-2 flex flex-wrap gap-2">
-              {shots.map((shot) => {
-                const pressed = Boolean(shot.shot_id && shot.shot_id === shotId);
-                return (
-                  <li key={shot.shot_id || shot.order}>
-                    <button
-                      type="button"
-                      aria-pressed={pressed}
-                      className={`rounded-full px-3 py-1 text-sm ${pressed ? "bg-foreground text-background" : "bg-muted"}`}
-                      onClick={() => setShotId(shot.shot_id ?? null)}
-                    >
-                      第 {shot.order} 镜{shot.purpose ? ` · ${shot.purpose}` : ""}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        ) : null}
       </div>
 
-      <div className="grid min-w-0 gap-5 rounded-lg border border-border bg-card p-5">
-        <Button type="button" size="lg" onClick={() => void downloadFilm()}>
-          下载成片
-        </Button>
-        <Button asChild variant="outline" size="lg">
-          <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
-        </Button>
-        {downloadError ? (
-          <p role="alert" className="text-sm text-destructive">
-            {downloadError}
-          </p>
-        ) : null}
+      <div className="flex min-w-0 flex-col gap-6 lg:flex-row lg:items-start">
+        <section
+          data-theme="dark"
+          data-stage="film"
+          aria-label="视频舞台"
+          className="min-w-0 flex-1 rounded-lg bg-stage p-3 text-text-1 md:p-4"
+        >
+          <div className="relative overflow-hidden rounded-md bg-stage">
+            <video
+              data-testid="film-player"
+              data-aspect={selected?.aspect_ratio ?? "master"}
+              className={
+                portrait
+                  ? "mx-auto block aspect-9/16 max-h-160 bg-stage object-contain"
+                  : "block aspect-video w-full bg-stage object-contain"
+              }
+              controls
+              playsInline
+              src={src ?? undefined}
+              aria-label="成片播放器"
+            />
+            <span className="tabular pointer-events-none absolute top-3 left-3 rounded-xs bg-overlay px-2 py-0.5 text-micro text-text-1">
+              {corner}
+            </span>
+          </div>
+          {!src ? <p className="mt-2 text-small text-text-2">{PROJECT_COPY.loadingFilm}</p> : null}
+          {shots.length > 0 ? (
+            <div className="mt-4">
+              <h2 className="text-small text-text-2">时间轴</h2>
+              <ul className="mt-2 flex gap-2 overflow-x-auto pb-1">
+                {shots.map((shot) => {
+                  const pressed = Boolean(shot.shot_id && shot.shot_id === shotId);
+                  return (
+                    <li key={shot.shot_id || shot.order} className="shrink-0">
+                      <button
+                        type="button"
+                        aria-pressed={pressed}
+                        className={cn(
+                          "flex min-h-11 items-center gap-2 rounded-md border bg-surface px-3 text-small transition-colors duration-120",
+                          pressed
+                            ? "border-blue text-text-1 ring-1 ring-blue"
+                            : "border-border text-text-2 hover:border-border-strong",
+                        )}
+                        onClick={() => setShotId(shot.shot_id ?? null)}
+                      >
+                        <span className="tabular">第 {shot.order} 镜</span>
+                        {shot.purpose ? <span>· {shot.purpose}</span> : null}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : null}
+        </section>
 
-        <fieldset className="grid gap-3">
-          <legend className="text-sm font-medium">版本</legend>
-          <VersionSelect
-            id="aspect"
-            label="比例"
-            value={choice.aspect}
-            disabled={aspects.length === 0}
-            options={aspects.map((item) => ({ value: item, label: aspectLabel(item) }))}
-            onChange={(value) => choose({ aspect: value })}
-          />
-          <VersionSelect
-            id="language"
-            label="语种"
-            value={choice.language}
-            disabled={languages.length === 0}
-            options={languages.map((item) => ({ value: item, label: languageLabel(item) }))}
-            onChange={(value) => choose({ language: value })}
-          />
-          <VersionSelect
-            id="duration"
-            label="时长"
-            value={choice.duration === null ? "" : String(choice.duration)}
-            disabled={durations.length === 0}
-            options={durations.map((item) => ({ value: String(item), label: durationLabel(item) }))}
-            onChange={(value) => choose({ duration: Number(value) })}
-          />
-          {versions.length === 0 ? (
-            <Button type="button" variant="outline" disabled={exporting} onClick={() => void exportVersions()}>
-              {exporting ? "正在导出" : "导出其他版本"}
+        <aside className="grid min-w-0 gap-5 rounded-lg border border-border bg-surface p-4 md:p-5 lg:w-93 lg:shrink-0">
+          <div className="grid gap-2">
+            <Button type="button" size="lg" onClick={() => void downloadFilm()}>
+              <Download aria-hidden="true" className="size-4" />
+              下载成片
             </Button>
-          ) : null}
-          <p id="version-note" className="text-sm text-muted-foreground">
-            {versionNote ??
-              (selected?.qa_status === "needs_review"
-                ? "没有真实主体框，画面按整幅适配，需要再看一眼。"
-                : versions.length > 0
-                  ? "切换比例、语种或时长会换一条成片。"
-                  : "当前播放的是母版。导出后可以换比例、语种和时长。")}
-          </p>
-        </fieldset>
+            <Button asChild variant="secondary" size="lg">
+              <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
+            </Button>
+            {downloadError ? (
+              <p role="alert" className="text-caption text-danger">
+                {downloadError}
+              </p>
+            ) : null}
+          </div>
 
-        <div className="grid gap-2">
-          <Label htmlFor="edit-version">改稿版本</Label>
-          <select
-            id="edit-version"
-            value={currentEdit}
-            disabled={busy || edits.length === 0}
-            className="h-11 w-full rounded-md border border-input bg-card px-3 text-base disabled:opacity-60"
-            onChange={(event) => void chooseEdit(event.target.value)}
-          >
-            {edits.length === 0 ? <option value="">正在读取改稿</option> : null}
-            {edits.map((version) => (
-              <option key={version.version_id} value={version.version_id}>
-                {editLabel(version)}
-              </option>
-            ))}
-          </select>
-          <p className="text-sm text-muted-foreground">未通过质检的改稿不会被标成通过。</p>
-        </div>
+          <div className="border-t border-border pt-4">
+            <fieldset className="grid gap-3">
+              <legend className="mb-3 text-h3 font-medium">版本</legend>
+              <VersionSelect
+                id="aspect"
+                label="比例"
+                value={choice.aspect}
+                disabled={aspects.length === 0}
+                options={aspects.map((item) => ({ value: item, label: aspectLabel(item) }))}
+                onChange={(value) => choose({ aspect: value })}
+              />
+              <VersionSelect
+                id="language"
+                label="语种"
+                value={choice.language}
+                disabled={languages.length === 0}
+                options={languages.map((item) => ({ value: item, label: languageLabel(item) }))}
+                onChange={(value) => choose({ language: value })}
+              />
+              <VersionSelect
+                id="duration"
+                label="时长"
+                value={choice.duration === null ? "" : String(choice.duration)}
+                disabled={durations.length === 0}
+                options={durations.map((item) => ({ value: String(item), label: durationLabel(item) }))}
+                onChange={(value) => choose({ duration: Number(value) })}
+              />
+              {versions.length === 0 ? (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={exporting}
+                  loading={exporting}
+                  onClick={() => void exportVersions()}
+                >
+                  {exporting ? "正在导出" : "导出其他版本"}
+                </Button>
+              ) : null}
+              <p id="version-note" className="text-caption text-text-3">
+                {versionNote ??
+                  (selected?.qa_status === "needs_review"
+                    ? "没有真实主体框，画面按整幅适配，需要再看一眼。"
+                    : versions.length > 0
+                      ? "切换比例、语种或时长会换一条成片。"
+                      : "当前播放的是母版。导出后可以换比例、语种和时长。")}
+              </p>
+            </fieldset>
+          </div>
 
-        <div className="grid gap-2">
-          <Label htmlFor="revision">改稿</Label>
-          <Textarea
-            id="revision"
-            value={instruction}
-            disabled={busy}
-            placeholder={
-              focused
-                ? `改第 ${focused.order} 镜，说要改什么、留下什么。`
-                : "说要改什么。也可以先点时间轴上的某一镜。"
-            }
-            onChange={(event) => setInstruction(event.target.value)}
-          />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={busy || instruction.trim().length === 0}
-            onClick={() => void sendEdit()}
-          >
-            {busy ? "正在改稿" : "发送改稿"}
-          </Button>
-          {question ? (
-            <p role="status" data-testid="revision-notice" className="text-sm text-muted-foreground">
-              {question}
-            </p>
-          ) : null}
-          {snapshot?.revision_notice ? (
-            <p role="status" className="text-sm text-muted-foreground">
-              {snapshot.revision_notice}
-            </p>
-          ) : null}
-          {editError ? (
-            <p role="alert" className="text-sm text-destructive">
-              {editError}
-            </p>
-          ) : null}
-        </div>
+          <div className="grid gap-2 border-t border-border pt-4">
+            <Label htmlFor="edit-version">改稿版本</Label>
+            <Select
+              id="edit-version"
+              value={currentEdit}
+              disabled={busy || edits.length === 0}
+              onChange={(event) => void chooseEdit(event.target.value)}
+            >
+              {edits.length === 0 ? <option value="">正在读取改稿</option> : null}
+              {edits.map((version) => (
+                <option key={version.version_id} value={version.version_id}>
+                  {editLabel(version)}
+                </option>
+              ))}
+            </Select>
+            <p className="text-caption text-text-3">未通过质检的改稿不会被标成通过。</p>
+          </div>
+
+          <div className="grid gap-2 border-t border-border pt-4">
+            <Label htmlFor="revision">改稿</Label>
+            {focused ? (
+              <p>
+                <Badge tone="blue">选中：第 {focused.order} 镜</Badge>
+              </p>
+            ) : null}
+            <Textarea
+              id="revision"
+              value={instruction}
+              disabled={busy}
+              className="min-h-24"
+              placeholder={
+                focused
+                  ? `改第 ${focused.order} 镜，说要改什么、留下什么。`
+                  : "说要改什么。也可以先点时间轴上的某一镜。"
+              }
+              onChange={(event) => setInstruction(event.target.value)}
+            />
+            <Button
+              type="button"
+              variant="secondary"
+              disabled={busy || instruction.trim().length === 0}
+              loading={busy && instruction.trim().length > 0}
+              onClick={() => void sendEdit()}
+            >
+              {busy ? "正在改稿" : "发送改稿"}
+            </Button>
+            {question ? (
+              <p role="status" data-testid="revision-notice" className="text-small text-text-2">
+                {question}
+              </p>
+            ) : null}
+            {snapshot?.revision_notice ? (
+              <p role="status" className="text-small text-text-2">
+                {snapshot.revision_notice}
+              </p>
+            ) : null}
+            {editError ? (
+              <p role="alert" className="text-caption text-danger">
+                {editError}
+              </p>
+            ) : null}
+          </div>
+        </aside>
       </div>
     </div>
   );
@@ -480,13 +535,12 @@ function VersionSelect({
   return (
     <div className="grid gap-2">
       <Label htmlFor={id}>{label}</Label>
-      <select
+      <Select
         id={id}
         value={options.length === 0 ? "" : value}
         disabled={disabled}
         aria-describedby="version-note"
         onChange={(event) => onChange(event.target.value)}
-        className="h-11 w-full rounded-md border border-input bg-card px-3 text-base disabled:opacity-60"
       >
         {options.length === 0 ? <option value="">当前成片</option> : null}
         {options.map((item) => (
@@ -494,7 +548,7 @@ function VersionSelect({
             {item.label}
           </option>
         ))}
-      </select>
+      </Select>
     </div>
   );
 }

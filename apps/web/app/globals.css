@@ -107,7 +107,7 @@
   --color-ring: var(--blue);
   --color-destructive: var(--danger);
 
-  --font-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  --font-sans: var(--font-noto-sc), "Noto Sans SC", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, monospace;
 
   /* 字号 / 行高（DESIGN.md 第 5 章） */

@@ -1,11 +1,34 @@
-import type { Metadata } from "next";
-import Link from "next/link";
+import type { Metadata, Viewport } from "next";
+import localFont from "next/font/local";
+
+import { ThemeProvider } from "@/components/theme/theme-provider";
+import { ThemeScript } from "@/components/theme/theme-script";
 
 import "./globals.css";
+
+// Noto Sans SC (SIL OFL 1.1), self-hosted subset: GB2312 level-1 hanzi, CJK
+// punctuation, ASCII and every character in this app. Not loaded from Google Fonts.
+const notoSansSC = localFont({
+  src: [
+    { path: "../public/fonts/NotoSansSC-Regular-subset.woff2", weight: "400", style: "normal" },
+    { path: "../public/fonts/NotoSansSC-Medium-subset.woff2", weight: "500", style: "normal" },
+  ],
+  variable: "--font-noto-sc",
+  display: "swap",
+  preload: false,
+  fallback: ["PingFang SC", "Microsoft YaHei", "system-ui", "sans-serif"],
+});
 
 export const metadata: Metadata = {
   title: "HiLatv",
   description: "企业一句话，生成可发布的商业短视频",
+};
+
+export const viewport: Viewport = {
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: "rgb(245,245,247)" },
+    { media: "(prefers-color-scheme: dark)", color: "rgb(12,12,14)" },
+  ],
 };
 
 export default function RootLayout({
@@ -14,23 +37,13 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="zh-CN">
+    // data-theme is set by ThemeScript before first paint, so the server markup differs on purpose.
+    <html lang="zh-CN" className={notoSansSC.variable} suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
       <body className="antialiased">
-        <div className="min-h-screen">
-          <header className="border-b border-border">
-            <div className="mx-auto flex h-14 w-full max-w-6xl items-center justify-between gap-3 px-4">
-              <Link href="/" className="text-sm font-semibold tracking-wide">
-                HiLatv
-              </Link>
-              <nav className="flex items-center gap-4 text-sm">
-                <Link href="/brand">品牌资料</Link>
-                <Link href="/concepts">方案</Link>
-                <p className="text-muted-foreground">一句成片</p>
-              </nav>
-            </div>
-          </header>
-          <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:py-12">{children}</main>
-        </div>
+        <ThemeProvider>{children}</ThemeProvider>
       </body>
     </html>
   );

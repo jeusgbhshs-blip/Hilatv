@@ -34,6 +34,7 @@
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
 | SEC-54 | enterprise_id 只来自登录会话 | T15, T20 | 🔵 | cursor/sec54-enterprise-identity-2c9f | 请求体和查询不能指定企业。跨企业访问 404。假设见下方 |
 | SEC-53 | TTS 必须经过 consent_gate | T20 | 🔵 | 同上 | `Gateway.tts` 要授权门发出的声音令牌。 |
+| UI-01 | 现有前端迁移到 DESIGN.md（换皮 + 主题随时间切换） | #32 | 🔵 | ui01-design-reskin | 验收中。只换外观，不改交互流程和接口。`make accept-ui01`。假设见下方 |
 
 状态：⬜ 未开始 · 🟡 开发中 · 🔵 验收中 · ✅ 已合并 · ⛔ 阻塞
 
@@ -108,6 +109,21 @@
 - 正在做什么：T16 对话改稿。改稿历史用 `/revisions`，比例语种时长仍用 T17 的 `/versions`。无 Key，改稿走 mock。方案卡若是模板兜底（`/v1/concepts` 可 200 且 ok=false），成片页会标明，版本不能标成质检通过。重生次数只记在 `regen_budget.json`。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。音乐商用授权（Mureka/Suno 或正版曲库）要另批，未批之前保持 mock。校准用的 200 张人工打分图。T25 的预设转正要等 Key 之后另做 20 次实测。T18 的 60 条样例仍待换成真实企业需求
 - T14：降级方案。产品负责人决定不再使用企业实拍素材库，也不再交付「此镜头建议补拍」。四级都是 AI 生成。无 Key，`HILATV_LIVE` 保持关闭。
+
+## UI-01 假设
+
+- 路由不变：`/`、`/concepts`、`/projects/[id]`、`/projects/[id]/film`、`/projects/[id]/expert`，没有改成 DESIGN.md 的 `/p/[id]/...`。页面移进 `app/(app)/` 路由组拿到应用外壳，URL 不变。新增 `/settings/appearance`（P12）。
+- e2e 依赖的按钮和标题文字保留（「开始生成」「继续生成」「用这个方向开始」等），没有改成 DESIGN.md 的「生成」「确认分镜，开始生成」「用这个方案」。方案页出卡后提交按钮显示「重新出方案」并降为次按钮，动作不变。
+- 侧栏里还没有页面的项（项目、素材库、用量与账单、团队设置；手机底栏的项目、素材）显示为禁用，提示「即将开放」。侧栏加了「外观」入口。没有用户/企业资料接口，所以不显示头像块。
+- 侧栏「新建创作」一直用次按钮样式，保证每屏最多一个蓝色按钮（首页已有「开始生成」）。各页主按钮留在页面里，没有搬进顶栏；顶栏只放面包屑、五步进度和外观入口。点已完成步骤回看属于新交互，没做。
+- 主题：`hilatv-theme` 存模式（auto / system / light / dark），切换时间另存 `hilatv-theme-schedule`（`07:00-19:00`）。没有用户资料接口，暂不跨设备同步。到点切换时，全屏、按住指针（拖动）、焦点在输入框/文本域时延后，松开或离开输入框再切。
+- 舞台：成片播放器区、分镜大图、方案卡封面、专家画布和候选媒体用 `data-theme="dark"` + `bg-stage`。React Flow 用 `colorMode="dark"`。
+- `app/icon.svg` 的颜色从 `#RRGGBB` 改写成同值的 `rgb()`，否则验收 grep（覆盖 `apps/web/app`）会命中。issue 里的 grep 少了 `--`，git 会把路径当成版本号报错；`accept_ui01.sh` 用的是 `git grep -nE "..." -- apps/web/components apps/web/app ':!apps/web/app/globals.css'`，另外再查一遍所有 `xxx-[..]` 任意值。
+- 字体：Noto Sans SC 可变字体固定为 400 / 500 两个静态字重，子集 = GB2312 一级 3755 字 + GB2312 符号区 + ASCII + `apps/web` 源码和 DESIGN.md 里出现的全部字符，共 4437 字，约 1.3 MB。子集外的生僻字逐字回退到 PingFang SC / 微软雅黑。`preload: false`，`display: swap`。
+- 截图测试（`e2e/ui01-design.spec.ts`）断言主题、舞台颜色、无横向溢出、每屏至多一个蓝色按钮，并保存截图；不做像素比对基线（开发机 arm64 和 CI x64 字体渲染不同，会误报）。接口全部 stub，不依赖后端状态。
+- 镜头状态标签（排队中/生成中/已完成/已用备选方案/失败，可重做）由 `lib/status-copy.ts` 按后端发来的镜头文字判断；后端目前只发文字，没有逐镜状态字段。
+- DESIGN.md 9.2 里会改变交互的业务组件（自定义播放控制栏、按时长比例的 ShotTimeline、VersionSwitcher 芯片、RevisionChat 消息流、ResultCard、QACard、ExportPanel 多选）这次没做，现有表单只换皮。建议另开 UI-02。
+- 本地验收在 arm64 沙箱：Playwright 1.64 的 Chrome for Testing 没有 linux-arm64 包（403），本地用 Debian chromium 156（同一大版本）跑；CI 仍按原脚本 `npx playwright install --with-deps chromium`。
 
 ## T14 假设
 
@@ -501,6 +517,10 @@
 - 正在做什么：企业编号只从登录会话或项目记录读取。跨企业访问品牌、项目、分镜、改稿、导出和上传返回 404/422，不改对方的文件。TTS 直接调用会被拒绝。
 - 需要提供什么：没有新的 Key。生产要自行设置 `HILATV_SESSION_SECRET`。T14 已并入，放行路由已接上会话和放行人。
 
+### 2026-10-31 UI-01
+- 正在做什么：#32 已合并（b4154b5）。UI-01 把现有前端换成 DESIGN.md 外观：应用外壳（侧栏、顶栏五步进度、手机底栏）、主题自动随时间切换、外观设置页、深色舞台、Noto Sans SC 子集、`lib/status-copy.ts`。交互流程和接口不变。
+- 需要提供什么：没有新的 Key。
+
 ## UI 设计规范
 
-- 2026-10-30：`DESIGN.md` V1.0 已确认（主题随时间切换：白天浅色外壳 + 深色视频舞台，夜间全深色）。token 已写入 `apps/web/app/globals.css`，效果图在 `docs/design/`。现有前端（T11/T15/T16/T19/T23）按 UI-01 换皮迁移，之后所有界面按此实现。公司标志已放入 `apps/web/public/brand/`。待补：Noto Sans SC woff2 子集（T11 处理）。
+- 2026-10-30：`DESIGN.md` V1.0 已确认（主题随时间切换：白天浅色外壳 + 深色视频舞台，夜间全深色）。token 已写入 `apps/web/app/globals.css`，效果图在 `docs/design/`。现有前端（T11/T15/T16/T19/T23）按 UI-01 换皮迁移，之后所有界面按此实现。公司标志已放入 `apps/web/public/brand/`。Noto Sans SC woff2 子集由 UI-01 补上（`apps/web/public/fonts/`）。

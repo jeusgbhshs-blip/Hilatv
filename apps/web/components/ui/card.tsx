@@ -2,10 +2,20 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-function Card({ className, ...props }: React.ComponentProps<"div">) {
+/** DESIGN.md §9.1 Card. Selected cards get a 2px blue ring. */
+function Card({
+  className,
+  selected = false,
+  ...props
+}: React.ComponentProps<"div"> & { selected?: boolean }) {
   return (
     <div
-      className={cn("rounded-lg border border-border bg-card text-card-foreground", className)}
+      data-selected={selected || undefined}
+      className={cn(
+        "rounded-md border border-border bg-surface text-text-1",
+        selected && "border-blue ring-1 ring-blue",
+        className,
+      )}
       {...props}
     />
   );
