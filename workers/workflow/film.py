@@ -16,7 +16,14 @@ from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
 with workflow.unsafe.imports_passed_through():
-    from workers.workflow.contract import FINAL_NODE, PEERS, PHASE, PIPELINE, TIMEOUT_S
+    from workers.workflow.contract import (
+        FINAL_NODE,
+        PEERS,
+        PHASE,
+        PIPELINE,
+        STORYBOARD_GATE,
+        TIMEOUT_S,
+    )
 
 _PUBLIC = (
     "sentence",
@@ -29,6 +36,7 @@ _PUBLIC = (
     "fail_nodes",
     "enterprise_id",
     "concept_selection",
+    "skip_storyboard",
 )
 
 
@@ -123,6 +131,8 @@ class ProduceFilm:
                 continue
             patch = await self._call(node, request, state)
             state = _merge(state, patch, node)
+            if node == STORYBOARD_GATE and request.get("skip_storyboard") is not True:
+                state = await self._confirm_storyboard(request, state)
         peers = [node for node in PEERS if PIPELINE.index(node) >= start_index]
         if peers:
             patches = await asyncio.gather(*(self._call(node, request, state) for node in peers))
@@ -158,6 +168,38 @@ class ProduceFilm:
         if not isinstance(patch, dict):
             raise ApplicationError(f"{node} returned no patch", non_retryable=True)
         return patch
+
+    async def _confirm_storyboard(
+        self,
+        request: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Wait until the user leaves the storyboard cards, then reload edits.
+
+        ``skip_storyboard`` never reaches this. Signals that arrived early still
+        release the wait, because the signal flips ``_release`` before the check.
+        """
+
+        self._status = _view(request, STORYBOARD_GATE, state, status="paused", paused=True)
+        await workflow.wait_condition(lambda: self._release)
+        self._release = False
+        result = await workflow.execute_activity(
+            "storyboard_sync",
+            {
+                "project_id": request["project_id"],
+                "request": _public(request),
+                "state": state,
+            },
+            start_to_close_timeout=timedelta(seconds=30),
+            retry_policy=_retry(3),
+        )
+        patch = result.get("patch") if isinstance(result, dict) else None
+        if not isinstance(patch, dict):
+            raise ApplicationError("storyboard_sync returned no patch", non_retryable=True)
+        merged = dict(state)
+        merged.update(patch)
+        self._status = _view(request, STORYBOARD_GATE, merged, status="running", paused=False)
+        return merged
 
     async def _fail(self, request: dict[str, Any], exc: ActivityError) -> None:
         node = str(getattr(exc, "activity_type", None) or self._status.get("node") or "workflow")

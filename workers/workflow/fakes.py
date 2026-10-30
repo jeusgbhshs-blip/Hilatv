@@ -83,4 +83,11 @@ def _make(node: str) -> Any:
     return _run
 
 
-FAKE_ACTIVITIES = [_make(node) for node in PIPELINE] + [mark_failed]
+@activity.defn(name="storyboard_sync")
+def storyboard_sync(payload: dict[str, Any]) -> dict[str, Any]:
+    del payload
+    CALLS.append("storyboard_sync")
+    return {"patch": {}}
+
+
+FAKE_ACTIVITIES = [_make(node) for node in PIPELINE] + [storyboard_sync, mark_failed]

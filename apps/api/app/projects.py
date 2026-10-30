@@ -21,14 +21,21 @@ from workers.nodes.n18_revision.concept_gate import classify_concept, read_proje
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.revise import RevisionError, revise_project
-from workers.workflow.service import start_film
+from workers.workflow.service import release_film, start_film
 from workers.workflow.store import (
     load_checkpoint,
     project_path,
     project_root,
     read_events,
     read_snapshot,
+    update_snapshot,
     valid_project_id,
+)
+from workers.workflow.storyboard import (
+    StoryboardError,
+    edit_voiceover,
+    frame_file,
+    public_cards,
 )
 from workers.workflow.versions import VersionError, list_versions, restore_version
 
@@ -54,6 +61,14 @@ class CreateProject(BaseModel):
     enterprise_id: str | None = None
     concept_selection: str | None = Field(default=None, max_length=80)
     attachments: list[dict[str, Any]] = Field(default_factory=list)
+    # Omitted means 直接出片, so unattended clients still finish. The page sends false to wait.
+    skip_storyboard: bool = True
+
+
+class StoryboardEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    voiceover: str = Field(min_length=1, max_length=400)
 
 
 class RerunProject(BaseModel):
@@ -261,6 +276,9 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     if "attachments" in body:
         body["attachments"] = _public_attachments(body.get("attachments"))
     body.update(_concept_public(str(body.get("project_id") or ""), body))
+    project_id = str(body.get("project_id") or "")
+    if "storyboard" in body:
+        body["storyboard"] = public_cards(body.get("storyboard"), project_id)
     return body
 
 
@@ -322,6 +340,7 @@ async def create_project(body: CreateProject) -> JSONResponse:
         enterprise_id=body.enterprise_id,
         concept_selection=body.concept_selection,
         attachments=attachments,
+        skip_storyboard=body.skip_storyboard,
     )
     return JSONResponse(
         status_code=202,
@@ -362,6 +381,7 @@ async def rerun_project(project_id: str, body: RerunProject) -> JSONResponse:
         video_candidates=snapshot.get("video_candidates"),
         start_from=body.node,
         checkpoint=checkpoint,
+        skip_storyboard=snapshot.get("skip_storyboard") is not False,
     )
     return JSONResponse(
         status_code=202,
@@ -396,6 +416,41 @@ def project_revision(project_id: str, body: ReviseProject) -> dict[str, Any]:
         )
     except (RevisionError, VersionError) as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.post("/v1/projects/{project_id}/storyboard/continue")
+async def continue_storyboard(project_id: str) -> dict[str, str]:
+    snapshot = _snapshot_or_404(project_id)
+    if snapshot.get("status") != "paused" or snapshot.get("storyboard_gate") != "hold":
+        raise HTTPException(status_code=409, detail="现在没有在等分镜确认")
+    workflow_id = str(snapshot.get("workflow_id") or project_id)
+    await release_film(workflow_id)
+    update_snapshot(
+        project_id,
+        status="running",
+        phase="生成中",
+        node="n10_video",
+        message="正在生成视频",
+    )
+    return {"project_id": project_id, "status": "running"}
+
+
+@router.post("/v1/projects/{project_id}/storyboard/{shot_id}")
+def edit_storyboard(project_id: str, shot_id: str, body: StoryboardEdit) -> dict[str, Any]:
+    if shot_id == "continue":
+        raise HTTPException(status_code=404, detail="镜头编号无效")
+    try:
+        return edit_voiceover(project_id, shot_id, body.voiceover, gateway=get_gateway())
+    except StoryboardError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
+
+
+@router.get("/v1/projects/{project_id}/storyboard/{shot_id}/frame")
+def storyboard_frame(project_id: str, shot_id: str) -> FileResponse:
+    path = frame_file(project_id, shot_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="这一镜没有可看的画面")
+    return FileResponse(path, media_type="image/png")
 
 
 @router.get("/v1/projects/{project_id}/download")
