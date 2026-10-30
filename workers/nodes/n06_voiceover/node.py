@@ -129,6 +129,7 @@ def _execute(
         speeds=speeds,
         lexicon=lexicon,
         brand_id=brand.brand_id if brand is not None else None,
+        enterprise_id=payload.enterprise_id,
     )
     reserved = sum(shot.duration_s for shot in script.shots if not shot.voiceover.strip())
     budget = None if target is None else max(0.0, target - reserved)
@@ -155,6 +156,7 @@ def _execute(
                 speeds=speeds,
                 lexicon=lexicon,
                 brand_id=brand.brand_id if brand is not None else None,
+                enterprise_id=payload.enterprise_id,
             )
             _reject_if_still_long(
                 spoken,
@@ -267,6 +269,7 @@ def _speak_all(
     speeds: dict[str, float],
     lexicon: tuple[Any, ...],
     brand_id: str | None,
+    enterprise_id: str | None,
 ) -> list[dict[str, Any]]:
     spoken: list[dict[str, Any]] = []
     for shot in script.shots:
@@ -285,6 +288,7 @@ def _speak_all(
                 lexicon=lexicon,
                 brand_id=brand_id,
                 language=script.language,
+                enterprise_id=enterprise_id,
             )
         )
     return spoken
@@ -303,13 +307,18 @@ def _speak_shot(
     lexicon: tuple[Any, ...],
     brand_id: str | None,
     language: str,
+    enterprise_id: str | None,
 ) -> dict[str, Any]:
     deadline.check()
     terms = matching_terms(shot.voiceover, lexicon)
+    from workers.compliance.consent_gate import gated_tts
+
     try:
-        spoken = gateway.tts(
+        spoken = gated_tts(
+            gateway,
             shot.voiceover,
             voice=voice,
+            enterprise_id=enterprise_id,
             seed=0,
             language=language,
             project_id=request.project_id,

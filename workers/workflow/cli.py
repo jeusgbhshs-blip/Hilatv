@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 import uuid
 from pathlib import Path
@@ -13,10 +14,12 @@ from typing import Any
 from pydantic import ValidationError
 from temporalio.client import WorkflowFailureError
 
+from workers.identity.access import NotFound, project_for
+from workers.identity.session import Identity, SessionError, verify_session
 from workers.schemas.brand import BrandKit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.service import run_and_wait, serve_worker
-from workers.workflow.store import load_checkpoint, read_snapshot
+from workers.workflow.store import load_checkpoint
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,10 +30,12 @@ def main(argv: list[str] | None = None) -> int:
     run_parser.add_argument("sentence")
     run_parser.add_argument("--brand-kit", help="Brand Kit JSON 文件")
     run_parser.add_argument("--project-id")
+    _add_session(run_parser)
 
     rerun_parser = sub.add_parser("rerun", help="从某个节点继续，不重跑上游")
     rerun_parser.add_argument("project_id")
     rerun_parser.add_argument("node")
+    _add_session(rerun_parser)
 
     sub.add_parser("worker", help="连接 TEMPORAL_ADDRESS，执行活动")
 
@@ -46,19 +51,53 @@ def main(argv: list[str] | None = None) -> int:
         return 130
 
 
+def _add_session(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--session", help="登录会话。缺省时读 HILATV_SESSION")
+
+
+def _require_identity(args: argparse.Namespace) -> Identity | None:
+    token = (getattr(args, "session", None) or os.getenv("HILATV_SESSION", "")).strip()
+    if not token:
+        print("需要登录会话", file=sys.stderr)
+        return None
+    try:
+        return verify_session(token)
+    except SessionError:
+        print("会话无效", file=sys.stderr)
+        return None
+
+
+def _owned_snapshot(project_id: str, identity: Identity) -> dict[str, Any] | None:
+    try:
+        return project_for(identity, project_id)
+    except NotFound:
+        print("项目不存在", file=sys.stderr)
+        return None
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
+    identity = _require_identity(args)
+    if identity is None:
+        return 2
     brand = _load_brand(args.brand_kit)
     project_id = args.project_id or str(uuid.uuid4())
-    return _execute(project_id=project_id, sentence=args.sentence, brand_kit=brand)
+    return _execute(
+        project_id=project_id,
+        sentence=args.sentence,
+        brand_kit=brand,
+        enterprise_id=identity.enterprise_id,
+    )
 
 
 def _cmd_rerun(args: argparse.Namespace) -> int:
+    identity = _require_identity(args)
+    if identity is None:
+        return 2
     if args.node not in PIPELINE:
         print(f"未知节点 {args.node}", file=sys.stderr)
         return 2
-    snapshot = read_snapshot(args.project_id)
+    snapshot = _owned_snapshot(args.project_id, identity)
     if snapshot is None:
-        print("项目不存在", file=sys.stderr)
         return 2
     if snapshot.get("status") == "running":
         print("项目仍在运行", file=sys.stderr)
@@ -69,11 +108,13 @@ def _cmd_rerun(args: argparse.Namespace) -> int:
         sentence=str(snapshot.get("sentence") or ""),
         brand_kit=snapshot.get("brand_kit"),
         brand_id=snapshot.get("brand_id"),
+        enterprise_id=snapshot.get("enterprise_id"),
         attachments=snapshot.get("attachments") or [],
         keyframe_candidates=snapshot.get("keyframe_candidates"),
         video_candidates=snapshot.get("video_candidates"),
         start_from=args.node,
         checkpoint=checkpoint,
+        skip_storyboard=snapshot.get("skip_storyboard") is not False,
     )
 
 

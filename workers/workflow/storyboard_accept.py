@@ -27,10 +27,17 @@ def main() -> int:
 
 async def _run() -> None:
     from app.main import app
+    from workers.identity.session import open_session
 
+    identity = open_session()
     transport = httpx.ASGITransport(app=app)
+    headers = {"Authorization": f"Bearer {identity.token}"}
     try:
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport,
+            base_url="http://test",
+            headers=headers,
+        ) as client:
             await _skip(client)
             await _preview(client)
         print("accept-t23 ok")

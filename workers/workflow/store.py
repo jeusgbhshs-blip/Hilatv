@@ -229,6 +229,37 @@ def publish(project_id: str, event: dict[str, Any]) -> dict[str, Any]:
     return record
 
 
+def append_audit_event(project_id: str, event: dict[str, Any]) -> dict[str, Any]:
+    """Append one audit line. The caller has already checked ownership."""
+
+    if not valid_project_id(project_id):
+        raise ValueError("invalid project id")
+    at = event.get("at")
+    record = {
+        "type": str(event.get("type") or "audit"),
+        "project_id": project_id,
+        "enterprise_id": event.get("enterprise_id"),
+        "releaser": event.get("releaser"),
+        "at": float(at) if isinstance(at, int | float) else time.time(),
+    }
+    with _lock(project_id) as directory:
+        snapshot = _read(directory, project_id)
+        events = list(snapshot.get("events") or [])
+        events.append(
+            {
+                "type": record["type"],
+                "releaser": record["releaser"],
+                "at": record["at"],
+                "enterprise_id": record["enterprise_id"],
+            }
+        )
+        snapshot["events"] = events[-200:]
+        with (directory / "events.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        _write(directory, snapshot)
+    return record
+
+
 def read_events(project_id: str, offset: int = 0) -> list[dict[str, Any]]:
     if not valid_project_id(project_id):
         return []

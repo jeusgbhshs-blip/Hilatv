@@ -66,8 +66,14 @@ def _mock_samples(store: object) -> dict[str, object]:
         duration_s=5,
         project_id=project_id,
     )
+    from workers.compliance.consent_gate import issue_tts_consent
+
     speech = gateway.tts(
-        "这台柱塞泵每天都在稳定工作", voice="zh_male_steady", seed=11, project_id=project_id
+        "这台柱塞泵每天都在稳定工作",
+        voice="zh_male_steady",
+        seed=11,
+        project_id=project_id,
+        consent_token=issue_tts_consent("zh_male_steady", None),
     )
     image_again = gateway.generate_image(
         "冷色调金属柱塞泵特写，车间背景虚化",
@@ -158,6 +164,8 @@ def _maybe_live(store: object) -> None:
     if total <= 0 or daily <= 0:
         print("live probe skipped (budget is 0, live calls stay on mock)")
         return
+    from workers.compliance.consent_gate import issue_tts_consent
+
     registry = build_registry(store=store)
     gateway = Gateway.from_env()
     probes = (
@@ -167,7 +175,16 @@ def _maybe_live(store: object) -> None:
             "video",
             lambda: gateway.generate_video("金属泵体缓慢旋转", seed=1, duration_s=5),
         ),
-        ("volc_tts", "tts", lambda: gateway.tts("稳定工作", voice="zh_male_steady", seed=1)),
+        (
+            "volc_tts",
+            "tts",
+            lambda: gateway.tts(
+                "稳定工作",
+                voice="zh_male_steady",
+                seed=1,
+                consent_token=issue_tts_consent("zh_male_steady", None),
+            ),
+        ),
     )
     for provider, kind, call in probes:
         adapter = registry[provider]

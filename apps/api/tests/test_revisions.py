@@ -6,13 +6,15 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.projects import ReviseProject, project_revision
+from workers.identity.session import open_session
 from workers.workflow.store import init_project, project_path, update_snapshot
 
 
 def test_degraded_concept_is_public_and_paths_are_refused(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     project_id = "apirev01"
-    init_project(project_id, sentence="一句", status="completed")
+    ident = open_session()
+    init_project(project_id, sentence="一句", status="completed", enterprise_id=ident.enterprise_id)
     update_snapshot(project_id, status="completed", sentence="一句")
     directory = project_path(project_id)
     nodes = directory / "nodes"
@@ -26,7 +28,8 @@ def test_degraded_concept_is_public_and_paths_are_refused(tmp_path, monkeypatch)
         }
     }
     (nodes / "n03_concept.json").write_text(json.dumps(concept), encoding="utf-8")
-    with TestClient(app) as client:
+    headers = {"Authorization": f"Bearer {ident.token}"}
+    with TestClient(app, headers=headers) as client:
         status = client.get(f"/v1/projects/{project_id}")
         assert status.status_code == 200
         body = status.json()
@@ -43,7 +46,10 @@ def test_degraded_concept_is_public_and_paths_are_refused(tmp_path, monkeypatch)
         assert missing.status_code == 404
 
 
-def test_revision_route_uses_the_process_gateway(monkeypatch) -> None:
+def test_revision_route_uses_the_process_gateway(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    ident = open_session()
+    init_project("proj01", sentence="一句", status="completed", enterprise_id=ident.enterprise_id)
     sentinel = object()
     seen: dict[str, object] = {}
 
@@ -68,7 +74,7 @@ def test_revision_route_uses_the_process_gateway(monkeypatch) -> None:
 
     monkeypatch.setattr("app.projects.get_gateway", gateway)
     monkeypatch.setattr("app.projects.revise_project", revise)
-    body = project_revision("proj01", ReviseProject(instruction="嗯"))
+    body = project_revision("proj01", ReviseProject(instruction="嗯"), ident)
     assert seen["gateway"] is sentinel
     assert body["version_id"] is None
     assert body["status"] == "needs_clarification"

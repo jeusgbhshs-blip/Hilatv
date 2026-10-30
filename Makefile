@@ -1,4 +1,4 @@
-.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 accept-t04 accept-t05 accept-t06 accept-t07 accept-t08 accept-t09 accept-t10 accept-t11 accept-t12 accept-t13 accept-t15 accept-t16 accept-t17 accept-t18 accept-t20 accept-t21 accept-t23 accept-t25 install api
+.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 accept-t04 accept-t05 accept-t06 accept-t07 accept-t08 accept-t09 accept-t10 accept-t11 accept-t12 accept-t13 accept-t15 accept-t16 accept-t17 accept-t18 accept-t20 accept-t21 accept-t23 accept-t25 accept-sec54 install api
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ENV_FILE := $(ROOT)/.env
@@ -96,6 +96,9 @@ accept-t21:
 
 accept-t23:
 	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t23.sh
+
+accept-sec54:
+	HILATV_LIVE=0 $(PYTHON) $(ROOT)/infra/scripts/accept_sec54.py
 
 accept-t25:
 	$(PYTHON) -m templates.validate

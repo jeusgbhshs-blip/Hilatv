@@ -30,6 +30,8 @@
 | T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
 | T25 | 其余 4 套行业模板 + 镜头语言库首批 | T05, T06 | ✅ | [cursor/t25-industry-templates-3f0b](https://github.com/jeusgbhshs-blip/Hilatv/pull/41) | 已合并（66306cc）。预设全部「试用」，未做 20 次实测。假设见下方 |
+| SEC-54 | enterprise_id 只来自登录会话 | T15, T20 | 🔵 | cursor/sec54-enterprise-identity-2c9f | 请求体和查询不能指定企业。跨企业访问 404。假设见下方 |
+| SEC-53 | TTS 必须经过 consent_gate | T20 | 🔵 | 同上 | `Gateway.tts` 要授权门发出的声音令牌。 |
 
 状态：⬜ 未开始 · 🟡 开发中 · 🔵 验收中 · ✅ 已合并 · ⛔ 阻塞
 
@@ -196,6 +198,15 @@
 - N16 只留 `workers.qa.final.review_film`。调用会抛 `NotImplementedError`。
 - 画面上的字、Logo、价格、电话仍然只由后期叠加。重生决策的 `changes` 带上现有的无文字负面约束。
 - 同一个镜头的候选逐张评审，避免网关日志并发写。
+
+## SEC-54 假设
+
+- 登录会话是服务端签发的 HMAC 令牌，企业编号写在令牌里。`POST /v1/session` 只创建新企业，请求体不能指定 `enterprise_id`。浏览器把令牌放在 `localStorage`，接口走 `Authorization: Bearer`。图片和 WebSocket 不能带这个头，所以另外接受查询参数 `session`（会话令牌，不是企业编号）。查询参数里的 `enterprise_id` 一律 422。
+- 还没有成员账号表。谁拿到令牌，谁就是该企业。生产环境要配置 `HILATV_SESSION_SECRET`，否则密钥只活在当前进程里，重启后旧令牌失效。这不是厂商密钥。
+- 项目、品牌、上传、分镜、改稿、导出都先核对会话企业。对不上或项目上没有企业编号时返回 404「项目不存在」或「还没有品牌资料」，响应里不带对方的句子、人名或声音编号。`/v1/shares/{token}` 仍是分享能力链接，不要求企业会话。
+- 人工放行（T14 的 `POST /v1/projects/{id}/human-review/release` 和 `hilatv release`）本分支合入时 main 上还没有这条路由。`prepare_human_release` / `audit_human_release` 会核对项目属于当前企业，并在 `human_review_released` 事件里写下放行人 `member_id` 和时间。路由合进来之后应先调用它，再 `start_film`。
+- `Gateway.tts` 和 `execute("tts")` 必须带 consent_gate 签发的短时声音令牌。令牌和声音编号绑定。业务节点走 `gated_tts`。网关自己的测试和 `accept_media` 仍调用 `tts`，但要先向授权门要令牌。`people_for_use` / `release_kit`、`LicenseRecord` 和 `open_project_budget` 的判断没有改，只是企业编号改从会话或项目记录来。
+- 无密钥，`HILATV_LIVE=0`。不新增迁移。Alembic head 仍是 `t03_gateway_0002`。
 
 ## SEC-01 假设
 
@@ -401,4 +412,8 @@
 - 没配对象存储时，mock 仍返回 `mock://`，好让 T03 单测不用 MinIO。配了存储之后，图像/视频/TTS 必须转存成功才返回 `oss://`。Live adapter 没有存储配置时失败，网关回退 mock。
 - 不新增数据库迁移。媒体只进对象存储，调用日志沿用 `call_logs`。Alembic 仍然只有 head `t03_gateway_0002`。
 - 没有 Key，本轮不贴真实厂商样例。`HILATV_LIVE=1` 且预算和对应 Key 都有时，`make accept-t04` 会额外各跑一条 live。
+
+### 2026-10-30 SEC-54
+- 正在做什么：企业编号只从登录会话或项目记录读取。跨企业访问品牌、项目、分镜、改稿、导出和上传返回 404/422，不改对方的文件。TTS 直接调用会被拒绝。
+- 需要提供什么：没有新的 Key。生产要自行设置 `HILATV_SESSION_SECRET`。T14 人工放行路由合入 main 后，再接到 `prepare_human_release`。
 

@@ -6,7 +6,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { apiUrl, errorMessage } from "@/lib/api";
+import { apiFetch, errorMessage } from "@/lib/api";
 import { conceptNotice } from "@/lib/concept";
 import { readShots, type ProjectSnapshot, type ShotSummary } from "@/lib/progress";
 import {
@@ -56,7 +56,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
 
     async function pull() {
       try {
-        const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}`), {
+        const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}`, {
           signal: controller.signal,
         });
         if (closed) return;
@@ -99,7 +99,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/versions`), {
+        const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/versions`, {
           signal: controller.signal,
         });
         if (!response.ok || closed) return;
@@ -123,7 +123,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/revisions`), {
+        const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/revisions`, {
           signal: controller.signal,
         });
         if (!response.ok || closed) return;
@@ -146,7 +146,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
     const controller = new AbortController();
     void (async () => {
       try {
-        const response = await fetch(apiUrl(mediaPath), { signal: controller.signal });
+        const response = await apiFetch(mediaPath, { signal: controller.signal });
         if (!response.ok || closed) return;
         const blob = await response.blob();
         objectUrl = URL.createObjectURL(new Blob([blob], { type: blob.type || "video/mp4" }));
@@ -166,7 +166,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
     if (!mediaPath) return;
     setDownloadError(null);
     try {
-      const response = await fetch(apiUrl(mediaPath));
+      const response = await apiFetch(mediaPath);
       if (!response.ok) throw new Error("下载没有成功");
       const blob = await response.blob();
       const objectUrl = URL.createObjectURL(new Blob([blob], { type: blob.type || "video/mp4" }));
@@ -186,7 +186,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
     setExporting(true);
     setVersionNote(null);
     try {
-      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/deliveries`), {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/deliveries`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -215,10 +215,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
     setBusy(true);
     setEditError(null);
     try {
-      const response = await fetch(
-        apiUrl(
-          `/v1/projects/${encodeURIComponent(projectId)}/revisions/${encodeURIComponent(versionId)}/restore`,
-        ),
+      const response = await apiFetch(
+        `/v1/projects/${encodeURIComponent(projectId)}/revisions/${encodeURIComponent(versionId)}/restore`,
         { method: "POST" },
       );
       if (!response.ok) throw new Error(await errorMessage(response));
@@ -239,7 +237,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
     setBusy(true);
     setEditError(null);
     try {
-      const response = await fetch(apiUrl(`/v1/projects/${encodeURIComponent(projectId)}/revisions`), {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/revisions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ instruction: text, shot_id: shotId }),

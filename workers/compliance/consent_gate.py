@@ -11,9 +11,12 @@ kit is never consulted for that decision.
 
 from __future__ import annotations
 
+from typing import Any
+
 from gateway.constants import BUILTIN_TTS_VOICES
 from workers.brand_kit.people import ConsentError, people_for_use
 from workers.brand_kit.store import export_record, load_record
+from workers.compliance.voice_token import issue_voice_token
 from workers.schemas.brand import BrandKit, Person
 from workers.schemas.script import Shot
 
@@ -85,3 +88,24 @@ def assert_voice_allowed(
     if voice_id in archived:
         return
     raise ConsentError("未归档声音授权，不能使用该声音")
+
+
+def issue_tts_consent(voice_id: str | None, enterprise_id: str | None) -> str:
+    """Allow the voice, then hand back the only token ``Gateway.tts`` accepts."""
+
+    assert_voice_allowed(voice_id, enterprise_id)
+    return issue_voice_token(voice_id or "", enterprise_id or "")
+
+
+def gated_tts(
+    gateway: Any,
+    text: str,
+    *,
+    voice: str | None,
+    enterprise_id: str | None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """The only supported way for a node to synthesize speech."""
+
+    token = issue_tts_consent(voice, enterprise_id)
+    return gateway.tts(text, voice=voice, consent_token=token, **kwargs)
