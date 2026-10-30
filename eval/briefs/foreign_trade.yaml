@@ -1,0 +1,23 @@
+# 外贸出海样例。对照成片不在本任务里。
+industry: foreign_trade
+cases:
+  - id: foreign-trade-01
+    sentence: "给我们的柱塞泵做一条15秒外贸宣传片，英文，投 YouTube，面向海外采购商，带上应用场景和工厂"
+  - id: foreign-trade-02
+    sentence: "出口阀门做一条15秒出海视频，英文，YouTube 横屏，交期 30 天写进口播，不要编认证"
+  - id: foreign-trade-03
+    sentence: "给紧固件做一条15秒外贸产品片，英文，投 LinkedIn，面向海外采购商"
+  - id: foreign-trade-04
+    sentence: "给工矿灯做一条15秒出口视频，英文，YouTube，MOQ 写进口播"
+  - id: foreign-trade-05
+    sentence: "给园林工具做一条15秒出海片，英文，YouTube 和 LinkedIn，展示使用场景"
+  - id: foreign-trade-06
+    sentence: "给厨房五金做一条15秒外贸片，英文，面向海外采购商，工厂画面要有"
+  - id: foreign-trade-07
+    sentence: "给太阳能支架做一条15秒出口宣传片，英文，YouTube 横屏，交期按资料"
+  - id: foreign-trade-08
+    sentence: "给包装机械做一条15秒外贸片，英文，投 LinkedIn，讲清适用产线"
+  - id: foreign-trade-09
+    sentence: "给水泵做一条15秒出海视频，英文，YouTube，面向采购商，参数只说资料里有的"
+  - id: foreign-trade-10
+    sentence: "给劳保手套做一条15秒外贸产品片，英文，LinkedIn，MOQ 和交期放后期字幕"

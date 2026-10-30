@@ -23,7 +23,7 @@
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | 🔵 | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | 🔵 | [cursor/t17-multi-export-9a5c](https://github.com/jeusgbhshs-blip/Hilatv/pull/42) | 重构图、中英配音字幕、版本 API，成片页可切换比例、语种、时长。假设见下方 |
-| T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
+| T18 | eval/ 基准测试 + 报告 | T10, T12 | 🔵 | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 验收中。已合并 main `7a7725f`。只有 `visual_reviewed is True` 算已评审。假设见下方 |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
@@ -64,6 +64,31 @@
 -->
 
 ### 2026-10-30
+- 合并了哪些：T09（PR #29，无新迁移）
+- 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
+- T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5，并调用已合并的 T12 `review_shot`。mock 没有画面，镜头标为未评审。T12 导入不到时记 `review_error`，不再用网关单独打分。报告分开写「管线和报告结构」和「质量是否达标」。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后，`--mode live` 才会让视觉评审看实帧
+
+## T18 假设
+
+- 60 条是自写的企业口吻样例，按 6 个行业各 10 条放在 `eval/briefs/*.yaml`。团队收集的真实需求还没到。替换这些句子后，同一条命令会改跑新句子。
+- `make accept-t18` 是 mock：按 T10 的顺序调用 N1、N2 读取、N3 自动选定、N4、N5。不启动 Temporal，也不编码 MP4，因此没有关键帧或视频。`--mode live` 才调用 `workers.workflow.service.run_and_wait`，走出片工作流。
+- 评测调用已合并的 `workers.qa.service.review_shot`。调用前的画面检查与 `workers.qa.pixels` 相同：拒绝 `http`/`https`、`mock://`，以及解析后落在 `HILATV_PROJECT_DIR` 外面的路径。图片要能解码；视频要能在项目目录里抽出帧。打不开就不调用。返回只有 `visual_reviewed is True` 才算已评审。Mock 下 T12 不把规则分 8.6 或无画面的分数当成看过画面。调用或结果解析抛错记 `review_error`。`coerce_judge` 缺维度报错，标为无效。
+- 有选中视频候选时，评审节点记 `n11_video`，模型名用候选上的 `model`。mock 只有分镜，节点记 `n09_keyframe`，模型记 `not-rendered`。镜头类型用分镜里的运镜预设 id。
+- 硬伤按已评审镜头计：`QAReport.hard_fail` 非空算 1 个硬伤镜头。质量达标要同时满足：60 条都在、失败 0 条、未评审和评审异常都是 0、已评审镜头数大于 0，并且硬伤率不超过 5%。分母为 0 不能算通过。失败或超时的样例即使镜头数记成 0，也不能让其余样例单独达标。
+- 报告和 `summary.json` 写评审来源、未评审镜头数，以及两个结论：管线和报告结构是否完整、质量是否达标。`--strict` 的退出码只看结构和「未评审被当成质量通过」这种假通过。mock 没有画面，质量结论是未达标，验收命令仍然可以在 CI 里跑完。
+- 没有可打开的画面时不调用 T12，报告写「只评了文字，不计入质量结论」。`review_shot` 导入不到时该镜记 `review_error`，算进未通过，不再另走网关打分。
+- 状态接口读 `project.json` 时，写入改为先写临时文件、`fsync`、再替换，然后 `fsync` 目录。`Path.write_text` 会先把目标截成空文件，CI 里 `test_create_progress_and_rerun` 的进度轮询因此读到空 JSON。替换之后读者看到的是上一份完整文件或新文件；目录 fsync 让新文件名落盘。
+- 盲评包只给匿名 pair id 和成片路径。对照组成片不在本任务里，key 里标 `withheld`。
+- 费用是该项目在网关 `call_logs.cost_cny` 的合计。mock 为 0。调用仍经过网关预算守卫。
+- 耗时是单条样例的墙钟秒。mock 不拿它去卡 SPEC §1.4 的 15 分钟。
+- 画面文字、Logo、价格、电话仍只留在分镜的 `on_screen_text`。评审提示词要求模型不要把它们画进画面。
+- 不新增数据库迁移。Alembic head 仍是 `t03_gateway_0002`。
+- 样例句子都写了 15 秒，避免 mock 跑出行业模板里的 30 秒或 60 秒分镜。N1 若仍留下开放问题，不挡住评分。
+- 已把 main `7a7725f`（T12）合并进本分支。评测调用真实的 `workers.qa.service.review_shot`。画面能不能打开与 `workers.qa.pixels` 同一范围：拒绝 `http`/`https`、`mock://`，以及 `HILATV_PROJECT_DIR` 以外的路径。只有返回里 `visual_reviewed is True` 才算已评审。
+
+- 合并了哪些：T09（PR #29，无新迁移）、T10（PR #30，无新迁移）。main 现为 `d845705`（含 T11、T25、SEC-01）
+- 正在做什么：T12 N9/N11 质检和导演决策循环，已合入最新 main。无 Key，`make accept-t12` 走本地规则和 mock judge。埋入坏图拦截率 47/47，质检未校准（0/200）。T11 输入页、进度页、成片页。SEC-01 拦住 N1 抓用户链接时访问本机和内网。T25 补电商、本地生活、教育、政企模板和镜头预设（全部「试用」）。Alembic 仍是单一 head `t03_gateway_0002`
 - 合并了哪些：T09（PR #29）、T10（PR #30）、T11（9c7e524）、T25（66306cc）、SEC-01（d845705）、T12（7a7725f）。都无新迁移
 - 正在做什么：T17 多比例、多语种导出和成片页版本切换。合并前补上：缺质检字段不算通过，deliveries.json 先 fsync，mock 听写不计入核对，并发上限按进程。无 Key，`make accept-t17` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络

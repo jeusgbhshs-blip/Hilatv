@@ -1,0 +1,23 @@
+# 教育培训样例。讲师出镜不在这批句子里，避免没有授权还去生成人脸。
+industry: education
+cases:
+  - id: education-01
+    sentence: "Python 入门课招生宣传，15秒，面向零基础职场人，报名放片尾"
+  - id: education-02
+    sentence: "给会计实操培训做一条15秒招生片，发抖音，面向转行的人"
+  - id: education-03
+    sentence: "少儿编程体验课做一条15秒课程视频，竖屏，面向家长"
+  - id: education-04
+    sentence: "给写作课做一条15秒招生短片，视频号，讲师须已授权才出镜"
+  - id: education-05
+    sentence: "给短视频运营课做一条15秒培训宣传，发抖音，课程亮点三句"
+  - id: education-06
+    sentence: "给企业内训做一条15秒课程片，横屏放官网，面向人力负责人"
+  - id: education-07
+    sentence: "给摄影入门课做一条15秒招生视频，竖屏，问题开头"
+  - id: education-08
+    sentence: "给护理资格培训做一条15秒课程片，视频号，报名方式放片尾"
+  - id: education-09
+    sentence: "给日语口语课做一条15秒招生片，发抖音，面向上班族"
+  - id: education-10
+    sentence: "给产品经理训练营做一条15秒培训视频，竖屏，讲清上课方式"
