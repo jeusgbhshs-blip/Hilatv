@@ -503,4 +503,4 @@
 
 ## UI 设计规范
 
-- 2026-10-30：`DESIGN.md` V1.0 已确认（主题随时间切换：白天浅色外壳 + 深色视频舞台，夜间全深色）。token 已写入 `apps/web/app/globals.css`，效果图在 `docs/design/`。现有前端（T11/T15/T16/T19/T23）按 UI-01 换皮迁移，之后所有界面按此实现。待补：公司标志 `apps/web/public/brand/mark.svg`、Noto Sans SC woff2 子集（T11 处理）。
+- 2026-10-30：`DESIGN.md` V1.0 已确认（主题随时间切换：白天浅色外壳 + 深色视频舞台，夜间全深色）。token 已写入 `apps/web/app/globals.css`，效果图在 `docs/design/`。现有前端（T11/T15/T16/T19/T23）按 UI-01 换皮迁移，之后所有界面按此实现。公司标志已放入 `apps/web/public/brand/`。待补：Noto Sans SC woff2 子集（T11 处理）。

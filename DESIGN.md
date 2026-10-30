@@ -37,7 +37,7 @@
 
 - **产品名**：HiLatv（H、L 大写）。中文场景可写「HiLatv 一句成片」。
 - **标志**：使用公司标志（S 形曲线 + 三根柱 + 源蓝圆点）。侧栏左上角：标志 28px + 文字「HiLatv」18px Medium + 下方「涌现言源」11px 三级文字。
-- 标志文件：`apps/web/public/brand/mark.svg`（深色背景用 Paper 色曲线，浅色背景用 Ink 色曲线，蓝点固定 `#2E5BFF`）。
+- 标志文件（`apps/web/public/brand/`）：`mark.svg` 曲线和柱子用 `currentColor`，随主题自动变 Ink/Paper，蓝点固定 `#2E5BFF`，**界面里优先用这个**（内联 SVG 或 SVGR）；`mark-ink.svg` 浅底用；`mark-paper.svg` 深底用；`mark-reversed.svg` 反白方形版（墨底）。浏览器图标为 `apps/web/app/icon.svg`。
 - 最小尺寸 24px；四周留白 ≥ 蓝点直径 × 2；不得拉伸、描边、加投影或渐变，不得改蓝点颜色。
 - 浏览器图标 / PWA 图标：反白版（墨底 + 白曲线 + 蓝点），圆角 22%。
 - 登录页与空状态可用品牌口号「让数据开口说话 / Data, spoken.」，产品内其他地方不用口号。
@@ -387,5 +387,3 @@ apps/web/
 | P3 方案卡 | `docs/design/day_2_plans.jpg` | `docs/design/night_2_plans.jpg` |
 | P5 生成进度 | `docs/design/day_3_progress.jpg` | `docs/design/night_3_progress.jpg` |
 | P6 成片与改稿 | `docs/design/day_4_result.jpg` | `docs/design/night_4_result.jpg` |
-
-待补：`apps/web/public/brand/mark.svg`（公司标志矢量文件，由公司提供后放入；在此之前用文字「HiLatv」代替标志）。
