@@ -23,9 +23,17 @@ def dub(
     gateway: Any,
     project_id: str,
     attempt: int,
+    archived: bool = False,
 ) -> list[ShotVoiceover]:
+    from workers.brand_kit.people import ConsentError
+    from workers.compliance.consent_gate import assert_voice_allowed
+
     base = brand.voice.speed if brand is not None else DEFAULT_SPEED
     voice = brand.voice.tts_voice if brand is not None else DEFAULT_VOICE
+    try:
+        assert_voice_allowed(voice, brand, archived=archived)
+    except ConsentError as exc:
+        raise QAError(str(exc)) from exc
     plans = plan_prosody(script, base)
     takes: list[ShotVoiceover] = []
     audio_dir = work / "audio" / script.language

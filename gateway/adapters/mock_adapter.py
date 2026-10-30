@@ -119,6 +119,17 @@ def _unstructured(call: Invocation) -> dict[str, object]:
             "evaluator": "mock-judge",
             "notes": "mock",
         }
+    if call.task == "content_safety":
+        blocked = bool(call.params.get("block")) or "HILATV_UNSAFE_SAMPLE" in call.prompt
+        return {
+            "mock": True,
+            "task": "content_safety",
+            "passed": not blocked,
+            "labels": ["unsafe"] if blocked else [],
+            "manual_review": False,
+            "reason": "mock content safety blocked this text" if blocked else "",
+            "stage": str(call.params.get("stage") or ""),
+        }
     return {"mock": True, "task": call.task, "prompt": call.prompt, "seed": call.seed}
 
 

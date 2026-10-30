@@ -78,6 +78,8 @@ testpaths = [
   "workers/nodes/n13_subtitle/tests",
   "workers/nodes/n14_packaging/tests",
   "workers/nodes/n15_compose/tests",
+  "workers/nodes/n16_review/tests",
+  "workers/compliance/tests",
   "workers/nodes/n17_deliver/tests",
   "workers/schemas/tests",
   "workers/workflow/tests",

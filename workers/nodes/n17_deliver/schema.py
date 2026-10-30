@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
+from workers.schemas.licensing import LicensingSummary
 from workers.schemas.script import Script
 
 
@@ -69,6 +70,9 @@ class N17Input(BaseModel):
     regenerate_vertical: bool | None = None
     verify_pixels: bool = False
     work_dir: str | None = None
+    licensing: LicensingSummary | None = None
+    brand_archived: bool = False
+    instruction: str | None = None
 
 
 class GeometryRecord(BaseModel):

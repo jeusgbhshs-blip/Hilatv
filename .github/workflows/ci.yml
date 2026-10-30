@@ -26,8 +26,8 @@ jobs:
       - name: Install Python package
         run: python -m pip install -e ".[dev]"
 
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Install ffmpeg and tesseract
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg tesseract-ocr tesseract-ocr-chi-sim tesseract-ocr-eng
 
       - name: Ruff
         run: |
@@ -66,6 +66,9 @@ jobs:
 
       - name: Accept T18
         run: make accept-t18
+
+      - name: Accept T20
+        run: make accept-t20
 
       - uses: actions/setup-node@v4
         with:

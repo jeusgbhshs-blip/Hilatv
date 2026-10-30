@@ -1,16 +1,42 @@
+import json
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
 from gateway.constants import NO_RENDERED_TEXT
 from gateway.router import RouteTable, default_routes_path
+from workers.brand_kit.people import ConsentError
 from workers.nodes.n08_keyframe.node import run
 from workers.nodes.n08_keyframe.qa import QAError, check
 from workers.nodes.n08_keyframe.tests.shots import request, shot
 from workers.schemas.asset import Candidate
 from workers.schemas.script import GenerationMode
+
+_BRAND = (
+    Path(__file__).resolve().parents[4]
+    / "workers"
+    / "schemas"
+    / "tests"
+    / "fixtures"
+    / "brand_kit.json"
+)
+
+
+def _archived_brand() -> dict:
+    raw = json.loads(_BRAND.read_text(encoding="utf-8"))
+    raw["people"] = [
+        {
+            "person_id": "boss",
+            "role": "老板",
+            "photos": [],
+            "consent": True,
+            "voice_id": None,
+        }
+    ]
+    return raw
 
 
 def test_each_shot_gets_four_keyframes_and_hides_on_screen_text(gateway) -> None:
@@ -25,7 +51,10 @@ def test_each_shot_gets_four_keyframes_and_hides_on_screen_text(gateway) -> None
         on_screen_text=[],
         voiceover="The owner speaks.",
     )
-    result = run(request(shot(), person), gateway=gateway)
+    result = run(
+        request(shot(), person, brand_kit=_archived_brand(), brand_archived=True),
+        gateway=gateway,
+    )
     rows = check(result)
     by_shot: dict[str, list[Candidate]] = {}
     for row in rows:
@@ -42,8 +71,33 @@ def test_each_shot_gets_four_keyframes_and_hides_on_screen_text(gateway) -> None
     person_rows = by_shot["S02"]
     assert person_rows[0].params["prompt"].startswith("Subject-first frame")
     assert person_rows[0].params["shot_type"] == "person"
-    again = run(request(shot(), person), gateway=gateway)
+    again = run(
+        request(shot(), person, brand_kit=_archived_brand(), brand_archived=True),
+        gateway=gateway,
+    )
     assert again.payload["candidates"] == result.payload["candidates"]
+
+
+def test_person_without_archived_consent_does_not_generate(gateway) -> None:
+    person = shot(
+        shot_id="S02",
+        order=2,
+        purpose="人物出镜",
+        visual="未授权人物。画面无任何文字、无 Logo、无价格、无电话号码。",
+        subject_refs=["person:老板"],
+        scene_ref="scene:interview_01",
+        generation_mode="reference_to_video",
+        on_screen_text=[],
+        voiceover="The owner speaks.",
+    )
+    pasted = _archived_brand()
+    with pytest.raises(ConsentError, match="老板"):
+        run(request(person, brand_kit=pasted, brand_archived=False), gateway=gateway)
+    pasted["people"][0]["consent"] = False
+    with pytest.raises(ConsentError, match="老板"):
+        run(request(person, brand_kit=pasted, brand_archived=True), gateway=gateway)
+    logs = gateway.store.list_logs(project_id="proj-1")
+    assert not any(row.get("shot_id") == "S02" for row in logs)
 
 
 def test_push_in_also_renders_a_matching_end_frame(gateway) -> None:

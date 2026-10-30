@@ -142,15 +142,7 @@ def burn_overlays(
                 offset + float(card.out),
             )
         offset += geo.duration_s
-    label = render_overlay(
-        ai_label_text(),
-        weight="bold",
-        font_size=max(12, font - 2),
-        fill="#FFFFFF",
-        background="#111111",
-        padding=4,
-        radius=4,
-    )
+    label = _ai_mark(width, height, safe)
     occupied = _occupied(list(subjects.values()))
     x = int(round((1 - safe.right) * width)) - label.width
     x, y, label = _fit(label, x, int(round(safe.top * height)), width, height, safe, occupied)
@@ -170,6 +162,41 @@ def burn_overlays(
         offset,
     )
     return boxes, placed, spoken
+
+
+def _ai_mark(width: int, height: int, safe: Insets) -> Image.Image:
+    """Corner mark. Glyph box stays at least 5% of the short side when it fits.
+
+    推断: GB 45438-2025 §5.4 sets that floor. We start at 28px so the mark still
+    reads after H.264, then shrink only to stay inside the platform safe area.
+    """
+
+    short = min(width, height)
+    floor = max(8, int(short * 0.05) + 1)
+    room_w = max(8, int((1 - safe.left - safe.right) * width) - 4)
+    room_h = max(8, int((1 - safe.top - safe.bottom) * height) - 4)
+    size = max(floor, 28)
+    image = render_overlay(
+        ai_label_text(),
+        weight="bold",
+        font_size=size,
+        fill="#FFFFFF",
+        background="#111111",
+        padding=4,
+        radius=4,
+    )
+    while (image.width > room_w or image.height > room_h) and size > floor:
+        size -= 2
+        image = render_overlay(
+            ai_label_text(),
+            weight="bold",
+            font_size=size,
+            fill="#FFFFFF",
+            background="#111111",
+            padding=4,
+            radius=4,
+        )
+    return image
 
 
 def _cues(

@@ -39,6 +39,12 @@ def run(
 ) -> NodeResult:
     request = NodeRequest.model_validate(raw)
     N14Input.model_validate(request.payload)
+    from workers.schemas.label_lock import LabelLocked, walk_label_edits
+
+    try:
+        walk_label_edits(request.payload)
+    except LabelLocked as exc:
+        raise QAError(str(exc), retryable=False) from exc
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     _ = gateway
@@ -217,8 +223,8 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     label = ai_label_text()
     label_spec = {
         "text": label,
-        "weight": "regular",
-        "font_size": max(14, round(height * 0.04)),
+        "weight": "bold",
+        "font_size": max(28, round(min(width, height) * 0.06)),
         "fill": "#FFFFFF",
         "highlight": accent,
         "background": "#142033",

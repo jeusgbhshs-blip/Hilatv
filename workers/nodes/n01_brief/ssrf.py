@@ -95,6 +95,21 @@ def is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     )
 
 
+def assert_public_url(url: str, *, resolver: Resolver | None = None) -> None:
+    """Reject a URL the SSRF guard would not fetch. This does not download the body."""
+
+    hooks = _hooks.get()
+
+    def resolve(host: str, port: int) -> list[str]:
+        if resolver is not None:
+            return resolver(host, port)
+        if hooks is not None:
+            return hooks.resolver(host, port)
+        return _system_resolver(host, port, 5.0)
+
+    _validated_target(_logical_url(url), resolve)
+
+
 def fetch_bytes(url: str, *, timeout: float, max_bytes: int) -> tuple[bytes, str]:
     """GET ``url`` and return ``(body, content_type)``.
 

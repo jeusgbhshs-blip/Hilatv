@@ -158,6 +158,11 @@ class Gateway:
     def judge(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
         return self.execute("judge", prompt, **kwargs)
 
+    def content_safety(self, text: str, **kwargs: Any) -> dict[str, Any]:
+        params = dict(kwargs.pop("params", None) or {})
+        params.setdefault("stage", "input")
+        return self.execute("content_safety", text, params=params, **kwargs)
+
     def execute(
         self,
         task: str,
@@ -538,6 +543,11 @@ def music(prompt: str, **kwargs: Any) -> dict[str, Any]:
 def judge(prompt: str, **kwargs: Any) -> dict[str, Any]:
     gateway = kwargs.pop("gateway", None)
     return (gateway or get_gateway()).judge(prompt, **kwargs)
+
+
+def content_safety(text: str, **kwargs: Any) -> dict[str, Any]:
+    gateway = kwargs.pop("gateway", None)
+    return (gateway or get_gateway()).content_safety(text, **kwargs)
 
 
 def _prepare_prompt(task: str, prompt: str) -> tuple[str, str | None]:
