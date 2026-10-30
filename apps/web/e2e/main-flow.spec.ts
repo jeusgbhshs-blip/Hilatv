@@ -92,8 +92,10 @@ test("one sentence becomes a playable download", async ({ page }) => {
   await expect
     .poll(async () => player.evaluate((element: HTMLVideoElement) => element.paused))
     .toBe(false);
-  await expect(page.getByLabel("版本")).toBeVisible();
-  await expect(page.getByRole("option", { name: "上一版（即将开放）" })).toBeDisabled();
+  await expect(page.getByLabel("比例")).toBeVisible();
+  await expect(page.getByLabel("语种")).toBeVisible();
+  await expect(page.getByLabel("时长")).toBeVisible();
+  await expect(page.getByRole("button", { name: "导出其他版本" })).toBeVisible();
   await expect(page.getByLabel("改稿")).toBeDisabled();
   await expect(page.getByRole("button", { name: "发送改稿" })).toBeDisabled();
   await expectNoHorizontalOverflow(page);
