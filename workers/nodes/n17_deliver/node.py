@@ -112,6 +112,15 @@ def _execute(
         shot_id=request.shot_id,
         attempt=attempt,
     )
+    from workers.compliance.gate import open_delivery
+
+    open_delivery(
+        request.project_id,
+        payload,
+        request.payload,
+        gateway=gateway,
+        attempt=attempt,
+    )
     root = project_path(request.project_id, create=True).resolve()
     master = _contained_file(root, payload.master_path)
     info = probe(master)
@@ -167,6 +176,7 @@ def _execute(
                     gateway=gateway,
                     project_id=request.project_id,
                     attempt=attempt,
+                    enterprise_id=payload.enterprise_id,
                 ),
             )
     versions: list[DeliveryVersion] = []
@@ -276,6 +286,16 @@ def _execute(
             )
     if prompts and NO_RENDERED_TEXT[:12] not in prompts[0] and "on-screen text" not in prompts[0]:
         raise QAError("localization prompt dropped the no-text constraint")
+    from workers.compliance.gate import close_delivery
+
+    compliance = close_delivery(
+        request.project_id,
+        payload,
+        versions,
+        gateway=gateway,
+        attempt=attempt,
+        root=root,
+    )
     log_event(
         "node_finished",
         project_id=request.project_id,
@@ -299,7 +319,12 @@ def _execute(
                 "subtitles": "render-layer PNG, Noto Sans CJK SC (OFL 1.1)",
                 "fonts": "Noto Sans CJK SC, SIL OFL 1.1",
                 "music": "not included in this export",
+                "materials_note": compliance["materials_note"],
+                "explicit_label": compliance["explicit_label"],
+                "implicit_label": compliance["implicit_label"],
+                "manual_review": compliance["manual_review"],
             },
+            "compliance": compliance,
             "languages": languages,
             "aspect_ratios": aspects,
             "durations_s": targets,

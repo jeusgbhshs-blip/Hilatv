@@ -41,6 +41,12 @@ routes:
     language: "*"
     primary: {provider: mock, model: mock-image}
     fallbacks: []
+  - id: content-safety
+    task: content_safety
+    shot_type: "*"
+    language: "*"
+    primary: {provider: mock, model: mock-content-safety}
+    fallbacks: []
 """
 
 

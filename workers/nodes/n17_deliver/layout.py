@@ -142,18 +142,8 @@ def burn_overlays(
                 offset + float(card.out),
             )
         offset += geo.duration_s
-    label = render_overlay(
-        ai_label_text(),
-        weight="bold",
-        font_size=max(12, font - 2),
-        fill="#FFFFFF",
-        background="#111111",
-        padding=4,
-        radius=4,
-    )
-    occupied = _occupied(list(subjects.values()))
-    x = int(round((1 - safe.right) * width)) - label.width
-    x, y, label = _fit(label, x, int(round(safe.top * height)), width, height, safe, occupied)
+    label = _ai_mark(width, height, safe)
+    x, y = _place_label(label, width, height, safe)
     path = work / "overlays" / "ai.png"
     save_png(label, path)
     _remember(
@@ -170,6 +160,44 @@ def burn_overlays(
         offset,
     )
     return boxes, placed, spoken
+
+
+def _ai_mark(width: int, height: int, safe: Insets) -> Image.Image:
+    """Corner mark whose ink is at least 5% of the short side and still fits."""
+
+    from workers.compliance.label_measure import glyph_ink_height, minimum_glyph_px
+
+    short = min(width, height)
+    need = minimum_glyph_px(short)
+    room_w = max(8, int((1 - safe.left - safe.right) * width) - 2)
+    room_h = max(8, int((1 - safe.top - safe.bottom) * height) - 2)
+    chosen: Image.Image | None = None
+    for size in range(max(need, 36), need - 1, -1):
+        image = render_overlay(
+            ai_label_text(),
+            weight="bold",
+            font_size=size,
+            fill="#FFFFFF",
+            background="#111111",
+            padding=4,
+            radius=4,
+        )
+        if glyph_ink_height(image) < need:
+            continue
+        if image.width <= room_w and image.height <= room_h:
+            chosen = image
+            break
+    if chosen is None:
+        raise QAError("AI生成 的字高达不到画面短边的 5%，或放不进安全区")
+    return chosen
+
+
+def _place_label(image: Image.Image, width: int, height: int, safe: Insets) -> tuple[int, int]:
+    """Top-left corner of the safe area. That corner is still a frame corner."""
+
+    x = int(round(safe.left * width))
+    y = int(round(safe.top * height))
+    return x, y
 
 
 def _cues(

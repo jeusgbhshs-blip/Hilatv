@@ -1,7 +1,8 @@
 """N12 envelopes. Shots stay on the chapter 5 models.
 
-``LicenseRecord`` is the handoff for T20's licensing summary. T20 is not on
-main, so this task defines the record here instead of writing into N17.
+``LicenseRecord`` is the only licence row. T20's delivery note uses the same
+class. ``font`` and ``voice`` are the render-layer rows T20 adds; music and
+sound effects stay ``music`` and ``sfx``.
 """
 
 from __future__ import annotations
@@ -66,11 +67,12 @@ class LicenseRecord(BaseModel):
     """
 
     record_id: str = Field(min_length=1)
-    kind: Literal["music", "sfx"]
+    kind: Literal["music", "sfx", "font", "voice"]
     source: str = ""
     license: str = ""
     evidence_ref: str = ""
     expires_on: str = ""
+    # ``none`` is the explicit perpetual mark. An empty value is missing and blocks.
     usage_scope: str = ""
     title: str = ""
     uri: str = ""

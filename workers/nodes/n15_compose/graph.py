@@ -128,9 +128,17 @@ def command(timeline: Timeline, dest: str, variant: str) -> list[str]:
         "+bitexact",
         "-map_metadata",
         "-1",
+        *_aigc_args(timeline, variant),
         dest,
     ]
     return args
+
+
+def _aigc_args(timeline: Timeline, variant: str) -> list[str]:
+    from workers.compliance.metadata import metadata_args, new_produce_id
+
+    ident = timeline.produce_ids.get(variant) or new_produce_id()
+    return metadata_args(content_id=ident)
 
 
 def _overlays_for(timeline: Timeline, variant: str) -> list[OverlayItem]:

@@ -5,7 +5,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 
 from workers.schemas.base import NODE_ID_PATTERN, JsonInt, SchemaModel
 
@@ -50,3 +50,14 @@ class RevisionDirective(SchemaModel):
             if not isinstance(item, str) or not item:
                 raise ValueError("items must be non-empty strings")
         return value
+
+    @model_validator(mode="after")
+    def visible_ai_label_cannot_be_removed(self) -> RevisionDirective:
+        from workers.schemas.label_lock import LabelLocked, walk_label_edits
+
+        try:
+            walk_label_edits(self.change)
+            walk_label_edits(self.keep)
+        except LabelLocked as exc:
+            raise ValueError(str(exc)) from exc
+        return self
