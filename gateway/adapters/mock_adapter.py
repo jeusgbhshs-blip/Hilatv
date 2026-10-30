@@ -13,6 +13,7 @@ from gateway.media_bytes import (
     MOCK_HEIGHT,
     MOCK_WIDTH,
     prosody_timing,
+    render_beat_wav,
     render_mp4,
     render_png,
     render_wav,
@@ -47,7 +48,7 @@ class MockAdapter:
             output = fill_json_schema(call.json_schema)
             if not isinstance(output, dict):
                 output = {"value": output}
-        elif self.store is not None and call.task in {"image", "video", "tts"}:
+        elif self.store is not None and call.task in {"image", "video", "tts", "music"}:
             output = _stored_media(call, self.store)
         else:
             output = _unstructured(call)
@@ -111,14 +112,9 @@ def _unstructured(call: Invocation) -> dict[str, object]:
             "language": call.language,
         }
     if call.task == "music":
-        return {
-            "mock": True,
-            "task": "music",
-            "uri": f"mock://music/{digest}",
-            "prompt": call.prompt,
-            "duration_s": call.params.get("duration_s"),
-            "seed": call.seed,
-        }
+        fields = _music_fields(call)
+        fields["uri"] = f"mock://music/{digest}"
+        return fields
     if call.task == "judge":
         return {
             "mock": True,
@@ -163,6 +159,17 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
             "negative_prompt": call.negative_prompt,
             "seed": call.seed,
         }
+    if call.task == "music":
+        fields = _music_fields(call)
+        duration = _positive(call.params.get("duration_s"), 4.0)
+        bpm = _positive(call.params.get("bpm"), 100.0)
+        data = render_beat_wav(duration_s=duration, bpm=bpm, seed=call.seed)
+        uri = store.put(f"gateway/music/{digest}.wav", data, "audio/wav")
+        fields["uri"] = uri
+        fields["mime_type"] = "audio/wav"
+        fields["duration_s"] = duration
+        fields["bpm"] = bpm
+        return fields
     speed, pause = _prosody(call)
     data, stamps, duration = render_wav(
         call.prompt, call.seed, speed=speed, pause_s=pause, language=call.language
@@ -196,6 +203,36 @@ def _video_seconds(call: Invocation) -> float:
     return min(10.0, value)
 
 
+def _music_fields(call: Invocation) -> dict[str, Any]:
+    """License and tempo travel with every mock music response.
+
+    The defaults are the in-repo test library (synthesized, CC0). A node that
+    picked a catalog row passes that row's source and license through params.
+    """
+
+    source = call.params.get("source")
+    license_name = call.params.get("license")
+    library_id = call.params.get("library_id")
+    return {
+        "mock": True,
+        "task": "music",
+        "prompt": call.prompt,
+        "duration_s": call.params.get("duration_s"),
+        "seed": call.seed,
+        "bpm": _positive(call.params.get("bpm"), 100.0),
+        "source": source
+        if isinstance(source, str) and source.strip()
+        else "hilatv-test-library/steady",
+        "license": license_name
+        if isinstance(license_name, str) and license_name.strip()
+        else "CC0-1.0",
+        "library_id": library_id
+        if isinstance(library_id, str) and library_id.strip()
+        else "hilatv-self-made-steady",
+        "instrumental": True,
+    }
+
+
 def _prosody(call: Invocation) -> tuple[float, float]:
     return _positive(call.params.get("speed"), 1.0), _nonneg(call.params.get("pause_s"), 0.0)
 
@@ -226,6 +263,8 @@ def _digest(call: Invocation) -> str:
             "duration_s": call.params.get("duration_s"),
             "speed": call.params.get("speed"),
             "pause_s": call.params.get("pause_s"),
+            "bpm": call.params.get("bpm"),
+            "library_id": call.params.get("library_id"),
             "language": call.language,
         },
         ensure_ascii=False,
