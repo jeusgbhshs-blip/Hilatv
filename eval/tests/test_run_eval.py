@@ -142,6 +142,7 @@ def test_review_shot_delegates_to_t12(tmp_path: Path, monkeypatch: pytest.Monkey
             "total": 9,
             "evaluator": "t12-test",
             "notes": "planted",
+            "visual_reviewed": True,
         }
 
     monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
@@ -266,6 +267,7 @@ def test_t12_missing_dimension_is_invalid(tmp_path: Path, monkeypatch: pytest.Mo
             "total": 8,
             "evaluator": "t12",
             "notes": "缺项",
+            "visual_reviewed": True,
         }
 
     monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
@@ -356,6 +358,67 @@ def test_t12_exception_is_review_error(tmp_path: Path, monkeypatch: pytest.Monke
     assert review.status == "review_error"
     assert review.report is None
     assert "TimeoutError" in review.note
+
+
+def test_t12_dump_error_is_review_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    class Boom:
+        def model_dump(self, mode: str = "json") -> dict[str, object]:
+            raise RuntimeError(f"dump failed {mode}")
+
+    def fake(_payload: dict[str, object]) -> Boom:
+        return Boom()
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    review = review_shot(
+        {"shot_id": "S01", "candidate_uri": _png(tmp_path)},
+        gateway=object(),
+    )
+    assert review.status == "review_error"
+    assert review.report is None
+    assert "RuntimeError" in review.note
+
+
+def test_rule_only_8_6_is_not_reviewed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """T12's no-opinion fallback is 9/8/8/9/9, total 8.6. That is not a visual review."""
+
+    def fake(_payload: dict[str, object]) -> dict[str, object]:
+        return {
+            "scores": {
+                "product_fidelity": 9,
+                "motion_quality": 8,
+                "aesthetics": 8,
+                "prompt_match": 9,
+                "artifact_free": 9,
+            },
+            "hard_fail": [],
+            "total": 8.6,
+            "evaluator": "rule+vlm-v1",
+            "notes": "rules found nothing",
+        }
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    review = review_shot(
+        {"shot_id": "S01", "candidate_uri": _png(tmp_path)},
+        gateway=object(),
+    )
+    assert review.status == "not_reviewed"
+    assert review.report is None
+    assert review.note
+
+
+def test_short_video_is_not_opened(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    clip = tmp_path / "clip.mp4"
+    clip.write_bytes(b"\x00\x00\x00\x18ftyp")
+    calls = {"n": 0}
+
+    def fake(_payload: dict[str, object]) -> dict[str, object]:
+        calls["n"] += 1
+        return _eight_four(visual_reviewed=True)
+
+    monkeypatch.setattr("eval.qa_port.t12_review_shot", lambda: fake)
+    review = review_shot({"shot_id": "S01", "candidate_uri": str(clip)}, gateway=object())
+    assert calls["n"] == 0
+    assert review.status == "not_reviewed"
 
 
 def test_storyboard_text_is_not_scored() -> None:

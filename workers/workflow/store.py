@@ -80,21 +80,29 @@ def _atomic_text(path: Path, text: str) -> None:
 
     ``Path.write_text`` truncates the destination first. A status read in
     another thread can then observe an empty file. Write a sibling temp file,
-    fsync it, and ``os.replace`` it so readers see the previous document or
-    the new one.
+    fsync it, ``os.replace`` it, then fsync the directory so the new name is
+    durable. Readers see the previous document or the new one.
     """
 
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     tmp = Path(tmp_name)
+    replaced = False
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
+        replaced = True
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
     except Exception:
-        tmp.unlink(missing_ok=True)
+        if not replaced:
+            tmp.unlink(missing_ok=True)
         raise
 
 

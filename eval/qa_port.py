@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import importlib
 import io
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -45,6 +47,7 @@ TEXT_ONLY_LABEL = "只评了文字，不计入质量结论"
 UNREVIEWED_LABEL = "未评审"
 _NOT_REVIEWED_FAILS = frozenset({"not_reviewed", "judge_unavailable", "unreviewed"})
 _VIDEO_SUFFIXES = frozenset({".mp4", ".mov", ".webm", ".mkv", ".m4v"})
+_MIN_VIDEO_BYTES = 1024
 
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
 _ENV = Environment(
@@ -106,12 +109,12 @@ def review_shot(payload: dict[str, Any], *, gateway: Any) -> ShotReview:
     if fn is not None:
         try:
             raw_obj = fn(dict(payload))
+            raw = _as_dict(raw_obj)
         except Exception as exc:
             return _review_error("t12", media_uri, exc)
-        raw = _as_dict(raw_obj)
         if raw is None:
             return _invalid("t12", media_uri, "review_shot did not return an object")
-        if _not_a_review(raw):
+        if not _visually_reviewed(raw):
             return _not_reviewed("t12", media_uri, _refusal_note(raw))
         try:
             report = coerce_judge(raw)
@@ -249,8 +252,7 @@ def _opens(uri: str, gateway: Any) -> bool:
         return False
     try:
         if path.suffix.lower() in _VIDEO_SUFFIXES:
-            with path.open("rb") as handle:
-                return bool(handle.read(12))
+            return _video_file_opens(path)
         data = path.read_bytes()
     except OSError:
         return False
@@ -286,8 +288,8 @@ def _bytes_open(uri: str, data: bytes | None) -> bool:
     if not data:
         return False
     suffix = Path(uri.split("?", 1)[0]).suffix.lower()
-    if suffix in _VIDEO_SUFFIXES or b"ftyp" in data[:32]:
-        return True
+    if suffix in _VIDEO_SUFFIXES or _is_isom(data[:32]):
+        return _video_bytes_open(data, suffix or ".mp4")
     return _image_opens(data)
 
 
@@ -302,11 +304,64 @@ def _image_opens(data: bytes | None) -> bool:
     return True
 
 
+def _video_file_opens(path: Path) -> bool:
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as handle:
+            header = handle.read(32)
+    except OSError:
+        return False
+    if size < _MIN_VIDEO_BYTES or not _container_header(header, path.suffix.lower()):
+        return False
+    return _probe_opens(path)
+
+
+def _video_bytes_open(data: bytes, suffix: str) -> bool:
+    if len(data) < _MIN_VIDEO_BYTES or not _container_header(data[:32], suffix):
+        return False
+    ending = suffix if suffix in _VIDEO_SUFFIXES else ".mp4"
+    fd, name = tempfile.mkstemp(suffix=ending)
+    os_path = Path(name)
+    try:
+        os.write(fd, data)
+        os.close(fd)
+        fd = -1
+        return _probe_opens(os_path)
+    except OSError:
+        return False
+    finally:
+        if fd >= 0:
+            os.close(fd)
+        os_path.unlink(missing_ok=True)
+
+
+def _container_header(header: bytes, suffix: str) -> bool:
+    if suffix in {".webm", ".mkv"}:
+        return header.startswith(b"\x1a\x45\xdf\xa3")
+    return _is_isom(header)
+
+
+def _is_isom(header: bytes) -> bool:
+    return len(header) >= 12 and header[4:8] == b"ftyp"
+
+
+def _probe_opens(path: Path) -> bool:
+    try:
+        from workers.media.ffmpeg import probe
+
+        info = probe(path)
+    except Exception:
+        return False
+    return bool(info.get("width")) and bool(info.get("height"))
+
+
 def _as_dict(raw: Any) -> dict[str, Any] | None:
     if hasattr(raw, "model_dump"):
         dumped = raw.model_dump(mode="json")
         if not isinstance(dumped, dict):
             return None
+        if hasattr(raw, "visual_reviewed"):
+            dumped["visual_reviewed"] = getattr(raw, "visual_reviewed")
         for flag in ("degraded", "mock"):
             if hasattr(raw, flag):
                 dumped[flag] = getattr(raw, flag)
@@ -314,6 +369,12 @@ def _as_dict(raw: Any) -> dict[str, Any] | None:
     if isinstance(raw, dict):
         return raw
     return None
+
+
+def _visually_reviewed(raw: dict[str, Any]) -> bool:
+    """True only for an explicit visual review. A missing field stays False."""
+
+    return raw.get("visual_reviewed") is True
 
 
 def _not_a_review(raw: dict[str, Any]) -> bool:
