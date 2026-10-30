@@ -1,0 +1,16 @@
+id: ambient_pan
+label: 氛围横摇
+shot_sizes:
+  - wide
+purposes:
+  - proof
+  - hook
+prompt_fragment: >-
+  The camera pans across the room at a steady pace and keeps the horizon level.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: wan
+motion_strength: medium
+status: 试用
+formal: false
+tested_runs: 0

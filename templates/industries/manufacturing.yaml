@@ -1,5 +1,6 @@
 industry: manufacturing
 label: 制造业
+manual_review: false
 narrative:
   - 痛点
   - 产品特写
@@ -67,3 +68,35 @@ keywords:
   - {text: 工厂, weight: 2}
   - {text: 车间, weight: 2}
 clarify_question: 这条片以产品宣传为主，还是以工厂实力为主？
+shot_plan:
+  - {beat: 痛点, preset: slow_push_in}
+  - {beat: 产品特写, preset: detail_drift}
+  - {beat: 参数, preset: locked_off}
+  - {beat: 工厂与检测, preset: rise_reveal}
+  - {beat: 认证, preset: locked_off}
+  - {beat: 行动号召, preset: locked_off}
+narrative_structures:
+  - id: spec_default
+    label: 产品宣传主结构
+    beats:
+      - 痛点
+      - 产品特写
+      - 参数
+      - 工厂与检测
+      - 认证
+      - 行动号召
+  - id: factory_tour
+    label: 工厂实力
+    beats:
+      - 车间全景
+      - 加工设备
+      - 检测
+      - 认证
+      - 联系
+  - id: spec_sheet
+    label: 参数说明
+    beats:
+      - 痛点
+      - 产品特写
+      - 参数
+      - 联系

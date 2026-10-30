@@ -1,5 +1,6 @@
 industry: local_life
 label: 本地生活
+manual_review: false
 narrative:
   - 环境
   - 招牌产品
@@ -60,3 +61,39 @@ keywords:
   - {text: 奶茶, weight: 4}
   - {text: 到店, weight: 3}
 clarify_question: 这条片是探店，还是活动推广？
+shot_plan:
+  - {beat: 环境, preset: doorway_enter}
+  - {beat: 招牌产品, preset: food_macro}
+  - {beat: 氛围, preset: ambient_pan}
+  - {beat: 优惠, preset: locked_off}
+  - {beat: 地址, preset: locked_off}
+narrative_structures:
+  - id: spec_default
+    label: 探店主结构
+    beats:
+      - 环境
+      - 招牌产品
+      - 氛围
+      - 优惠
+      - 地址
+  - id: route
+    label: 到店路线
+    beats:
+      - 街区
+      - 门头
+      - 招牌菜
+      - 地址
+  - id: event
+    label: 活动现场
+    beats:
+      - 现场
+      - 招牌产品
+      - 优惠
+      - 地址
+  - id: taste
+    label: 口味特写
+    beats:
+      - 招牌产品
+      - 制作过程
+      - 氛围
+      - 到店方式
