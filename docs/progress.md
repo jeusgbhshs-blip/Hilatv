@@ -103,7 +103,7 @@
 - 推断：不实现办法第九条的「无显式标识导出」。改稿指令「去掉 AI 标识」、`omit_ai_label` 之类的开关、以及 N18 的 `RevisionDirective` 都会被拒绝。N15 即使收到一份没有角标的元素表，也会自己再画一层。
 - 内容安全是网关任务 `content_safety`。无 Key 或 `HILATV_LIVE` 关闭时走 mock，费用记 0。mock 在文本含 `HILATV_UNSAFE_SAMPLE` 时判定不通过。推断：live adapter 向 `{CONTENT_SAFETY_BASE_URL}/moderate` 发送 `{"text","stage"}`，这只是占位，不是某一家云厂商的正式协议。
 - 输入审查在编码前，输出审查在成片写入之后。任一次不通过都不会把结果当成交付。极限词沿用品牌 `banned_words`，没有品牌表时用广告法默认表（「最」是子串，可能命中「最后」这类词，这是现有 `find_banned_words` 的行为）。医疗、食品、金融是关键词标记，不单独阻断文件。行业模板上的 `manual_review`（目前只有政企为 true）同样只打人工审核标记，不阻断。
-- 人物和克隆声只从 `enterprise_id` 对应的品牌档案取出，再经 `people_for_use` / `release_kit`。请求里的 `brand_archived` 和自报 `consent=true` 不作数。库存 TTS 音色不是克隆声。
+- 人物和克隆声只从 `enterprise_id` 对应的品牌档案取出，再经 `people_for_use` / `release_kit`。请求里的 `brand_archived` 和自报 `consent=true` 不作数。旁白 `voice_id` 只允许两处：网关服务端内置表 `BUILTIN_TTS_VOICES`（`zh_male_steady`、`zh_female_steady`、以及豆包映射 `zh_male_M392_conversation_wvae_bigtts`），或该企业档案里已经放出的克隆声。请求资料里有没有这个人，都不参与判断。表外且档案没有的 `voice_id` 拒绝。`zh_female_steady` 是 N18 的库存女声，不是克隆。
 - 授权记录只用 main 上 N12 的 `LicenseRecord` / `LicensingSummary`（`workers/nodes/n12_music/schema.py`），没有第二套类。T20 只把 `kind` 扩成也包含 `font` 和 `voice`，给字体和库存旁白用。缺来源、许可、证明、到期或使用范围时，沿用 N12 的 `incomplete_reason` 阻断。`expires_on` 为 `none` 表示不到期；ISO 日期早于今天（上海时区，当天仍有效）也阻断。`HILATV_LIVE=1` 时拒绝 `hilatv-test-` 来源和 `CC0-1.0` 测试曲库许可，与 N12 相同。
 - 素材说明写在项目目录 `compliance/materials-and-licences.txt`，路径由服务端生成。客户给的绝对路径必须落在项目目录内。http(s) 证明默认只做 SSRF 分类，不下载；`HILATV_FETCH_LICENCE_PROOF=1` 时才经 SEC-01 的 `fetch_bytes` 拉取。
 - 不新增 Alembic revision，head 仍是 `t03_gateway_0002`。备案登记和私有化部署不在本任务。
