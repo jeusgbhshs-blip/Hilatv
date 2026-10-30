@@ -171,6 +171,36 @@ def update_snapshot(project_id: str, **fields: Any) -> dict[str, Any]:
         return snapshot
 
 
+def hold_expired_budget(project_id: str) -> None:
+    """Stop a project after a regen reservation expires or a late charge lands.
+
+    Callers must already have released the regen-budget file lock. The lock
+    order is the project lock first, then that file lock, whenever one thread
+    holds both. This function takes only the project lock, and it reads and
+    writes the snapshot inside that lock so a concurrent save is not overwritten
+    from a stale copy.
+    """
+
+    if not valid_project_id(project_id):
+        return
+    with locked_project(project_id) as directory:
+        if not (directory / "project.json").is_file():
+            return
+        snapshot = _read(directory, project_id)
+        if snapshot.get("status") == "needs_human_review" and not snapshot.get("deliverable"):
+            return
+        kept = contained_file(project_id, snapshot.get("deliverable"))
+        snapshot["status"] = "needs_human_review"
+        snapshot["phase"] = "待人工复核"
+        snapshot["node"] = "n16_final_review"
+        snapshot["message"] = "重生预留已超时，成片暂停，需要人工放行"
+        snapshot["paused"] = True
+        snapshot["deliverable"] = None
+        if kept:
+            snapshot["held_deliverable"] = kept
+        _write(directory, snapshot)
+
+
 def read_snapshot(project_id: str) -> dict[str, Any] | None:
     if not valid_project_id(project_id):
         return None
@@ -202,13 +232,37 @@ def read_snapshot(project_id: str) -> dict[str, Any] | None:
     return None
 
 
+def contained_file(project_id: str, raw: object) -> str | None:
+    """A real file inside this project directory. Missing or outside paths are ignored."""
+
+    if not isinstance(raw, str) or not raw.strip() or not valid_project_id(project_id):
+        return None
+    path = Path(raw).expanduser()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    root = project_path(project_id).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    if not resolved.is_file():
+        return None
+    return str(resolved)
+
+
 def record_human_release(
     project_id: str,
     *,
     releaser: str | None = None,
     enterprise_id: str | None = None,
 ) -> dict[str, Any]:
-    """Audit that a person released a held film. Time plus the releaser's identity."""
+    """Audit that a person released a held film. Time plus the releaser's identity.
+
+    When the hold kept a master file, the deliverable pointer is put back.
+    The file itself is not deleted or rewritten.
+    """
 
     if not valid_project_id(project_id):
         raise ValueError("invalid project id")
@@ -226,6 +280,15 @@ def record_human_release(
     }
     with _lock(project_id) as directory:
         snapshot = _read(directory, project_id)
+        kept = contained_file(project_id, snapshot.get("held_deliverable"))
+        if kept:
+            snapshot["deliverable"] = kept
+            snapshot.pop("held_deliverable", None)
+            snapshot["status"] = "completed"
+            snapshot["paused"] = False
+            snapshot["phase"] = "成片"
+            snapshot["message"] = "人工复核已放行"
+            snapshot["error"] = None
         events = list(snapshot.get("events") or [])
         events.append(summary)
         snapshot["events"] = events[-200:]

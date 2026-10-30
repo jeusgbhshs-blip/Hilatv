@@ -86,6 +86,185 @@ def test_try_take_n_does_not_double_charge(tmp_path, monkeypatch: pytest.MonkeyP
     assert open_project_budget("proj-race").used == 2
 
 
+def test_the_same_batch_key_charges_once_when_the_budget_has_room(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "10")
+    start = threading.Barrier(2)
+    begun: list[str] = []
+
+    def worker() -> None:
+        start.wait()
+        budget = open_project_budget("proj-once")
+        status, token = budget.begin_batch(2, "batch-a")
+        begun.append(status)
+        if status == "begun":
+            assert budget.finish_batch(2, "batch-a", token) == "taken"
+            worker.token = token
+
+    worker.token = ""
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert begun.count("begun") == 1
+    assert open_project_budget("proj-once").used == 2
+    assert open_project_budget("proj-once").finish_batch(2, "batch-a", worker.token) == "already"
+    assert open_project_budget("proj-once").used == 2
+
+
+def test_two_keys_cannot_both_reserve_the_same_slots(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "2")
+    start = threading.Barrier(2)
+    begun: list[str] = []
+
+    def worker(key: str) -> None:
+        start.wait()
+        status, token = open_project_budget("proj-slots").begin_batch(2, key)
+        begun.append(status)
+        if status == "begun":
+            assert open_project_budget("proj-slots").try_take_n(1) is False
+            assert open_project_budget("proj-slots").finish_batch(2, key, token) == "taken"
+
+    threads = [
+        threading.Thread(target=worker, args=("batch-a",)),
+        threading.Thread(target=worker, args=("batch-b",)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert begun.count("begun") == 1
+    assert "refused" in begun
+    budget = open_project_budget("proj-slots")
+    assert budget.used == 2
+    assert budget.reserved == 0
+    assert budget.try_take_n(1) is False
+
+
+def test_try_take_n_sees_a_live_reservation(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "3")
+    budget = open_project_budget("proj-hold")
+    status, token = budget.begin_batch(2, "batch-a")
+    assert status == "begun"
+    assert budget.used == 0
+    assert budget.can_take(2) is False
+    assert budget.try_take_n(2) is False
+    assert budget.try_take_n(1) is True
+    assert budget.used == 1
+    assert budget.finish_batch(2, "batch-a", token) == "taken"
+    assert budget.used == 3
+    assert budget.reserved == 0
+    stored = json.loads((tmp_path / "proj-hold" / "regen_budget.json").read_text(encoding="utf-8"))
+    assert stored["used"] == 3
+    assert "reserved" not in stored
+
+
+def test_partial_finish_charges_only_the_saved_shots(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
+    budget = open_project_budget("proj-part")
+    status, token = budget.begin_batch(2, "batch-a")
+    assert status == "begun"
+    assert budget.finish_batch(1, "batch-a", token) == "taken"
+    assert budget.used == 1
+    assert budget.reserved == 0
+    assert budget.can_take(3) is True
+    assert budget.try_take_n(1) is True
+    assert budget.used == 2
+    assert budget.finish_batch(1, "batch-a", token) == "already"
+    assert budget.used == 2
+
+
+def test_expired_reservation_is_released_and_the_project_is_held(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
+    from workers.workflow.store import init_project, read_snapshot
+
+    master = tmp_path / "proj-stale" / "master.mp4"
+    master.parent.mkdir(parents=True, exist_ok=True)
+    master.write_bytes(b"master-bytes")
+    init_project("proj-stale", sentence="一句", status="completed", deliverable=str(master))
+    budget = open_project_budget("proj-stale")
+    status, _token = budget.begin_batch(2, "stuck")
+    assert status == "begun"
+    path = tmp_path / "proj-stale" / "regen_budget.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["reserved"]["stuck"]["expires"] = 0
+    path.write_text(json.dumps(stored) + "\n", encoding="utf-8")
+    assert budget.batch_status("stuck") == "free"
+    assert budget.used == 0
+    assert budget.reserved == 0
+    assert budget.can_take(2) is True
+    snapshot = read_snapshot("proj-stale") or {}
+    assert snapshot["status"] == "needs_human_review"
+    assert not snapshot.get("deliverable")
+    assert snapshot["held_deliverable"] == str(master.resolve())
+    assert master.read_bytes() == b"master-bytes"
+
+
+def test_late_finish_after_expiry_bills_the_saved_shots(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
+    from workers.workflow.store import init_project, read_snapshot
+
+    init_project("proj-late", sentence="一句", status="completed")
+    budget = open_project_budget("proj-late")
+    status, token = budget.begin_batch(2, "stuck")
+    assert status == "begun"
+    path = tmp_path / "proj-late" / "regen_budget.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["reserved"]["stuck"]["expires"] = 0
+    path.write_text(json.dumps(stored) + "\n", encoding="utf-8")
+    assert budget.finish_batch(2, "stuck", token) == "audited"
+    assert budget.used == 2
+    assert budget.reserved == 0
+    assert budget.finish_batch(2, "stuck", token) == "already"
+    assert budget.used == 2
+    snapshot = read_snapshot("proj-late") or {}
+    assert snapshot["status"] == "needs_human_review"
+
+
+def test_late_finish_does_not_spend_the_new_reservation(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
+    budget = open_project_budget("proj-two")
+    status, first = budget.begin_batch(2, "same")
+    assert status == "begun"
+    path = tmp_path / "proj-two" / "regen_budget.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    stored["reserved"]["same"]["expires"] = 0
+    path.write_text(json.dumps(stored) + "\n", encoding="utf-8")
+    assert budget.batch_status("same") == "free"
+    status, second = budget.begin_batch(2, "same")
+    assert status == "begun"
+    assert second != first
+    assert budget.finish_batch(2, "same", first) == "audited"
+    assert budget.used == 2
+    assert budget.reserved == 2
+    assert budget.finish_batch(2, "same", second) == "taken"
+    assert budget.used == 4
+    assert budget.reserved == 0
+
+
 def test_project_id_cannot_escape_the_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     with pytest.raises(SettingsError):

@@ -13,6 +13,7 @@ from app.projects import prepare_human_release
 from workers.identity.session import (
     SessionConfigError,
     SessionError,
+    assert_live_session_configured,
     mint_session_for_tests,
     open_session,
     verify_session,
@@ -79,6 +80,86 @@ def test_revoked_session_cannot_be_replayed(tmp_path, monkeypatch) -> None:
         verify_session(token)
     again = client.get("/v1/projects/missing", headers=headers)
     assert again.status_code == 401
+
+
+def test_corrupt_revocation_file_rejects_the_token(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "identity-test")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    path = tmp_path / "revoked.json"
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", str(path))
+    token = open_session().token
+    path.write_text("{", encoding="utf-8")
+    with pytest.raises(SessionError):
+        verify_session(token)
+    path.write_text("{}", encoding="utf-8")
+    with pytest.raises(SessionError):
+        verify_session(token)
+    path.write_text("", encoding="utf-8")
+    with pytest.raises(SessionError):
+        verify_session(token)
+    path.unlink()
+    path.mkdir()
+    with pytest.raises(SessionError):
+        verify_session(token)
+
+
+def test_live_revocation_does_not_fall_back_to_tmp(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "identity-test")
+    monkeypatch.delenv("HILATV_PROJECT_DIR", raising=False)
+    monkeypatch.delenv("HILATV_SESSION_REVOCATION_PATH", raising=False)
+    token = open_session().token
+    with pytest.raises(SessionConfigError):
+        verify_session(token)
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    assert verify_session(token).token == token
+
+
+def test_live_revocation_path_must_stay_inside_the_project_dir(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "identity-test")
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", "/tmp/revoked-sessions.json")
+    with pytest.raises(SessionConfigError):
+        assert_live_session_configured()
+    outside = tmp_path.parent / "outside-revoked.json"
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", str(outside))
+    with pytest.raises(SessionConfigError):
+        assert_live_session_configured()
+    with pytest.raises(SessionConfigError):
+        verify_session(open_session().token)
+    inside = tmp_path / "revoked.json"
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", str(inside))
+    assert_live_session_configured()
+    assert verify_session(open_session().token).token
+
+
+def test_concurrent_revokes_keep_every_jti(tmp_path, monkeypatch) -> None:
+    import threading
+
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "identity-test")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", str(tmp_path / "revoked.json"))
+    from workers.identity.session import revoke_session
+
+    tokens = [open_session().token for _ in range(2)]
+    start = threading.Barrier(2)
+
+    def worker(token: str) -> None:
+        start.wait()
+        revoke_session(token)
+
+    threads = [threading.Thread(target=worker, args=(token,)) for token in tokens]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    for token in tokens:
+        with pytest.raises(SessionError):
+            verify_session(token)
+    stored = json.loads((tmp_path / "revoked.json").read_text(encoding="utf-8"))
+    assert isinstance(stored, list)
+    assert len(stored) == 2
 
 
 def test_session_query_is_only_accepted_for_frames(tmp_path, monkeypatch) -> None:

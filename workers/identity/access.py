@@ -45,4 +45,5 @@ def audit_human_release(identity: Identity, project_id: str) -> dict:
         releaser=identity.member_id,
         enterprise_id=identity.enterprise_id,
     )
-    return snapshot
+    restored = read_snapshot(project_id)
+    return restored if isinstance(restored, dict) else snapshot

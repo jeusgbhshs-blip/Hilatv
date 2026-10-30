@@ -2,8 +2,8 @@
 
 Hard-flaw shots produce one director decision each. A clean mock film is
 released without another run. Live mode does not release a film the judge
-did not actually score. Regeneration spends ``open_project_budget.try_take``
-once per shot and nowhere else.
+did not actually score. A regenerate decision is handed to N10, and
+``open_project_budget`` spends once per shot only after that redo runs.
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from gateway.constants import NO_RENDERED_TEXT
 from workers.logging import log_event
 from workers.media.packaging import ai_label_text
 from workers.nodes.n16_final_review.qa import QAError, check
+from workers.nodes.n16_final_review.redo import apply_redos
 from workers.nodes.n16_final_review.sample import frames_by_shot, write_wav
 from workers.nodes.n16_final_review.schema import (
     FilmIssue,
@@ -29,7 +30,6 @@ from workers.nodes.n16_final_review.schema import (
 )
 from workers.nodes.n16_final_review.windows import apply_timeline_windows
 from workers.nodes.runtime import Deadline
-from workers.qa.budget_store import open_project_budget
 from workers.qa.director import MAX_REVIEWS, decide
 from workers.qa.scores import PASS_TOTAL
 from workers.qa.service import review_shot
@@ -37,7 +37,7 @@ from workers.schemas.asset import QAReport, QAScores
 from workers.schemas.director import DecisionAction, DecisionTarget, DirectorDecision
 from workers.schemas.label_lock import LabelLocked, walk_label_edits
 from workers.schemas.script import Script, Shot
-from workers.workflow.store import locked_project, project_path, read_snapshot, update_snapshot
+from workers.workflow.store import contained_file, project_path, read_snapshot, update_snapshot
 
 NODE = "n16_final_review"
 _PROMPTS = Path(__file__).resolve().parent / "prompts"
@@ -260,9 +260,10 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
         or shot_failed
         or live
     )
+    covered = {item.target.shot_id for item in decisions}
     if release:
         disposition = "release"
-    elif content_ids and decisions and not blocking:
+    elif content_ids and decisions and not blocking and covered == content_ids:
         disposition = "redo"
     else:
         disposition = "hold"
@@ -482,19 +483,7 @@ def _decisions(
                 ).model_dump()
             )
         )
-    chargeable = [
-        item
-        for item in planned
-        if item.action in {DecisionAction.regenerate, DecisionAction.switch_model}
-    ]
-    if not chargeable:
-        return planned, 0, False
-    # Project lock then one ledger update. A concurrent review blocks here
-    # and then sees the spent total, so it cannot take the same slots.
-    with locked_project(request.project_id):
-        if not open_project_budget(request.project_id).try_take_n(len(chargeable)):
-            return [], 0, True
-    return planned, len(chargeable), False
+    return apply_redos(request, payload, planned, gateway=gateway)
 
 
 def _action_for(codes: list[str], *, attempt: int) -> DecisionAction:
@@ -987,18 +976,23 @@ def _enterprise_id(project_id: str) -> str | None:
 
 
 def _hold(project_id: str, issues: list[FilmIssue]) -> None:
-    if read_snapshot(project_id) is None:
+    snapshot = read_snapshot(project_id)
+    if snapshot is None:
         return
     detail = "、".join(item.code for item in issues[:6]) or "终审未放行"
-    update_snapshot(
-        project_id,
-        status="needs_human_review",
-        phase="待人工复核",
-        node=NODE,
-        message=f"成片终审未放行：{detail}",
-        paused=True,
-        deliverable=None,
-    )
+    fields: dict[str, Any] = {
+        "status": "needs_human_review",
+        "phase": "待人工复核",
+        "node": NODE,
+        "message": f"成片终审未放行：{detail}",
+        "paused": True,
+        "deliverable": None,
+    }
+    # The master file stays. Only the pointer is cleared until a person releases it.
+    kept = contained_file(project_id, snapshot.get("deliverable"))
+    if kept:
+        fields["held_deliverable"] = kept
+    update_snapshot(project_id, **fields)
     log_event(
         "human_review_held",
         project_id=project_id,

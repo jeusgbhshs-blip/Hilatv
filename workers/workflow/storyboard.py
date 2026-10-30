@@ -139,6 +139,8 @@ def edit_voiceover(
             raise StoryboardError("项目不存在", status=404)
         if not (directory / "project.json").is_file():
             raise StoryboardError("项目不存在", status=404)
+        if snapshot.get("storyboard_editing") is True:
+            raise StoryboardError("分镜正在保存", status=409)
         if snapshot.get("status") != "paused" or snapshot.get("storyboard_gate") != "hold":
             raise StoryboardError("现在不能改分镜", status=409)
         state = _film_state(directory)
@@ -256,19 +258,12 @@ def edit_voiceover(
 def _charge_edit(project_id: str) -> None:
     """Spend one regen for the new voice and one for the new frames, before TTS.
 
-    Both takes are required. When fewer than two remain, nothing is taken.
-    A take that already landed is kept: this counter never decreases.
+    Both spends are one ``try_take_n``. When fewer than two remain, nothing
+    is taken. A count that already landed is kept: this counter never decreases.
     """
 
-    needed = 2
-    budget = open_project_budget(project_id)
-    # Same fit check as try_take_n: the pair must fit before the first take.
-    if not budget.can_take(needed):
+    if not open_project_budget(project_id).try_take_n(2):
         raise StoryboardError("项目重生次数已到上限", status=422)
-    for _ in range(needed):
-        if not budget.try_take():
-            # A take that already landed stays. This counter never decreases.
-            raise StoryboardError("项目重生次数已到上限", status=422)
 
 
 def _moderate_narration(project_id: str, shot_id: str, text: str, gateway: Any) -> None:

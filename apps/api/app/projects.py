@@ -500,6 +500,15 @@ async def release_human_review(
     """Explicit human release. This is the only way past needs_review."""
 
     snapshot = prepare_human_release(project_id, identity)
+    if snapshot.get("status") == "completed" and snapshot.get("deliverable"):
+        return JSONResponse(
+            status_code=202,
+            content={
+                "project_id": project_id,
+                "status": "completed",
+                "deliverable": snapshot.get("deliverable"),
+            },
+        )
     from workers.workflow.service import start_film
     from workers.workflow.store import load_checkpoint
 

@@ -95,12 +95,6 @@ def reserve(
     if count == 0:
         return 0
     budget = open_project_budget(project_id)
-    budget.allow()
-    if budget.used + count > budget.limit:
+    if not budget.try_take_n(count):
         raise BudgetExhausted(project_id, budget.used, budget.limit)
-    taken = 0
-    while taken < count:
-        if not budget.try_take():
-            raise BudgetExhausted(project_id, budget.used, budget.limit)
-        taken += 1
-    return taken
+    return count

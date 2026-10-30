@@ -14,7 +14,11 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import time
+import uuid
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from workers.qa.settings import RetryBudget, SettingsError, project_dir, project_retry_cap
 
@@ -43,24 +47,24 @@ class ProjectBudget(RetryBudget):
         self.project_id = _segment(project_id)
         self.path = project_folder(self.project_id) / "regen_budget.json"
         _inside(self.path, project_folder(self.project_id))
+        self.reserved = 0
         self.used = self._read_used()
 
     def allow(self) -> bool:
         self.limit = project_retry_cap()
         self.used = self._read_used()
-        return self.used < self.limit
+        return self.used + self.reserved < self.limit
 
     def can_take(self, count: int) -> bool:
         """True when ``count`` more regens still fit. This does not spend.
 
-        Storyboard narration uses this before its two ``try_take`` calls.
-        ``try_take_n`` applies the same comparison inside the file lock.
+        Pending reservations count toward the cap, the same rule as ``try_take_n``.
         """
 
-        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-            raise SettingsError("regen budget count must be an integer >= 1")
-        self.allow()
-        return self.used + count <= self.limit
+        _check_count(count)
+        self.limit = project_retry_cap()
+        self.used = self._read_used()
+        return self.used + self.reserved + count <= self.limit
 
     def consume(self) -> None:
         self.try_take()
@@ -80,16 +84,84 @@ class ProjectBudget(RetryBudget):
         reviews cannot both spend the same remaining slots.
         """
 
-        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
-            raise SettingsError("regen budget count must be an integer >= 1")
-        taken, used = _update(self.path, limit=project_retry_cap(), take=count)
+        _check_count(count)
+        taken, used, reserved = _update(self.path, limit=project_retry_cap(), take=count)
         self.used = used
+        self.reserved = reserved
         self.limit = project_retry_cap()
         return taken
 
+    def begin_batch(self, count: int, key: str) -> tuple[str, str]:
+        """Reserve ``count`` under the ledger lock, or report why it must not run.
+
+        Returns ``(status, token)``. ``status`` is ``begun``, ``already``,
+        ``pending``, or ``refused``. ``token`` is set only for ``begun``.
+        ``finish_batch`` and ``abort_batch`` must present that token.
+        ``begun`` holds the slots until finish or abort. Other takers,
+        including ``try_take_n`` and ``can_take``, see that hold.
+        ``used`` does not move here. A batch that does not fit is refused
+        before anything is regenerated.
+        """
+
+        _check_count(count)
+        _check_key(key)
+        status, token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="begin", count=count, key=key, token=""
+        )
+        self.used = used
+        self.reserved = reserved
+        self.limit = project_retry_cap()
+        return status, token
+
+    def finish_batch(self, count: int, key: str, token: str) -> str:
+        """Bill ``count`` saved shots for this reservation token.
+
+        A matching token turns that reservation into ``used`` and releases any
+        unused slots. A token whose reservation already expired still adds
+        ``count`` to ``used`` and holds the project, and it does not touch a
+        newer reservation of the same key. ``used`` only increases. The same
+        token is not billed twice.
+        """
+
+        _check_count(count)
+        _check_key(key)
+        _check_token(token)
+        status, _token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="finish", count=count, key=key, token=token
+        )
+        self.used = used
+        self.reserved = reserved
+        self.limit = project_retry_cap()
+        return status
+
+    def abort_batch(self, key: str, token: str) -> None:
+        """Release this token's reservation. Another token's hold stays."""
+
+        _check_key(key)
+        _check_token(token)
+        _status, _token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="abort", count=1, key=key, token=token
+        )
+        self.used = used
+        self.reserved = reserved
+        self.limit = project_retry_cap()
+
+    def batch_status(self, key: str) -> str:
+        """``applied``, ``pending``, or ``free``. An expired reservation is ``free``."""
+
+        _check_key(key)
+        status, _token, used, reserved = _batch(
+            self.path, limit=project_retry_cap(), op="status", count=1, key=key, token=""
+        )
+        self.used = used
+        self.reserved = reserved
+        self.limit = project_retry_cap()
+        return status
+
     def _read_used(self) -> int:
-        taken, used = _update(self.path, limit=project_retry_cap(), take=0)
+        taken, used, reserved = _update(self.path, limit=project_retry_cap(), take=0)
         del taken
+        self.reserved = reserved
         return used
 
 
@@ -112,38 +184,286 @@ def _inside(path: Path, root: Path) -> None:
         raise SettingsError("regen budget path is outside the project directory") from exc
 
 
-def _update(path: Path, *, limit: int, take: int) -> tuple[bool, int]:
-    """Add ``take`` only when the whole amount still fits. Zero reads the file."""
+def _check_count(count: int) -> None:
+    if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+        raise SettingsError("regen budget count must be an integer >= 1")
 
+
+def _check_key(key: str) -> None:
+    if not isinstance(key, str) or not key.strip() or len(key) > 200 or "\n" in key:
+        raise SettingsError("regen budget key is invalid")
+
+
+def _check_token(token: str) -> None:
+    if not isinstance(token, str) or not token or len(token) > 64 or "\n" in token:
+        raise SettingsError("regen budget token is invalid")
+
+
+def reserve_ttl_s() -> float:
+    """Wall-clock lifetime of one reservation. Default 900s.
+
+    The file is shared by processes, so the expiry has to be ``time.time``
+    rather than ``time.monotonic``: another process cannot read this one's
+    monotonic clock. A step of the wall clock can expire a reservation early
+    or stretch it. The N16 redo loop stops on a monotonic deadline of half
+    this value, so the default 900s leaves a 450s gap after the worker stops
+    saving. 450s is the longest that loop will run.
+    """
+
+    raw = os.getenv("HILATV_BUDGET_RESERVE_TTL_S", "").strip()
+    if not raw:
+        return 900.0
+    try:
+        value = float(raw)
+    except ValueError as exc:
+        raise SettingsError("HILATV_BUDGET_RESERVE_TTL_S must be a positive number") from exc
+    if value <= 0:
+        raise SettingsError("HILATV_BUDGET_RESERVE_TTL_S must be a positive number")
+    return value
+
+
+def _reserved_total(state: dict[str, Any]) -> int:
+    return sum(item["count"] for item in state["reserved"].values())
+
+
+def _drop_expired(state: dict[str, Any], now: float) -> list[str]:
+    """Move expired holds aside so a late finish can still bill them.
+
+    ``now`` is wall-clock seconds, matching the expiry stored in the file.
+    """
+
+    expired: list[str] = []
+    kept: dict[str, dict[str, Any]] = {}
+    remembered = state["expired_tokens"]
+    for key, item in state["reserved"].items():
+        if float(item["expires"]) <= now:
+            expired.append(key)
+            token = str(item.get("token") or "")
+            if token and token not in state["audit"]:
+                remembered[token] = {"count": int(item["count"]), "key": key}
+        else:
+            kept[key] = item
+    state["reserved"] = kept
+    return expired
+
+
+def _update(path: Path, *, limit: int, take: int) -> tuple[bool, int, int]:
+    """Add ``take`` only when used plus live reservations still fit. Zero reads."""
+
+    def change(state: dict[str, Any], cap: int) -> bool:
+        if take > 0 and state["used"] + _reserved_total(state) + take <= cap:
+            state["used"] += take
+            return True
+        return False
+
+    taken, used, reserved = _with_ledger(path, limit, change)
+    return bool(taken), used, reserved
+
+
+def _batch(
+    path: Path, *, limit: int, op: str, count: int, key: str, token: str
+) -> tuple[str, str, int, int]:
+    """One locked update for a redo batch. ``used`` never goes down."""
+
+    def change(state: dict[str, Any], cap: int) -> tuple[str, str]:
+        return _change_batch(state, cap=cap, op=op, count=count, key=key, token=token)
+
+    result, used, reserved_total = _with_ledger(path, limit, change)
+    status, issued = result
+    return str(status), str(issued), used, reserved_total
+
+
+def _change_batch(
+    state: dict[str, Any], *, cap: int, op: str, count: int, key: str, token: str
+) -> tuple[str, str]:
+    applied: dict[str, int] = state["applied"]
+    reserved: dict[str, dict[str, Any]] = state["reserved"]
+    audit: dict[str, dict[str, Any]] = state["audit"]
+    if op == "status":
+        if key in applied:
+            return "applied", ""
+        if key in reserved:
+            return "pending", ""
+        return "free", ""
+    if op == "abort":
+        reservation = reserved.get(key)
+        if isinstance(reservation, dict) and reservation.get("token") == token:
+            reserved.pop(key, None)
+        return "aborted", ""
+    if op == "begin":
+        if key in applied:
+            return "already", ""
+        if key in reserved:
+            return "pending", ""
+        if state["used"] + _reserved_total(state) + count > cap:
+            return "refused", ""
+        issued = uuid.uuid4().hex
+        reserved[key] = {
+            "count": count,
+            "expires": time.time() + reserve_ttl_s(),
+            "token": issued,
+        }
+        return "begun", issued
+    if token in audit:
+        return "already", ""
+    reservation = reserved.get(key)
+    if isinstance(reservation, dict) and reservation.get("token") == token:
+        charge = count if count <= int(reservation["count"]) else int(reservation["count"])
+        reserved.pop(key, None)
+        if charge < 1:
+            return "refused", ""
+        state["used"] += charge
+        applied[key] = charge
+        audit[token] = {"count": charge, "key": key, "reason": "finished"}
+        return "taken", ""
+    stale = state["expired_tokens"].get(token)
+    if not isinstance(stale, dict):
+        return "refused", ""
+    ceiling = int(stale["count"])
+    charge = count if count <= ceiling else ceiling
+    state["expired_tokens"].pop(token, None)
+    if charge < 1:
+        return "refused", ""
+    # A late worker's saved shots are billed without taking the live reservation.
+    state["used"] += charge
+    audit[token] = {"count": charge, "key": str(stale.get("key") or key), "reason": "late"}
+    state["_hold_late"] = True
+    return "audited", ""
+
+
+def _with_ledger(
+    path: Path,
+    limit: int,
+    change: Callable[[dict[str, Any], int], Any],
+) -> tuple[Any, int, int]:
     path.parent.mkdir(parents=True, exist_ok=True)
+    expired: list[str] = []
     with path.open("a+", encoding="utf-8") as handle:
         fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
         handle.seek(0)
-        previous = _parse(handle.read())
-        used = previous
-        taken = False
-        if take > 0 and used + take <= limit:
-            used += take
-            taken = True
-        if used < previous:
+        state = _parse(handle.read())
+        previous = state["used"]
+        expired = _drop_expired(state, time.time())
+        result = change(state, limit)
+        if state["used"] < previous:
             raise SettingsError("regen budget cannot decrease")
-        payload = json.dumps({"used": used, "limit": limit, "increase_only": True}) + "\n"
+        hold_late = bool(state.pop("_hold_late", False))
+        payload = _dump(state, limit)
         handle.seek(0)
         handle.truncate()
         handle.write(payload)
         handle.flush()
         os.fsync(handle.fileno())
-        return taken, used
+        used = state["used"]
+        reserved = _reserved_total(state)
+    # Ledger lock is released before the project lock. See hold_expired_budget.
+    if expired or hold_late:
+        from workers.workflow.store import hold_expired_budget
+
+        hold_expired_budget(path.parent.name)
+    return result, used, reserved
 
 
-def _parse(raw: str) -> int:
+def _parse(raw: str) -> dict[str, Any]:
     text = raw.strip()
     if not text:
-        return 0
+        return {"used": 0, "applied": {}, "reserved": {}, "expired_tokens": {}, "audit": {}}
     try:
-        used = int(json.loads(text)["used"])
+        data = json.loads(text)
+        used = int(data["used"])
     except (ValueError, KeyError, TypeError) as exc:
         raise SettingsError("regen budget file is unreadable") from exc
     if used < 0:
         raise SettingsError("regen budget file is unreadable")
-    return used
+    applied = data.get("applied") or {}
+    if not isinstance(applied, dict):
+        raise SettingsError("regen budget file is unreadable")
+    clean_applied: dict[str, int] = {}
+    for key, count in applied.items():
+        if not isinstance(key, str) or isinstance(count, bool) or not isinstance(count, int):
+            raise SettingsError("regen budget file is unreadable")
+        if count < 1:
+            raise SettingsError("regen budget file is unreadable")
+        clean_applied[key] = count
+    return {
+        "used": used,
+        "applied": clean_applied,
+        "reserved": _parse_reserved(data),
+        "expired_tokens": _parse_token_map(data.get("expired_tokens")),
+        "audit": _parse_token_map(data.get("audit"), with_reason=True),
+    }
+
+
+def _dump(state: dict[str, Any], limit: int) -> str:
+    payload: dict[str, Any] = {
+        "used": state["used"],
+        "limit": limit,
+        "increase_only": True,
+    }
+    if state["applied"]:
+        payload["applied"] = state["applied"]
+    if state["reserved"]:
+        payload["reserved"] = state["reserved"]
+    if state["expired_tokens"]:
+        payload["expired_tokens"] = state["expired_tokens"]
+    if state["audit"]:
+        payload["audit"] = state["audit"]
+    return json.dumps(payload) + "\n"
+
+
+def _parse_reserved(data: dict[str, Any]) -> dict[str, dict[str, float | int]]:
+    raw = data.get("reserved")
+    if isinstance(raw, dict):
+        found: dict[str, dict[str, float | int]] = {}
+        for key, item in raw.items():
+            if not isinstance(key, str) or not isinstance(item, dict):
+                raise SettingsError("regen budget file is unreadable")
+            count = item.get("count")
+            expires = item.get("expires")
+            if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+                raise SettingsError("regen budget file is unreadable")
+            if isinstance(expires, bool) or not isinstance(expires, int | float):
+                raise SettingsError("regen budget file is unreadable")
+            token = item.get("token")
+            if not isinstance(token, str) or not token:
+                found[key] = {"count": count, "expires": 0.0, "token": ""}
+            else:
+                found[key] = {"count": count, "expires": float(expires), "token": token}
+        return found
+    legacy = data.get("pending")
+    if legacy is None:
+        return {}
+    if not isinstance(legacy, list):
+        raise SettingsError("regen budget file is unreadable")
+    # A list from the previous format has no expiry. The next touch releases it.
+    found: dict[str, dict[str, float | int]] = {}
+    for key in legacy:
+        if not isinstance(key, str):
+            raise SettingsError("regen budget file is unreadable")
+        found[key] = {"count": 1, "expires": 0.0, "token": ""}
+    return found
+
+
+def _parse_token_map(raw: object, *, with_reason: bool = False) -> dict[str, dict[str, Any]]:
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise SettingsError("regen budget file is unreadable")
+    found: dict[str, dict[str, Any]] = {}
+    for token, item in raw.items():
+        if not isinstance(token, str) or not isinstance(item, dict):
+            raise SettingsError("regen budget file is unreadable")
+        count = item.get("count")
+        key = item.get("key")
+        if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+            raise SettingsError("regen budget file is unreadable")
+        if not isinstance(key, str):
+            raise SettingsError("regen budget file is unreadable")
+        row: dict[str, Any] = {"count": count, "key": key}
+        if with_reason:
+            reason = item.get("reason")
+            if not isinstance(reason, str) or not reason:
+                raise SettingsError("regen budget file is unreadable")
+            row["reason"] = reason
+        found[token] = row
+    return found
