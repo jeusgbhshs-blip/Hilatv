@@ -252,9 +252,10 @@ def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeR
         or shot_failed
         or live
     )
+    covered = {item.target.shot_id for item in decisions}
     if release:
         disposition = "release"
-    elif content_ids and decisions and not blocking:
+    elif content_ids and decisions and not blocking and covered == content_ids:
         disposition = "redo"
     else:
         disposition = "hold"

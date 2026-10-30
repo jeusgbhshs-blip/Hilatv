@@ -69,7 +69,7 @@ def build_canvas(project_id: str) -> dict[str, Any]:
         "budget": {
             "used": budget.used,
             "limit": budget.limit,
-            "remaining": max(0, budget.limit - budget.used),
+            "remaining": max(0, budget.limit - budget.used - budget.reserved),
         },
         "nodes": [
             {

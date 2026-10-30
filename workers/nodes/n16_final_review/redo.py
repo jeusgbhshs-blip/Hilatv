@@ -63,7 +63,7 @@ def apply_redos(
         if status != "begun":
             return kept, 0, False
     produced = _execute(request, payload, chargeable, shot_ids, gateway=gateway)
-    if produced != shot_ids:
+    if not produced:
         budget.abort_batch(key)
         log_event(
             "n16_redo_skipped",
@@ -71,12 +71,15 @@ def apply_redos(
             node="n16_final_review",
             shot_id=request.shot_id,
             attempt=request.attempt,
-            produced=",".join(produced),
         )
         return kept, 0, False
-    if not budget.finish_batch(len(shot_ids), key):
+    if not budget.finish_batch(len(produced), key):
         return [], 0, True
-    return planned, len(shot_ids), False
+    saved = set(produced)
+    if saved == set(shot_ids):
+        return planned, len(shot_ids), False
+    chosen = [item for item in planned if item.action not in _REGEN or item.target.shot_id in saved]
+    return chosen, len(produced), False
 
 
 def _execute(

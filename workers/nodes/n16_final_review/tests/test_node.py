@@ -432,6 +432,118 @@ def test_concurrent_reviews_with_room_in_the_budget_charge_once(
     assert len(videos["videos"]) == 3
 
 
+def test_two_different_batches_reserve_before_n10(tmp_path: Path, monkeypatch) -> None:
+    """Budget for one batch: the other is refused before N10 runs."""
+
+    import threading
+
+    from workers.nodes.n10_video.node import run as run_video
+    from workers.nodes.n16_final_review.tests.conftest import build_gateway
+    from workers.qa.budget_store import ProjectBudget
+    from workers.qa.frames import write_mp4
+    from workers.workflow.store import project_path
+
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "1")
+    init_project("t22cap", sentence="一句", status="completed")
+    anchor = _png(tmp_path / "t22cap" / "anchor.png", _plate("rect"))
+    plant_opening("t22cap", "S02", Path(anchor))
+    frames = [_plate("rect"), _plate("shear"), _plate("rect")]
+    film_a = write_film("t22cap", frames)
+    extra = _plate("rect")
+    extra.putpixel((0, 0), (9, 8, 7))
+    film_b = project_path("t22cap") / "other.mp4"
+    write_mp4([*frames, extra], film_b, fps=4)
+    raws = [
+        request_for(
+            "t22cap",
+            film,
+            ["S01", "S02", "S03"],
+            seconds_each=0.25,
+            anchors={"S02": anchor},
+        )
+        for film in (film_a, film_b)
+    ]
+    calls: list[str | None] = []
+    real_begin = ProjectBudget.begin_batch
+    entered = threading.Barrier(2)
+
+    def begin(self: ProjectBudget, count: int, key: str) -> str:
+        status = real_begin(self, count, key)
+        entered.wait(5)
+        return status
+
+    def wrapped(raw: dict, **kwargs: object):
+        calls.append(raw.get("shot_id"))
+        return run_video(raw, **kwargs)
+
+    monkeypatch.setattr(ProjectBudget, "begin_batch", begin)
+    monkeypatch.setattr("workers.nodes.n10_video.node.run", wrapped)
+    gateways = [build_gateway(tmp_path / "gw-cap-a"), build_gateway(tmp_path / "gw-cap-b")]
+    bodies: list[dict] = []
+
+    def worker(index: int) -> None:
+        bodies.append(run(raws[index], gateway=gateways[index]).payload)
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert calls == ["S02"]
+    assert open_project_budget("t22cap").used == 1
+    assert sum(int(body["budget_taken"]) for body in bodies) == 1
+    assert sum(body["disposition"] == "hold" for body in bodies) == 1
+    assert any(item["code"] == "budget_exhausted" for body in bodies for item in body["issues"])
+    snapshot = read_snapshot("t22cap") or {}
+    assert snapshot["status"] == "needs_human_review"
+    videos = json.loads(
+        (project_folder("t22cap") / "nodes" / "n10_video.json").read_text(encoding="utf-8")
+    )
+    assert len(videos["videos"]) == 3
+
+
+def test_partial_redo_charges_only_the_saved_shot(gateway, tmp_path: Path, monkeypatch) -> None:
+    from workers.nodes.n10_video.node import run as run_video
+
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
+    init_project("t22part", sentence="一句", status="completed")
+    anchor = _png(tmp_path / "t22part" / "anchor.png", _plate("rect"))
+    plant_opening("t22part", "S01", Path(anchor))
+    plant_opening("t22part", "S02", Path(anchor))
+    film = write_film("t22part", [_plate("shear"), _plate("shear")])
+    calls = {"n": 0}
+
+    def wrapped(raw: dict, **kwargs: object):
+        calls["n"] += 1
+        if calls["n"] > 1:
+            raise RuntimeError("second shot failed")
+        return run_video(raw, **kwargs)
+
+    monkeypatch.setattr("workers.nodes.n10_video.node.run", wrapped)
+    result = run(
+        request_for(
+            "t22part",
+            film,
+            ["S01", "S02"],
+            seconds_each=0.25,
+            anchors={"S01": anchor, "S02": anchor},
+        ),
+        gateway=gateway,
+    )
+    body = result.payload
+    assert body["budget_taken"] == 1
+    assert [item["target"]["shot_id"] for item in body["decisions"]] == ["S01"]
+    assert body["disposition"] == "hold"
+    assert open_project_budget("t22part").used == 1
+    assert open_project_budget("t22part").reserved == 0
+    videos = json.loads(
+        (project_folder("t22part") / "nodes" / "n10_video.json").read_text(encoding="utf-8")
+    )
+    assert {row["shot_id"] for row in videos["videos"]} == {"S01"}
+    snapshot = read_snapshot("t22part") or {}
+    assert snapshot["status"] == "needs_human_review"
+
+
 def test_human_release_restores_the_held_master(gateway, tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("HILATV_SESSION_SECRET", "t22-release")
     from fastapi.testclient import TestClient

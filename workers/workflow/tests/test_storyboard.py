@@ -340,13 +340,13 @@ def _watch_budget(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     seen: list[int] = []
     real = budget_store._update
 
-    def wrapped(path: Path, *, limit: int, take: bool) -> tuple[bool, int]:
-        taken, used = real(path, limit=limit, take=take)
+    def wrapped(path: Path, *, limit: int, take: int) -> tuple[bool, int, int]:
+        taken, used, reserved = real(path, limit=limit, take=take)
         if seen:
             assert used >= seen[-1]
         assert 0 <= used <= limit
         seen.append(used)
-        return taken, used
+        return taken, used, reserved
 
     monkeypatch.setattr(budget_store, "_update", wrapped)
     return seen

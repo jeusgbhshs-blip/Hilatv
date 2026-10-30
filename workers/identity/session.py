@@ -44,10 +44,11 @@ def live_mode() -> bool:
 
 
 def assert_live_session_configured() -> None:
-    """Refuse to run a live process on a per-process random session secret."""
+    """Refuse to run a live process on a per-process secret or an outside revocation file."""
 
     if live_mode():
         session_secret()
+        _revocation_path()
 
 
 def session_secret() -> bytes:
@@ -189,14 +190,25 @@ def _key(purpose: bytes) -> bytes:
 
 def _revocation_path() -> Path:
     raw = os.getenv("HILATV_SESSION_REVOCATION_PATH", "").strip()
+    root = os.getenv("HILATV_PROJECT_DIR", "").strip()
+    if live_mode():
+        if not root:
+            raise SessionConfigError("HILATV_PROJECT_DIR is required when HILATV_LIVE=1")
+        root_path = Path(root).expanduser().resolve()
+        path = Path(raw).expanduser() if raw else root_path / "revoked-sessions.json"
+        resolved = path.resolve()
+        try:
+            resolved.relative_to(root_path)
+        except ValueError as exc:
+            raise SessionConfigError(
+                "HILATV_SESSION_REVOCATION_PATH must stay inside HILATV_PROJECT_DIR"
+            ) from exc
+        return resolved
     if raw:
         return Path(raw)
-    root = os.getenv("HILATV_PROJECT_DIR", "").strip()
-    if not root:
-        if live_mode():
-            raise SessionConfigError("HILATV_PROJECT_DIR is required when HILATV_LIVE=1")
-        return Path(tempfile.gettempdir()) / "hilatv-sessions" / "revoked-sessions.json"
-    return Path(root) / "revoked-sessions.json"
+    if root:
+        return Path(root) / "revoked-sessions.json"
+    return Path(tempfile.gettempdir()) / "hilatv-sessions" / "revoked-sessions.json"
 
 
 def _load_revoked() -> set[str]:

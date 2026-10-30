@@ -13,6 +13,7 @@ from app.projects import prepare_human_release
 from workers.identity.session import (
     SessionConfigError,
     SessionError,
+    assert_live_session_configured,
     mint_session_for_tests,
     open_session,
     verify_session,
@@ -112,6 +113,25 @@ def test_live_revocation_does_not_fall_back_to_tmp(tmp_path, monkeypatch) -> Non
         verify_session(token)
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     assert verify_session(token).token == token
+
+
+def test_live_revocation_path_must_stay_inside_the_project_dir(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "identity-test")
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", "/tmp/revoked-sessions.json")
+    with pytest.raises(SessionConfigError):
+        assert_live_session_configured()
+    outside = tmp_path.parent / "outside-revoked.json"
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", str(outside))
+    with pytest.raises(SessionConfigError):
+        assert_live_session_configured()
+    with pytest.raises(SessionConfigError):
+        verify_session(open_session().token)
+    inside = tmp_path / "revoked.json"
+    monkeypatch.setenv("HILATV_SESSION_REVOCATION_PATH", str(inside))
+    assert_live_session_configured()
+    assert verify_session(open_session().token).token
 
 
 def test_concurrent_revokes_keep_every_jti(tmp_path, monkeypatch) -> None:
