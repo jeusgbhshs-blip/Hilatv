@@ -544,7 +544,15 @@ def test_partial_redo_charges_only_the_saved_shot(gateway, tmp_path: Path, monke
     assert snapshot["status"] == "needs_human_review"
 
 
-def test_redo_does_not_save_after_the_deadline(gateway, tmp_path: Path, monkeypatch) -> None:
+def test_redo_past_the_deadline_is_billed_but_not_saved(
+    gateway, tmp_path: Path, monkeypatch
+) -> None:
+    """SEC-63 item 3: a generation that returns after the save deadline is real cost.
+
+    It is not saved (the deadline still holds) but it is recorded as used, with
+    an audit entry, and the project is held.
+    """
+
     import time
 
     from workers.nodes.n10_video.node import run as run_video
@@ -565,8 +573,74 @@ def test_redo_does_not_save_after_the_deadline(gateway, tmp_path: Path, monkeypa
         gateway=gateway,
     )
     assert result.payload["budget_taken"] == 0
-    assert open_project_budget("t22late").used == 0
+    assert result.payload["decisions"] == []
+    assert open_project_budget("t22late").used == 1
+    assert open_project_budget("t22late").reserved == 0
     assert not (project_folder("t22late") / "nodes" / "n10_video.json").is_file()
+    ledger = json.loads(
+        (project_folder("t22late") / "regen_budget.json").read_text(encoding="utf-8")
+    )
+    entries = list(ledger["audit"].values())
+    assert len(entries) == 1
+    assert entries[0]["count"] == 1
+    assert entries[0]["reason"] == "late"
+    assert entries[0]["node"] == "n16_final_review"
+    assert entries[0]["project_id"] == "t22late"
+    snapshot = read_snapshot("t22late") or {}
+    assert snapshot["status"] == "needs_human_review"
+
+
+def test_crash_after_save_is_billed_when_the_reservation_expires(
+    gateway, tmp_path: Path, monkeypatch
+) -> None:
+    """SEC-63 item 2: the worker saves S01 then dies before finish_batch."""
+
+    from workers.nodes.n16_final_review import redo
+
+    init_project("t22crash", sentence="一句", status="completed")
+    anchor = _png(tmp_path / "t22crash" / "anchor.png", _plate("rect"))
+    plant_opening("t22crash", "S01", Path(anchor))
+    film = write_film("t22crash", [_plate("shear")])
+
+    class Crash(BaseException):
+        pass
+
+    real_store = redo._store_videos
+
+    def store_then_crash(project_id: str, rows: list) -> None:
+        real_store(project_id, rows)
+        raise Crash("worker died after saving")
+
+    monkeypatch.setattr(redo, "_store_videos", store_then_crash)
+    with pytest.raises(Crash):
+        run(
+            request_for("t22crash", film, ["S01"], seconds_each=1.0, anchors={"S01": anchor}),
+            gateway=gateway,
+        )
+    videos = json.loads(
+        (project_folder("t22crash") / "nodes" / "n10_video.json").read_text(encoding="utf-8")
+    )
+    assert {row["shot_id"] for row in videos["videos"]} == {"S01"}
+    # Nobody finished the batch: the slot is still only reserved.
+    assert open_project_budget("t22crash").used == 0
+    path = project_folder("t22crash") / "regen_budget.json"
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    (reservation,) = stored["reserved"].values()
+    assert reservation["generated"] == ["S01"]
+    reservation["expires"] = 0
+    path.write_text(json.dumps(stored) + "\n", encoding="utf-8")
+    budget = open_project_budget("t22crash")
+    assert budget.used == 1
+    assert budget.reserved == 0
+    ledger = json.loads(
+        (project_folder("t22crash") / "regen_budget.json").read_text(encoding="utf-8")
+    )
+    (entry,) = ledger["audit"].values()
+    assert entry["reason"] == "reconciled"
+    assert entry["count"] == 1
+    assert entry["node"] == "n16_final_review"
+    snapshot = read_snapshot("t22crash") or {}
+    assert snapshot["status"] == "needs_human_review"
 
 
 def test_human_release_restores_the_held_master(gateway, tmp_path: Path, monkeypatch) -> None:

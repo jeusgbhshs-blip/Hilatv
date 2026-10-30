@@ -3,12 +3,18 @@
 A decision is not a charge. ``open_project_budget`` moves only after N10 has
 regenerated that shot. The same review batch (project, film, shot ids) is one
 idempotency key, so two overlapping runs do not both spend.
+
+Every shot N10 returns is recorded in the ledger (``note_generated``) before
+it is saved. A generation that comes back after the save deadline is billed
+but not saved, and a worker that crashes after saving is billed when its
+reservation expires. Real generations are never dropped from the ledger.
 """
 
 from __future__ import annotations
 
 import hashlib
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +27,7 @@ from workers.workflow.store import load_checkpoint, project_path, read_snapshot,
 
 _REGEN = {DecisionAction.regenerate, DecisionAction.switch_model}
 _WAIT_S = 30.0
+NODE = "n16_final_review"
 
 
 def apply_redos(
@@ -32,7 +39,9 @@ def apply_redos(
 ) -> tuple[list[DirectorDecision], int, bool]:
     """Execute chargeable decisions, then spend once per regenerated shot.
 
-    Returns ``(decisions, budget_taken, refused)``. ``refused`` means the
+    Returns ``(decisions, budget_taken, refused)``. ``budget_taken`` counts the
+    saved shots that carry a redo decision. A shot N10 produced after the save
+    deadline is still billed in the ledger, but has no decision. ``refused`` means the
     whole batch did not fit, and nothing was spent. A duplicate of a batch
     that already ran returns no new decisions and does not spend again.
     """
@@ -45,7 +54,7 @@ def apply_redos(
     if not _openings_ready(request.project_id, shot_ids):
         return kept, 0, False
     key = _batch_key(request, payload, shot_ids)
-    budget = open_project_budget(request.project_id)
+    budget = open_project_budget(request.project_id, node=NODE)
     status, token = budget.begin_batch(len(shot_ids), key)
     if status == "refused":
         return [], 0, True
@@ -64,21 +73,46 @@ def apply_redos(
             return kept, 0, False
     # Monotonic, and strictly shorter than the wall-clock reservation TTL.
     deadline = time.monotonic() + _redo_deadline_s()
-    produced = _execute(request, payload, chargeable, shot_ids, gateway=gateway, deadline=deadline)
-    if not produced:
+    generated: list[str] = []
+
+    def note(shot_id: str) -> None:
+        # Recorded before the save, so a crash after the save is still billed.
+        generated.append(shot_id)
+        if token:
+            budget.note_generated(key, token, shot_id)
+
+    produced = _execute(
+        request, payload, chargeable, shot_ids, gateway=gateway, deadline=deadline, note=note
+    )
+    if not generated:
         if token:
             budget.abort_batch(key, token)
         log_event(
             "n16_redo_skipped",
             project_id=request.project_id,
-            node="n16_final_review",
+            node=NODE,
             shot_id=request.shot_id,
             attempt=request.attempt,
         )
         return kept, 0, False
-    outcome = budget.finish_batch(len(produced), key, token)
-    if outcome not in {"taken", "audited"}:
+    outcome = budget.finish_batch(len(generated), key, token)
+    if outcome not in {"taken", "audited", "already"}:
         return [], 0, True
+    unsaved = sorted(set(generated) - set(produced))
+    if unsaved:
+        # N10 returned after the save deadline: billed in the ledger, not saved.
+        # ``budget_taken`` stays the number of redo decisions (QA invariant).
+        log_event(
+            "n16_redo_unsaved",
+            project_id=request.project_id,
+            node=NODE,
+            shot_id=request.shot_id,
+            attempt=request.attempt,
+            billed_unsaved=len(unsaved),
+            shots=unsaved,
+        )
+    if not produced:
+        return kept, 0, False
     saved = set(produced)
     if saved == set(shot_ids):
         return planned, len(shot_ids), False
@@ -106,7 +140,14 @@ def _execute(
     *,
     gateway: Any,
     deadline: float,
+    note: Callable[[str], None],
 ) -> list[str]:
+    """Run N10 per shot. Returns the shots that were saved before the deadline.
+
+    ``note`` is called for every shot N10 produced, before the deadline check
+    and before the save, so a generation is billed even when it is not saved.
+    """
+
     from workers.nodes.n10_video.node import run as run_video
 
     suffix = _suffix(chargeable)
@@ -148,7 +189,9 @@ def _execute(
             failed = set(result.payload.get("generation_failed") or [])
             if shot_id in failed or not rows:
                 return produced
+            note(shot_id)
             if time.monotonic() >= deadline:
+                # Past the save deadline: recorded as used above, not saved.
                 break
             _store_videos(request.project_id, rows)
             produced.append(shot_id)

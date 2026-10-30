@@ -521,6 +521,10 @@
 - 正在做什么：#32 已合并（b4154b5）。UI-01 把现有前端换成 DESIGN.md 外观：应用外壳（侧栏、顶栏五步进度、手机底栏）、主题自动随时间切换、外观设置页、深色舞台、Noto Sans SC 子集、`lib/status-copy.ts`。交互流程和接口不变。
 - 需要提供什么：没有新的 Key。
 
+### 2026-10-31 SEC-63 预算账本上线前加固
+- 正在做什么：迟到入账的审计条目带时间、项目、触发节点和是否超上限，并发 `regen_budget_late_charge` 日志、暂停项目。N10 每出一个镜头先记账（`note_generated`）再保存：保存截止后才回来的镜头记为已用但不保存；保存后崩溃的 worker 在预留过期时按已记镜头补账（`reconciled`）。审计和 `expired_tokens` 有上限和保留期，旧审计折叠进 `audit_compacted` 汇总，`used` 不变。验收 `make accept-sec63`。
+- 需要提供什么：没有新的 Key。`HILATV_LIVE` 保持关闭。
+
 ## UI 设计规范
 
 - 2026-10-30：`DESIGN.md` V1.0 已确认（主题随时间切换：白天浅色外壳 + 深色视频舞台，夜间全深色）。token 已写入 `apps/web/app/globals.css`，效果图在 `docs/design/`。现有前端（T11/T15/T16/T19/T23）按 UI-01 换皮迁移，之后所有界面按此实现。公司标志已放入 `apps/web/public/brand/`。Noto Sans SC woff2 子集由 UI-01 补上（`apps/web/public/fonts/`）。
