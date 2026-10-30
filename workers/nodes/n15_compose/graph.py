@@ -40,10 +40,12 @@ def filter_complex(timeline: Timeline, variant: str) -> str:
         for index, audio in enumerate(audios):
             src = n_video + index
             delay = max(0, int(round(audio.start_s * 1000)))
+            # This ffmpeg rejects adelay=0. A clip that starts at 0 needs no delay.
+            delay_filter = f",adelay={delay}:all=1" if delay > 0 else ""
             lines.append(
                 f"[{src}:a]aformat=sample_rates=48000:channel_layouts=stereo,"
-                f"atrim=0:{audio.duration_s:.3f},asetpts=PTS-STARTPTS,"
-                f"adelay={delay}:all=1[a{index}]"
+                f"atrim=0:{audio.duration_s:.3f},asetpts=PTS-STARTPTS"
+                f"{delay_filter}[a{index}]"
             )
             mix_inputs.append(f"[a{index}]")
         if len(mix_inputs) == 1:
@@ -165,10 +167,17 @@ def _join(labels: list[str], timeline: Timeline) -> tuple[str, str]:
         out = f"j{index}"
         previous = timeline.clips[index - 1]
         if previous.transition_out.lower() in _DISSOLVE:
-            overlap = min(0.3, previous.duration_s / 2, timeline.clips[index].duration_s / 2)
+            # 60ms keeps the fade's first changed frame inside the 80ms beat window.
+            # A 300ms fade shifts every later cut by that overlap.
+            overlap = min(0.06, previous.duration_s / 2, timeline.clips[index].duration_s / 2)
             offset = max(0.0, elapsed - overlap)
+            left = f"d{index}a"
+            right = f"d{index}b"
+            # concat emits 1/1000000. xfade requires both inputs on one timebase.
+            parts.append(f"[{current}]settb=1/{timeline.fps}[{left}]")
+            parts.append(f"[{labels[index]}]settb=1/{timeline.fps}[{right}]")
             parts.append(
-                f"[{current}][{labels[index]}]xfade=transition=fade:"
+                f"[{left}][{right}]xfade=transition=fade:"
                 f"duration={overlap:.3f}:offset={offset:.3f}[{out}]"
             )
             elapsed = elapsed + timeline.clips[index].duration_s - overlap

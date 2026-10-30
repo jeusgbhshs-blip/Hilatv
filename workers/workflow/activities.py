@@ -137,6 +137,28 @@ def _soundtrack(state: dict[str, Any]) -> dict[str, Any]:
     return extra
 
 
+def music_state_patch(payload: dict[str, Any]) -> dict[str, Any]:
+    """What N12 writes onto the project. The storyboard script stays on N6 durations."""
+
+    summary = payload.get("licensing_summary") or {}
+    return {
+        "audio_track": payload["audio_track"],
+        "licensing_summary": summary,
+        "aligned_script": payload["aligned_script"],
+    }
+
+
+def timeline_fields(state: dict[str, Any]) -> dict[str, Any]:
+    """Soundtrack plus the beat-aligned storyboard, once N12 has stored one."""
+
+    fields = _soundtrack(state)
+    aligned = state.get("aligned_script")
+    shots = aligned.get("shots") if isinstance(aligned, dict) else None
+    if isinstance(shots, list) and shots:
+        fields["aligned_script"] = aligned
+    return fields
+
+
 def _count(payload: dict[str, Any], key: str) -> int:
     raw = _request(payload).get(key) or 3
     try:
@@ -503,16 +525,7 @@ def n12_music(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "n12_music",
     )
-    summary = result.payload.get("licensing_summary") or {}
-    return _finish(
-        project_id,
-        "n12_music",
-        {
-            "audio_track": result.payload["audio_track"],
-            "licensing_summary": summary,
-        },
-        attempt,
-    )
+    return _finish(project_id, "n12_music", music_state_patch(result.payload), attempt)
 
 
 @activity.defn(name="n13_subtitle")
@@ -634,7 +647,7 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
                 "outro_s": float(state.get("outro_s") or 0),
                 "work_dir": _work(payload, "n15"),
                 "shot_clips": state.get("shot_clips") or [],
-                **_soundtrack(state),
+                **timeline_fields(state),
             },
             "attempt": attempt,
         },

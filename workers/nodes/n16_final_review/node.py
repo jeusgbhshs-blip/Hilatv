@@ -28,6 +28,7 @@ from workers.nodes.n16_final_review.schema import (
     NodeResult,
     ShotWindow,
 )
+from workers.nodes.n16_final_review.windows import apply_timeline_windows
 from workers.nodes.runtime import Deadline
 from workers.qa.director import MAX_REVIEWS, decide
 from workers.qa.scores import PASS_TOTAL
@@ -121,6 +122,13 @@ def run(
 
 def _execute(request: NodeRequest, *, gateway: Any, deadline: Deadline) -> NodeResult:
     payload = N16FinalInput.model_validate(request.payload)
+    if payload.timeline:
+        payload = payload.model_copy(
+            update={
+                "shots": apply_timeline_windows(payload.shots, payload.timeline),
+                "timeline": None,
+            }
+        )
     log_event(
         "node_started",
         project_id=request.project_id,
@@ -408,6 +416,8 @@ def _score_shots(
         rows.append(
             {
                 "shot_id": window.shot_id,
+                "start_s": window.start_s,
+                "end_s": window.end_s,
                 "visual_reviewed": report.visual_reviewed is True,
                 "hard_fail": list(report.hard_fail),
                 "content": codes,
