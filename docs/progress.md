@@ -23,7 +23,7 @@
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ⬜ | – | |
-| T18 | eval/ 基准测试 + 报告 | T10, T12 | 🔵 | t18-eval-benchmark | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。T12 未合并，评审走网关桩。假设见下方 |
+| T18 | eval/ 基准测试 + 报告 | T10, T12 | 🔵 | [t18-eval-benchmark](https://github.com/jeusgbhshs-blip/Hilatv/pull/31) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。T12 未合并，评审走网关桩。假设见下方 |
 | T19 | 专家模式画布 | T10, T11, T12 | ⬜ | – | |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | ⬜ | – | |
 
