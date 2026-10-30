@@ -1,5 +1,6 @@
 industry: public_sector
 label: 政企公共
+manual_review: true
 narrative:
   - 背景
   - 举措
@@ -58,3 +59,37 @@ keywords:
   - {text: 高新区, weight: 4}
   - {text: 招商, weight: 4}
 clarify_question: 这条片是招商宣传，还是政策解读？
+shot_plan:
+  - {beat: 背景, preset: boardroom_rise}
+  - {beat: 举措, preset: process_slide}
+  - {beat: 成效, preset: plaza_pull}
+  - {beat: 愿景, preset: locked_off}
+narrative_structures:
+  - id: spec_default
+    label: 宣传主结构
+    beats:
+      - 背景
+      - 举措
+      - 成效
+      - 愿景
+  - id: policy
+    label: 政策解读
+    beats:
+      - 政策背景
+      - 条款要点
+      - 办事路径
+      - 咨询方式
+  - id: invest
+    label: 招商邀请
+    beats:
+      - 区位
+      - 载体
+      - 服务
+      - 邀请
+  - id: results
+    label: 成效回顾
+    beats:
+      - 背景
+      - 有出处的数据
+      - 现场
+      - 愿景

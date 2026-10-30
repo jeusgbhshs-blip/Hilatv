@@ -1,0 +1,18 @@
+id: plaza_pull
+label: 广场拉远
+shot_sizes:
+  - wide
+  - medium
+purposes:
+  - proof
+  - hook
+prompt_fragment: >-
+  The camera eases backward so a public place opens up. Figures stay small and the
+  horizon stays level.
+negative_fragment: >-
+  no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
+recommended_model: seedance
+motion_strength: low
+status: 试用
+formal: false
+tested_runs: 0

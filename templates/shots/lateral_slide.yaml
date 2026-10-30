@@ -11,3 +11,6 @@ negative_fragment: >-
   no text, no letters, no subtitles, no logo, no watermark, no price, no phone number
 recommended_model: wan
 motion_strength: medium
+status: 试用
+formal: false
+tested_runs: 0
