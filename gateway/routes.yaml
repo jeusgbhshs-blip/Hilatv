@@ -122,10 +122,21 @@ routes:
     primary: {provider: mock, model: mock-music}
     fallbacks: []
 
+  # Two vision judges. Without a key, or with HILATV_LIVE left off, both fall through to mock.
+  - id: judge-cross
+    task: judge
+    shot_type: cross_review
+    language: "*"
+    timeout_s: 90
+    primary: {provider: gemini, model: gemini-2.0-flash}
+    fallbacks:
+      - {provider: mock, model: mock-judge-cross}
+
   - id: judge-default
     task: judge
     shot_type: "*"
     language: "*"
-    timeout_s: 60
-    primary: {provider: mock, model: mock-judge}
-    fallbacks: []
+    timeout_s: 90
+    primary: {provider: qwen_vl, model: qwen-vl-max}
+    fallbacks:
+      - {provider: mock, model: mock-judge}

@@ -131,6 +131,8 @@ def env_model_overrides() -> dict[str, str]:
         "seedream": os.getenv("SEEDREAM_MODEL", "").strip(),
         "seedance": os.getenv("SEEDANCE_MODEL", "").strip(),
         "volc_tts": os.getenv("VOLC_TTS_MODEL", "").strip(),
+        "qwen_vl": os.getenv("QWEN_VL_MODEL", "").strip(),
+        "gemini": os.getenv("GEMINI_MODEL", "").strip(),
     }
 
 

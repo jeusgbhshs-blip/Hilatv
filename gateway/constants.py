@@ -7,6 +7,7 @@ TASKS = frozenset({"llm", "image", "video", "tts", "asr", "music", "judge"})
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 VOLC_TTS_BASE_URL = "https://openspeech.bytedance.com"
 VOLC_ASR_BASE_URL = "https://openspeech.bytedance.com"
 VOLC_ASR_FLASH_PATH = "/api/v3/auc/bigmodel/recognize/flash"

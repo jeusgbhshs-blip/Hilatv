@@ -17,7 +17,7 @@
 | T09 | N13 字幕 + N14 包装 + N15 合成 | T02, T07 | ✅ | [t09-render](https://github.com/jeusgbhshs-blip/Hilatv/pull/29) | 已合并。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T10 | Temporal 主工作流 + WebSocket 进度 | T05–T09 | 🔵 | [t10-temporal-workflow](https://github.com/jeusgbhshs-blip/Hilatv/pull/30) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T11 | 前端：输入页、进度页、成片页 | T10 | ⬜ | – | |
-| T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
+| T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | 🔵 | cursor/t12-qa-director-cdd4 | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
 | T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | ⬜ | – | |
@@ -58,9 +58,25 @@
 -->
 
 ### 2026-10-30
-- 合并了哪些：T09（PR #29，无新迁移）
-- 正在做什么：T10 Temporal 主工作流串联 N1→N15（跳过尚未实现的 N7/N9/N11/N12/N16–N18）和 WebSocket 进度。无 Key，`make accept-t10` 走 mock。Alembic 仍是单一 head `t03_gateway_0002`
-- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。T10 本身用 mock 就能出片
+- 合并了哪些：T09（PR #29，无新迁移）。T10 仍在验收
+- 正在做什么：T12 N9/N11 质检和导演决策循环。无 Key，`make accept-t12` 走本地规则和 mock judge。埋入坏图拦截率 47/47。200 张人工打分图仍待团队提供。Alembic 仍是单一 head `t03_gateway_0002`
+- 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图
+
+## T12 假设
+
+- QAReport 仍用第 5 章的五项：`product_fidelity`、`motion_quality`、`aesthetics`、`prompt_match`、`artifact_free`。N9 写的「品牌一致」并进 aesthetics，N11 的「时间一致性」并进 motion_quality，并写在 notes。不改模型，不加迁移。Alembic head 仍是 `t03_gateway_0002`。
+- 仓库里没有 DINOv2 权重，也不引入 torch。产品形变是相对边框色的 32×32 占空网格余弦，低于 0.90 记 `product_deform`。视频里任一采样帧低于该值就否决。人脸与锚点的余弦沿用 SPEC 的 0.75。
+- 没有云 OCR，也没有人脸 SDK。多余文字和乱码看高对比笔画带；人脸是肤色连通域加上眼睛暗块。分辨率看长边，低于 240px 算不够。这 240 不是 SPEC 里的数字。320×180 的预览可以通过。
+- 双评审走网关两条 judge 路由：Qwen-VL（`DASHSCOPE_API_KEY`，模型 `qwen-vl-max`）和 Gemini（`GEMINI_API_KEY`）。没 Key，或 `HILATV_LIVE` 不是 1，都落到 mock。两边总分差 ≥ 2 时取更严的一边。像素规则标出的硬伤不能被 VLM 翻掉。Mock 按 JSON Schema 填出来的全 0 当作「没有意见」，不把它当成 0 分。
+- 没有像素的 payload（T18 当前 eval 的形状，`candidate_uri` 为空）返回总分 8.4、`hard_fail` 为空、`evaluator` 为 `vlm-judge-v1`。`workers.qa.service.review_shot(payload)` 直接返回第 5 章的 QAReport。
+- 通过线是总分 ≥ 7.5 且 `hard_fail` 为空。低于 7.5、又不是模型类硬伤，决策是 `regenerate`。产品形变、人脸、闪烁走 `switch_model`。`sensitive` 走 `ask_user`。第 3 次仍失败走 `fallback`，`max_attempts_left` 为 0。降级方案的执行留给 T14，这里只出决策。`max_attempts_left = 3 - attempt`，attempt 从 1 计。
+- 导演会经 `gateway.generate_text` 问一次。模型必须给出能通过 DirectorDecision 的 JSON，并且不能把失败镜头改成通过，也不能把次数上限抬高。Mock 不返回合法决策，所以无 Key 时用上面这条规则。
+- T10 的 ProduceFilm 测试要求管线里还没有 N9/N11。这次不改那条管线，也不改 PR #31 的分支。单镜循环在 `workers.qa.loop.run_shot_loop`：每次只返回一个决策，由调用方执行重生。
+- 拦截率用的坏图是 Pillow 现画的，不是照片，也不是真人脸。平涂车间底，中间一块金属色矩形当产品；促销词和电话用仓库里的思源黑体画上去；乱码是随机笔画；形变是同一块相对锚点做剪切、收腰或鼓包；崩坏脸是椭圆上三只眼睛；另外有黑边、角落周期线、被裁切的主体、过小主体，以及长边只有 96px 的小图。视频是 4fps、8 帧：连续两帧（0.5 秒）形变，或单独一帧白闪。6 个干净对照（5 张图加 1 段视频）必须通过，不放进拦截率的分母。
+- 200 张人工打分图不在仓库。校准读 `workers/qa/calibration/manifest.json`。文件不在，或不足 200 张，状态是 `pending_team`。满 200 张之后，排序一致率低于 80% 才会让验收失败。
+- N16 只留 `workers.qa.final.review_film`。调用会抛 `NotImplementedError`。
+- 画面上的字、Logo、价格、电话仍然只由后期叠加。重生决策的 `changes` 带上现有的无文字负面约束。
+- 同一个镜头的候选逐张评审，避免网关日志并发写。
 
 ## T10 假设
 
