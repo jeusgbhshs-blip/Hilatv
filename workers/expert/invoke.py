@@ -357,10 +357,9 @@ def _n12(**kwargs: Any) -> dict[str, Any]:
         },
         kwargs["gateway"],
     )
-    return {
-        "audio_track": result.payload["audio_track"],
-        "licensing_summary": result.payload.get("licensing_summary") or {},
-    }
+    from workers.workflow.activities import music_state_patch
+
+    return music_state_patch(result.payload)
 
 
 def _n13(**kwargs: Any) -> dict[str, Any]:
@@ -465,6 +464,7 @@ def _shot_director(**kwargs: Any) -> dict[str, Any]:
 
 def _n15(**kwargs: Any) -> dict[str, Any]:
     from workers.nodes.n15_compose.node import run
+    from workers.workflow.activities import timeline_fields
     from workers.workflow.film import needs_human_review
 
     state = kwargs["state"]
@@ -482,17 +482,12 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
                 "elements": state.get("elements") or [],
                 "videos": state.get("videos") or [],
                 "shot_clips": state.get("shot_clips") or [],
-                "audio_track": state.get("audio_track"),
-                "licenses": (
-                    state["licensing_summary"].get("records") or []
-                    if isinstance(state.get("licensing_summary"), dict)
-                    else []
-                ),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
                 "intro_s": float(state.get("intro_s") or 0),
                 "outro_s": float(state.get("outro_s") or 0),
                 "work_dir": _work(kwargs["project_id"], "n15"),
+                **timeline_fields(state),
             },
             "attempt": 1,
         },

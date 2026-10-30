@@ -69,6 +69,9 @@ class ShotClip(BaseModel):
 
 class N15Input(BaseModel):
     script: Script
+    # N12's beat-aligned storyboard. When present, picture, subtitles, and
+    # packaging move onto those shot durations. The stored storyboard is unchanged.
+    aligned_script: Script | None = None
     voiceovers: list[ShotVoiceover] = Field(default_factory=list)
     cues: list[SubtitleCue] = Field(default_factory=list)
     elements: list[PackageElement] = Field(default_factory=list)

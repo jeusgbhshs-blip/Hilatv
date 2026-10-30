@@ -27,6 +27,7 @@
 | T19 | 专家模式画布 | T10, T11, T12 | 🔵 | [cursor/t19-expert-canvas-7ff6](https://github.com/jeusgbhshs-blip/Hilatv/pull/55) | 验收中。重跑计次走 `open_project_budget`。假设见下方 |
 | T20 | 合规：AI 标识、内容审核、授权存档 | T09, T15 | 🔵 | [cursor/t20-compliance-49e6](https://github.com/jeusgbhshs-blip/Hilatv/pull/49) | 验收中。显式角标按解码帧量字高。授权记录用 N12 的 `LicenseRecord`。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T21 | N12 音乐与音效 | T07, T09, T10 | ✅ | [cursor/t21-n12-music-2ceb](https://github.com/jeusgbhshs-blip/Hilatv/pull/46) | 已合并（18cf1ff）。无新迁移。假设见下方 |
+| T21-F1 | 画面切点对齐音乐节拍 | T21 | 🔵 | [cursor/t21-f1-cut-align-7fd8](https://github.com/jeusgbhshs-blip/Hilatv/pull/61) | 验收中。N12 对齐时长写入 T10 时间线。成片切点在 N15 mp4 上测量。假设见下方 |
 | T22 | N16 成片终审 | T12, T20 | 🔵 | [cursor/t22-n16-final-review-1cd2](https://github.com/jeusgbhshs-blip/Hilatv/pull/58) | 验收中。mock 硬伤拦截 47/47。VLM 实帧与 ASR 听写未测。假设见下方 |
 | T23 | 分镜预览（可跳过） | T11, T16 | 🔵 | [cursor/t23-storyboard-preview-acde](https://github.com/jeusgbhshs-blip/Hilatv/pull/51) | 验收中。N9 之后可暂停看分镜。假设见下方 |
 | SEC-01 | 素材链接防 SSRF | T05 | ✅ | [sec01-ssrf](https://github.com/jeusgbhshs-blip/Hilatv/pull/43) | 已合并（d845705）。无密钥。假设见下方 |
@@ -77,6 +78,11 @@
 - 正在做什么：
 - 需要提供什么：
 -->
+
+### 2026-10-30
+- 正在做什么：T21-F1 画面切点对齐。已并入 main `c551c3d`（#56 会话企业、#57 预算预检、#58 N16 终审）。N16 的分镜窗口用时间线上对齐后的时长。无 Key，`HILATV_LIVE` 关闭。
+- 合并了哪些：还没有。分支 `cursor/t21-f1-cut-align-7fd8`。
+- 需要提供什么：同下。音乐商用授权仍未批。
 
 ### 2026-10-30
 - 合并了哪些：已并入 main `398be89`（T23 旁白预算 #57）和 `43d2401`（SEC-54 #56）
@@ -139,12 +145,26 @@
 - 压低量取区间中点 11 dB。测量的是旁白区段里、躲开点击之后的底乐：未压低的音乐和压低后的音乐用 ffmpeg `volumedetect` 的 mean volume 相减。节拍误差用渲染出来的音乐文件重新检测，不拿节点自己记下的节拍表跟切点比。
 - 响度用 ffmpeg `ebur128` 的 Integrated loudness。旁白和成片分开测。成片的电平只靠抬或压背景乐，不改已经归一到 -16 的旁白，这样压低比例不会被整轨增益冲掉。
 - 无 Key 时音乐走 gateway `music`，路由仍是 mock。Mock 按情绪从仓库内的测试曲库挑一条，节拍是代码合成的点击加底乐，许可证记 `CC0-1.0`，来源是 `hilatv-test-library/...`。音效同样是代码合成的短声，来源是 `hilatv-test-sfx/...`。没有第三方录音，也没有把音频文件放进仓库。
-- 画面切点对齐：**未达标 / 遗留**。T10 成片仍按 N6 时长切画面，没有把 N12 对齐后的时长写进时间轴，也没有在成片上量切点。计划切点和测试曲点击落在同一网格上只是内部一致性检查，不能当作 SPEC 的 ≤80ms 验收。后续任务：把 N12 的对齐时长接到 T10 时间轴，并在最终成片上测量切点误差。
+- 画面切点对齐：T21 合并时未达标。T21-F1 把 N12 的对齐时长接到时间线，并在 N15 mp4 上测量。不要再用 N12 计划值自比。
 - 压低量是从成片混音里减去旁白后，比较旁白区段和空隙区段的响度，不是拿未压低文件和乘上固定增益的副本互比。成片整体响度除了混音 wav，还用 ffmpeg `ebur128` 量 N15 导出的 mp4 音轨，目标 -14 ± 1。
 - T20 还没在 main 上。授权记录定义在 `workers/nodes/n12_music/schema.py` 的 `LicenseRecord` / `LicensingSummary`。除了 `source` 和 `license`，还有 `evidence_ref`（授权证明）、`expires_on`（到期日，CC0 测试音记 `none`）、`usage_scope`（使用范围）。T20 以后应原样收进成片授权说明。缺任一项时 N12 不交出音轨。`HILATV_LIVE=1` 时拒绝用 mock 测试曲库的 CC0 许可证交付。
 - N12 与 N13、N14 并行，都进 N15。N15 只增加可选的 `audio_track` 和 `licenses`。三条导出（成片、无字幕、无配音）的滤镜结构没改。没有音轨时行为和 T09 一样。无配音版仍然去掉全部音轨。
 - 不接用户上传音乐做 MV。不新增 Mureka/Suno adapter，`.env.example` 里这两个 Key 留空。不新增 Python 依赖，也不新增迁移。Alembic head 仍是单一 head `t03_gateway_0002`。
 - 画面上的字、Logo、价格、电话仍只由 N13/N14/N15 叠加。音乐提示词要求无歌词、无口播、无文字。
+
+## T21-F1 假设
+
+- N12、N13、N14 仍并行。N12 把 `aligned_script` 写进项目状态，不改分镜脚本上的 N6 时长。N15 建时间线时才改用对齐后的时长。专家重跑走同一份 `music_state_patch` / `timeline_fields`。
+- 字幕保持句内偏移，不把旁白拉长。包装卡片按镜头时长缩放，铺满原镜头的卡片仍铺满对齐后的镜头。片尾和角标跟着新的画面结尾走。「AI生成」仍由 N15 固定层重画，不能去掉。
+- 切点误差只在成片上量：解码帧的画面阶跃，对上同一文件里高通之后的起音。不把 `cut_times_s` 传进这次比较。阈值沿用 N12 的 80ms。
+- 验收成片把转场写成硬切，这样画面变化落在一帧上。分镜里的叠化仍保留；叠化没有单帧切点，不用它去套 80ms。
+- 测量用的镜头是代码画出的条纹，没有字，也不是客户素材。平涂色板会被统一调色拉到同一种颜色，成片上看不见切点。
+- `intro_s=0` 不再被 `quantize_s` 收成 1 帧。那一帧会把画面和字幕整体推后约 33ms，和 N14 的 0 秒片头对不齐。没有片头时音轨从 0 开始；这个 ffmpeg 不接受 `adelay=0`，所以 0 延迟不再写这个滤镜。
+- 调色的 `colorchannelmixer` 系数从上限 4.0 收到 2.0。ffmpeg 只接受 -2 到 2。去掉那一帧片头之后，第一镜变成调色目标，片尾按 4 倍增益会直接被拒绝。
+- 叠化从 0.3 秒收到 0.06 秒。0.3 秒会把后面的切点整体提前 300ms，超出 80ms。短叠化的第一帧变化落在 80ms 以内。混有硬切时，concat 的时间基和 xfade 不一致，先 `settb` 再叠化。
+- 难样本是 9 个镜头、时长不相等、一处叠化、低对比条纹。成片测到 8 个画面阶跃，最大误差 66.65ms，阶跃峰值约 29。叠化本身没有再形成第九个台阶。高对比硬切样本仍是 0.06ms。
+- N16 若带上 N15 时间线，分镜窗口的起止改用对齐后的镜头片段，不再用 N6 时长。锚点、人脸数和模型名保留。没有时间线时行为与 T22 相同。live 证据不足或有硬伤仍停在 `needs_human_review`。
+- 压低量和响度的测法、容差不变。不新增迁移，不加依赖。`HILATV_LIVE` 保持关闭。
 
 - T18：60 条基准需求的 mock 评分表。`make accept-t18` 走 N1–N5，并调用已合并的 T12 `review_shot`。mock 没有画面，镜头标为未评审。T12 导入不到时记 `review_error`，不再用网关单独打分。报告分开写「管线和报告结构」和「质量是否达标」。需要团队提供真实企业需求替换 `eval/briefs/`；VLM Key 与非零预算后，`--mode live` 才会让视觉评审看实帧
 - 需要提供什么：LLM / 图像 / 视频 / TTS / ASR / VLM 的 Key，以及非零预算后才可打开 `HILATV_LIVE=1`。校准用的 200 张人工打分图。T11 本身不调用模型。T25 的预设转正要等 Key 之后另做 20 次实测。SEC-01 的 URL 测试用 mock 解析器，不走真实网络

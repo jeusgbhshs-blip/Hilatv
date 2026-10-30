@@ -53,6 +53,8 @@ class N16FinalInput(BaseModel):
 
     film_path: str = Field(min_length=1)
     shots: list[ShotWindow] = Field(min_length=1)
+    # N15 timeline. When present, shot start/end come from its clips.
+    timeline: dict[str, Any] | None = None
     brief: Brief
     script: Script
     brand_kit: BrandKit | None = None
