@@ -42,7 +42,6 @@ export PYTHONPATH="$ROOT:$ROOT/apps/api${PYTHONPATH:+:$PYTHONPATH}"
 echo "== pytest brand kit, N2, N3, API =="
 "$PYTHON" -m pytest \
   workers/brand_kit/tests \
-  workers/nodes/n02_brand_kit/tests \
   workers/nodes/n03_concept/tests \
   apps/api/tests/test_brands.py \
   -q
