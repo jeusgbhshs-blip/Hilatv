@@ -20,7 +20,7 @@
 | T12 | N9/N11 质检 + 导演 Agent 决策循环 | T08, T10 | ⬜ | – | |
 | T13 | N7 锚点 + 产品合成模式 | T08, T12 | ⬜ | – | |
 | T14 | 降级方案 6.10 | T12, T13 | ⬜ | – | |
-| T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | 🔵 | t15-brand-concept | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
+| T15 | N3 方案卡 + N2 Brand Kit 后台 | T10, T11 | 🔵 | [t15-brand-concept](https://github.com/jeusgbhshs-blip/Hilatv/pull/44) | 验收中。无新迁移，head 仍是 `t03_gateway_0002`。假设见下方 |
 | T16 | N18 对话改稿 + 版本管理 | T10, T12 | ⬜ | – | |
 | T17 | 多比例、多语种导出 | T06, T09, T10 | ⬜ | – | |
 | T18 | eval/ 基准测试 + 报告 | T10, T12 | ⬜ | – | |
