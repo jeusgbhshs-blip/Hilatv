@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import threading
@@ -179,6 +180,11 @@ class Gateway:
         model_cls, json_schema, schema_name = normalize_schema(schema)
         prompt, negative = _prepare_prompt(task, prompt)
         clean_params = _public_params(dict(params or {}))
+        image_b64 = clean_params.pop("image_b64", None)
+        if isinstance(image_b64, str) and image_b64:
+            clean_params["image_sha256"] = hashlib.sha256(image_b64.encode("utf-8")).hexdigest()
+        else:
+            image_b64 = None
         if seed is None and clean_params.get("seed") is not None:
             seed = int(clean_params["seed"])
         route = self._with_overrides(self.routes.resolve(task, shot_type, language))
@@ -230,6 +236,7 @@ class Gateway:
             attempt=attempt,
             shot_type=shot_type,
             language=language,
+            image_b64=image_b64 if isinstance(image_b64, str) else None,
         )
         started = time.perf_counter()
         cached = self.cache.get(cache_key)
