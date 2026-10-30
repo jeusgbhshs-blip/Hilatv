@@ -46,6 +46,9 @@ class QAReport(SchemaModel):
     total: JsonFloat = Field(ge=0, le=10)
     evaluator: str = Field(min_length=1)
     notes: str
+    # True only after a vision judge scored a real frame. Absent in the SPEC
+    # sample; default false so older JSON still loads. T18 reads this flag.
+    visual_reviewed: JsonBool = False
 
     @field_validator("hard_fail")
     @classmethod

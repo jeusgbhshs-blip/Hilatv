@@ -1,17 +1,20 @@
 """Two judge calls. A wide gap keeps the stricter scores.
 
-Pixel hard fails are applied later and cannot be voted away.
+Pixel hard fails are applied later and cannot be voted away. A call that
+errors, times out, or omits a dimension is not an opinion.
 """
 
 from __future__ import annotations
 
+import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from workers.logging import log_event
-from workers.qa.scores import merge_opinions, parse_opinion
+from workers.qa.scores import JudgeReview, ParsedOpinion, combine_judges, parse_opinion
 from workers.schemas.asset import QAReport
 
 _N9 = Path(__file__).resolve().parents[1] / "nodes" / "n09_keyframe_qa" / "prompts"
@@ -39,33 +42,50 @@ def render_judge(payload: dict[str, Any], rule_notes: str) -> str:
     )
 
 
+@dataclass
+class _RawJudge:
+    payload: dict[str, Any] | None
+    error: str | None
+
+
 def cross_review(
     gateway: Any,
     payload: dict[str, Any],
     *,
     rule_notes: str,
     image_b64: str | None = None,
-) -> QAReport | None:
+) -> JudgeReview:
     prompt = render_judge(payload, rule_notes)
-    primary = _call(
-        gateway,
-        prompt,
-        payload,
-        shot_type=_shot_type(payload.get("shot_type")),
-        seed=11,
-        reviewer="primary",
-        image_b64=image_b64,
+    primary = _classify(
+        _call(
+            gateway,
+            prompt,
+            payload,
+            shot_type=_shot_type(payload.get("shot_type")),
+            seed=11,
+            reviewer="primary",
+            image_b64=image_b64,
+        )
     )
-    cross = _call(
-        gateway,
-        prompt,
-        payload,
-        shot_type="cross_review",
-        seed=29,
-        reviewer="cross",
-        image_b64=image_b64,
+    cross = _classify(
+        _call(
+            gateway,
+            prompt,
+            payload,
+            shot_type="cross_review",
+            seed=29,
+            reviewer="cross",
+            image_b64=image_b64,
+        )
     )
-    return merge_opinions(parse_opinion(primary), parse_opinion(cross))
+    live = os.getenv("HILATV_LIVE", "0").strip() == "1"
+    return combine_judges(primary, cross, live=live)
+
+
+def _classify(raw: _RawJudge) -> ParsedOpinion:
+    if raw.error:
+        return ParsedOpinion(None, raw.error)
+    return parse_opinion(raw.payload)
 
 
 def _video_node(payload: dict[str, Any]) -> bool:
@@ -91,14 +111,14 @@ def _call(
     seed: int,
     reviewer: str,
     image_b64: str | None,
-) -> dict[str, Any] | None:
+) -> _RawJudge:
     judge = getattr(gateway, "judge", None)
+    node = "n11_video_qa" if _video_node(payload) else "n09_keyframe_qa"
     if not callable(judge):
-        return None
+        return _RawJudge(None, "judge_error")
     params: dict[str, Any] = {"reviewer": reviewer}
     if image_b64:
         params["image_b64"] = image_b64
-    node = "n11_video_qa" if _video_node(payload) else "n09_keyframe_qa"
     try:
         raw = judge(
             prompt,
@@ -111,18 +131,33 @@ def _call(
             attempt=1,
             params=params,
         )
+    except TimeoutError as exc:
+        _log_judge_failure(payload, node, reviewer, "timeout", exc)
+        return _RawJudge(None, "timeout")
     except Exception as exc:
-        log_event(
-            "qa_judge_failed",
-            project_id=_text(payload.get("project_id")),
-            node=node,
-            shot_id=_text(payload.get("shot_id")),
-            attempt=1,
-            error=str(exc)[:300],
-            reviewer=reviewer,
-        )
-        return None
-    return raw if isinstance(raw, dict) else None
+        _log_judge_failure(payload, node, reviewer, "judge_error", exc)
+        return _RawJudge(None, "judge_error")
+    if not isinstance(raw, dict):
+        return _RawJudge(None, "parse_failure")
+    return _RawJudge(raw, None)
+
+
+def _log_judge_failure(
+    payload: dict[str, Any],
+    node: str,
+    reviewer: str,
+    kind: str,
+    exc: BaseException,
+) -> None:
+    log_event(
+        "qa_judge_failed",
+        project_id=_text(payload.get("project_id")),
+        node=node,
+        shot_id=_text(payload.get("shot_id")),
+        attempt=1,
+        error=f"{kind}: {exc}"[:300],
+        reviewer=reviewer,
+    )
 
 
 def _text(value: object) -> str | None:

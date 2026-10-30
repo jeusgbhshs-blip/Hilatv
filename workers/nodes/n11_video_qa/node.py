@@ -17,8 +17,9 @@ from workers.qa.director import decide
 from workers.qa.frames import SAMPLE_FPS, sample_frames, write_mp4
 from workers.qa.pixels import open_image
 from workers.qa.rules import inspect_frames
-from workers.qa.scores import PASS_TOTAL
+from workers.qa.scores import is_quality_pass
 from workers.qa.service import review_shot
+from workers.qa.settings import RetryBudget
 from workers.qa.splice import plan_splice
 from workers.schemas.asset import Candidate, QAReport
 from workers.schemas.director import DecisionAction, DecisionTarget, DirectorDecision
@@ -38,10 +39,11 @@ def run(
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     gateway = gateway if gateway is not None else _default_gateway()
+    budget = RetryBudget()
     last_error: QAError | None = None
     for try_index in range(1, max_attempts + 1):
         try:
-            result = _execute(request, payload, gateway=gateway, timeout_s=timeout_s)
+            result = _execute(request, payload, gateway=gateway, timeout_s=timeout_s, budget=budget)
             check(result)
         except QAError as exc:
             last_error = exc
@@ -64,6 +66,7 @@ def _execute(
     *,
     gateway: Any,
     timeout_s: float,
+    budget: RetryBudget,
 ) -> NodeResult:
     deadline = Deadline(timeout_s, node=NODE)
     log_event(
@@ -88,7 +91,7 @@ def _execute(
         scored.append((candidate, report, frames, good))
     if not scored:
         raise QAError("n11 had no candidates for the requested shot")
-    updated, decisions, splices = _choose(scored, request=request, gateway=gateway)
+    updated, decisions, splices = _choose(scored, request=request, gateway=gateway, budget=budget)
     return NodeResult(
         project_id=request.project_id,
         node=NODE,
@@ -108,6 +111,7 @@ def _choose(
     *,
     request: NodeRequest,
     gateway: Any,
+    budget: RetryBudget,
 ) -> tuple[list[Candidate], list[DirectorDecision], list[dict[str, Any]]]:
     by_shot: dict[str, list[tuple[Candidate, QAReport, list[Image.Image], list[bool]]]] = (
         defaultdict(list)
@@ -128,16 +132,13 @@ def _choose(
             prompt=str(best[0].params.get("prompt") or ""),
             gateway=gateway,
             project_id=request.project_id,
+            budget=budget,
         )
-        passed = (
-            decision.action is DecisionAction.pass_
-            and not best[1].hard_fail
-            and best[1].total >= PASS_TOTAL
-        )
+        passed = is_quality_pass(best[1])
         extra: Candidate | None = None
         if not passed:
             extra, plan = _try_splice(rows, request=request, shot_id=shot_id, gateway=gateway)
-            if extra is not None and plan is not None:
+            if extra is not None and plan is not None and is_quality_pass(extra.qa):
                 decision = DirectorDecision(
                     action=DecisionAction.pass_,
                     target=DecisionTarget(node="N11", shot_id=shot_id),
@@ -208,7 +209,7 @@ def _try_splice(
         gateway=gateway,
         frames=pieces,
     )
-    if report.hard_fail or report.total < PASS_TOTAL:
+    if not is_quality_pass(report):
         return None, None
     anchor = rows[0][0]
     candidate = Candidate(

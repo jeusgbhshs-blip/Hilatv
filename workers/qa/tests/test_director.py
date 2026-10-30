@@ -21,8 +21,9 @@ def _report(*, total: float, hard: list[str] | None = None) -> QAReport:
         ),
         hard_fail=hard or [],
         total=total,
-        evaluator="rule+vlm-v1",
+        evaluator="vlm-judge-v1",
         notes="fixture",
+        visual_reviewed=True,
     )
 
 

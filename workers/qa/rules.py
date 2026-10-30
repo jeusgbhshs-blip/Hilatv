@@ -12,8 +12,6 @@ from dataclasses import dataclass
 from PIL import Image
 
 from workers.qa.pixels import (
-    DEFORM_MIN_SIMILARITY,
-    FACE_MIN_SIMILARITY,
     cosine,
     foreground_mask,
     luma_at,
@@ -23,9 +21,17 @@ from workers.qa.pixels import (
     shape_similarity,
     touches_border,
 )
+from workers.qa.settings import (
+    deform_min_similarity,
+    face_min_similarity,
+    flicker_delta,
+    flicker_neighbor,
+)
+from workers.qa.settings import (
+    min_edge as configured_min_edge,
+)
 
 # Long edge. 320×180 passes; a 96×54 plate does not.
-MIN_EDGE = 240
 # Anti-aliased glyphs jump by about 40 levels, not a hard 70.
 TEXT_JUMP = 40
 TEXT_SPAN = 64
@@ -33,7 +39,6 @@ TEXT_TRANSITIONS = 10
 TEXT_ROWS = 5
 BAR_LUMA = 16
 BAR_FRACTION = 0.06
-FLICKER_DELTA = 0.22
 
 
 @dataclass(frozen=True)
@@ -47,9 +52,11 @@ def inspect_image(
     *,
     anchor: Image.Image | None = None,
     expected_faces: int = 0,
-    min_edge: int = MIN_EDGE,
+    min_edge: int | None = None,
     check_composition: bool = True,
 ) -> list[Finding]:
+    if min_edge is None:
+        min_edge = configured_min_edge()
     buf, width, height = pack(image)
     found: list[Finding] = []
     if max(width, height) < min_edge:
@@ -68,7 +75,7 @@ def inspect_image(
             found.append(composition)
     if anchor is not None:
         similarity = shape_similarity(image, anchor)
-        if similarity < DEFORM_MIN_SIMILARITY:
+        if similarity < deform_min_similarity():
             found.append(
                 Finding("product_deform", f"shape similarity {similarity:.3f} is below the anchor")
             )
@@ -81,7 +88,7 @@ def inspect_frames(
     *,
     anchor: Image.Image | None = None,
     expected_faces: int = 0,
-    min_edge: int = MIN_EDGE,
+    min_edge: int | None = None,
 ) -> tuple[list[Finding], list[bool]]:
     """Return clip findings and whether each frame is usable in a splice."""
 
@@ -401,7 +408,7 @@ def _flicker_indexes(frames: list[Image.Image]) -> set[int]:
         into = _luma_delta(frames[index - 1], frames[index])
         out = _luma_delta(frames[index], frames[index + 1])
         neighbors = _luma_delta(frames[index - 1], frames[index + 1])
-        if into >= FLICKER_DELTA and out >= FLICKER_DELTA and neighbors <= 0.08:
+        if into >= flicker_delta() and out >= flicker_delta() and neighbors <= flicker_neighbor():
             found.add(index)
     return found
 
@@ -444,7 +451,7 @@ def _face_gap(
     if reference is None:
         reference = present[0]
     for grid in present:
-        if cosine(grid, reference) < FACE_MIN_SIMILARITY:
+        if cosine(grid, reference) < face_min_similarity():
             return Finding("face_inconsistent", "a frame face does not match the anchor")
     return None
 

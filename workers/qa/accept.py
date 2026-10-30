@@ -8,16 +8,33 @@ from pathlib import Path
 
 from workers.qa.calibrate import calibration_status
 from workers.qa.samples import build_catalog
-from workers.qa.scores import PASS_TOTAL
 from workers.qa.service import review_shot
-from workers.schemas.asset import QAReport
+
+# Planted defects. not_reviewed / judge_unavailable mean the frame was not a visual pass.
+_CONTENT = frozenset(
+    {
+        "product_deform",
+        "extra_text",
+        "garbled_text",
+        "face_collapse",
+        "face_count",
+        "face_inconsistent",
+        "black_bar",
+        "watermark",
+        "low_resolution",
+        "bad_composition",
+        "flicker",
+        "sensitive",
+    }
+)
 
 
 def build_report(directory: Path | None = None) -> dict[str, object]:
     folder = directory or Path(tempfile.mkdtemp(prefix="hilatv-t12-"))
     rows = build_catalog(folder)
     bad = hit = 0
-    clean = clean_pass = 0
+    clean = clean_ok = 0
+    visual_passes = 0
     video_deform = video_deform_hit = 0
     by_defect: dict[str, list[int]] = {}
     for row in rows:
@@ -34,12 +51,14 @@ def build_report(directory: Path | None = None) -> dict[str, object]:
                 "shot_type": "slow_push_in",
             }
         )
-        caught = _intercepted(report)
+        content = [code for code in report.hard_fail if code in _CONTENT]
+        visual_passes += int(report.visual_reviewed)
         if row.defect == "clean":
             clean += 1
-            clean_pass += int(not caught)
+            clean_ok += int(not content and not report.visual_reviewed)
             continue
         bad += 1
+        caught = _caught(row.defect, report.hard_fail)
         hit += int(caught)
         bucket = by_defect.setdefault(row.defect, [0, 0])
         bucket[0] += 1
@@ -54,9 +73,16 @@ def build_report(directory: Path | None = None) -> dict[str, object]:
         "intercepted": hit,
         "rate": round(rate, 4),
         "threshold": 0.9,
-        "pass": rate >= 0.9 and clean_pass == clean and video_deform_hit == video_deform,
+        "pass": (
+            rate >= 0.9
+            and clean_ok == clean
+            and video_deform_hit == video_deform
+            and visual_passes == 0
+        ),
         "clean": clean,
-        "clean_pass": clean_pass,
+        "clean_pass": clean_ok,
+        "visual_passes": visual_passes,
+        "uncalibrated": True,
         "video_deform": video_deform,
         "video_deform_veto": video_deform_hit,
         "by_defect": {
@@ -69,8 +95,14 @@ def build_report(directory: Path | None = None) -> dict[str, object]:
     }
 
 
-def _intercepted(report: QAReport) -> bool:
-    return bool(report.hard_fail) or report.total < PASS_TOTAL
+def _caught(defect: str, hard_fail: list[str]) -> bool:
+    """Painted words count whether the band looks like copy or like scribble."""
+
+    found = set(hard_fail)
+    if defect in found:
+        return True
+    text = {"extra_text", "garbled_text"}
+    return defect in text and bool(found & text)
 
 
 def main() -> int:

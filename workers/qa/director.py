@@ -10,7 +10,8 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from gateway.constants import NO_RENDERED_TEXT
 from workers.logging import log_event
-from workers.qa.scores import PASS_TOTAL
+from workers.qa.scores import is_quality_pass
+from workers.qa.settings import RetryBudget
 from workers.schemas.asset import QAReport
 from workers.schemas.director import DecisionAction, DecisionTarget, DirectorDecision
 
@@ -42,6 +43,7 @@ def decide(
     prompt: str = "",
     gateway: Any | None = None,
     project_id: str | None = None,
+    budget: RetryBudget | None = None,
 ) -> DirectorDecision:
     """Return one validated decision. A model cannot pass a failing shot or raise the cap."""
 
@@ -65,6 +67,7 @@ def decide(
         prompt=prompt,
         project_id=project_id,
     )
+    chosen = _cap_project(chosen, budget)
     checked = DirectorDecision.model_validate(chosen.model_dump())
     log_event(
         "director_decision",
@@ -95,7 +98,15 @@ def _policy(
 ) -> DirectorDecision:
     left = max(0, MAX_REVIEWS - attempt)
     target = DecisionTarget(node=node, shot_id=shot_id)
-    if not report.hard_fail and report.total >= PASS_TOTAL:
+    if "not_reviewed" in report.hard_fail and "media=text_only" in report.notes:
+        return DirectorDecision(
+            action=DecisionAction.fallback,
+            target=target,
+            reason="画面按设计没有像素，不能判通过",
+            changes={"text_only": True},
+            max_attempts_left=left,
+        )
+    if is_quality_pass(report):
         return DirectorDecision(
             action=DecisionAction.pass_,
             target=target,
@@ -134,6 +145,24 @@ def _policy(
         changes={"prompt_suffix": NO_RENDERED_TEXT, "candidates": 4},
         max_attempts_left=left,
     )
+
+
+def _cap_project(decision: DirectorDecision, budget: RetryBudget | None) -> DirectorDecision:
+    if decision.action not in {DecisionAction.regenerate, DecisionAction.switch_model}:
+        return decision
+    if budget is None:
+        return decision
+    if not budget.allow():
+        return decision.model_copy(
+            update={
+                "action": DecisionAction.fallback,
+                "reason": "项目重生次数已到上限",
+                "changes": {"plan": "degrade", "project_retry_cap": budget.limit},
+                "max_attempts_left": 0,
+            }
+        )
+    budget.consume()
+    return decision
 
 
 def _switch_changes(model: str) -> dict[str, Any]:

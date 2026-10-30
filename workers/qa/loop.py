@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from workers.qa.director import decide
-from workers.qa.scores import PASS_TOTAL
+from workers.qa.scores import is_quality_pass
+from workers.qa.settings import RetryBudget
 from workers.schemas.asset import Candidate, QAReport
 from workers.schemas.director import DecisionAction, DirectorDecision
 
@@ -32,9 +33,11 @@ def run_shot_loop(
     apply: Callable[[DirectorDecision], list[Candidate]] | None = None,
     project_id: str | None = None,
     gateway: Any | None = None,
+    budget: RetryBudget | None = None,
 ) -> LoopResult:
     if not candidates:
         raise ValueError("a shot needs at least one candidate")
+    budget = budget if budget is not None else RetryBudget()
     current = list(candidates)
     decisions: list[DirectorDecision] = []
     for attempt in range(1, 4):
@@ -52,6 +55,7 @@ def run_shot_loop(
             prompt=str(sample.params.get("prompt") or ""),
             gateway=gateway,
             project_id=project_id,
+            budget=budget,
         )
         decisions.append(decision)
         current = _mark(current, reports, decision)
@@ -77,9 +81,7 @@ def _mark(
     chosen: str | None = None
     if decision.action is DecisionAction.pass_:
         eligible = [
-            pair
-            for pair in zip(candidates, reports, strict=True)
-            if not pair[1].hard_fail and pair[1].total >= PASS_TOTAL
+            pair for pair in zip(candidates, reports, strict=True) if is_quality_pass(pair[1])
         ]
         if eligible:
             winner = max(eligible, key=lambda pair: pair[1].total)

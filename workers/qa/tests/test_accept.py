@@ -23,5 +23,7 @@ def test_planted_set_clears_ninety_percent(monkeypatch, tmp_path) -> None:
     assert summary["pass"] is True
     assert float(summary["rate"]) >= 0.9
     assert summary["clean_pass"] == summary["clean"]
+    assert summary["visual_passes"] == 0
+    assert summary["uncalibrated"] is True
     assert summary["video_deform_veto"] == summary["video_deform"]
     assert summary["calibration"] == "pending_team"

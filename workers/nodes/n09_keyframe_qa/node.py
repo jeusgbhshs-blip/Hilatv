@@ -10,8 +10,9 @@ from workers.nodes.n09_keyframe_qa.qa import QAError, check
 from workers.nodes.n09_keyframe_qa.schema import N9Input, NodeRequest, NodeResult
 from workers.nodes.runtime import Deadline
 from workers.qa.director import decide, generator_node
-from workers.qa.scores import PASS_TOTAL
+from workers.qa.scores import is_quality_pass
 from workers.qa.service import review_shot
+from workers.qa.settings import RetryBudget
 from workers.schemas.asset import Candidate, QAReport
 from workers.schemas.director import DecisionAction, DirectorDecision
 
@@ -30,10 +31,11 @@ def run(
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
     gateway = gateway if gateway is not None else _default_gateway()
+    budget = RetryBudget()
     last_error: QAError | None = None
     for try_index in range(1, max_attempts + 1):
         try:
-            result = _execute(request, payload, gateway=gateway, timeout_s=timeout_s)
+            result = _execute(request, payload, gateway=gateway, timeout_s=timeout_s, budget=budget)
             check(result)
         except QAError as exc:
             last_error = exc
@@ -56,6 +58,7 @@ def _execute(
     *,
     gateway: Any,
     timeout_s: float,
+    budget: RetryBudget,
 ) -> NodeResult:
     deadline = Deadline(timeout_s, node=NODE)
     log_event(
@@ -78,7 +81,7 @@ def _execute(
         scored.append((candidate, report))
     if not scored:
         raise QAError("n09 had no candidates for the requested shot")
-    updated, decisions = _choose(scored, request=request, gateway=gateway)
+    updated, decisions = _choose(scored, request=request, gateway=gateway, budget=budget)
     log_event(
         "node_finished",
         project_id=request.project_id,
@@ -105,6 +108,7 @@ def _choose(
     *,
     request: NodeRequest,
     gateway: Any,
+    budget: RetryBudget,
 ) -> tuple[list[Candidate], list[DirectorDecision]]:
     groups: dict[tuple[str, str], list[tuple[Candidate, QAReport]]] = defaultdict(list)
     for pair in scored:
@@ -120,7 +124,7 @@ def _choose(
         winners: list[tuple[Candidate, QAReport]] = []
         for _frame, pairs in frame_groups:
             best = max(pairs, key=lambda item: item[1].total)
-            if best[1].hard_fail or best[1].total < PASS_TOTAL:
+            if not is_quality_pass(best[1]):
                 failed = True
             winners.append(best)
         sample = winners[0][0]
@@ -134,6 +138,7 @@ def _choose(
             prompt=str(sample.params.get("prompt") or ""),
             gateway=gateway,
             project_id=request.project_id,
+            budget=budget,
         )
         if failed and decision.action is DecisionAction.pass_:
             decision = decision.model_copy(

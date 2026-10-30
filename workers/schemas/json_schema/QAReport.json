@@ -72,6 +72,11 @@
     "notes": {
       "title": "Notes",
       "type": "string"
+    },
+    "visual_reviewed": {
+      "default": false,
+      "title": "Visual Reviewed",
+      "type": "boolean"
     }
   },
   "required": [

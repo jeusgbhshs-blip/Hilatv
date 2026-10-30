@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from workers.qa.samples import _plate
-from workers.qa.scores import DIMS, apply_findings, merge_opinions, parse_opinion
+from workers.qa.scores import DIMS, ParsedOpinion, combine_judges, parse_opinion
 from workers.qa.service import review_not_ready, review_shot
 from workers.qa.tests.conftest import MockGateway
 from workers.schemas.asset import QAReport, QAScores
@@ -13,7 +13,7 @@ def test_stub_marker_stays() -> None:
     assert review_not_ready()["task"] == "T12"
 
 
-def test_storyboard_without_pixels_passes(monkeypatch, tmp_path) -> None:
+def test_missing_uri_is_not_reviewed(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("HILATV_LIVE", "0")
     monkeypatch.setenv("HILATV_GATEWAY_STORE", "sqlite")
     monkeypatch.setenv("HILATV_SQLITE_PATH", str(tmp_path / "qa.sqlite"))
@@ -39,9 +39,9 @@ def test_storyboard_without_pixels_passes(monkeypatch, tmp_path) -> None:
     )
     reset_gateway()
     assert isinstance(report, QAReport)
-    assert report.hard_fail == []
-    assert report.total == 8.4
-    assert report.evaluator == "vlm-judge-v1"
+    assert report.hard_fail == ["not_reviewed"]
+    assert report.total == 0
+    assert "media=missing" in report.notes
 
 
 def test_painted_text_is_intercepted(tmp_path) -> None:
@@ -64,7 +64,9 @@ def test_painted_text_is_intercepted(tmp_path) -> None:
     assert report.total < 7.5
 
 
-def test_disagreement_keeps_the_stricter_judge() -> None:
+def test_disagreement_keeps_the_stricter_judge(monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
+
     class Split:
         def judge(self, prompt: str, **kwargs: object) -> dict[str, object]:
             low = kwargs.get("shot_type") == "cross_review"
@@ -85,6 +87,7 @@ def test_disagreement_keeps_the_stricter_judge() -> None:
         gateway=Split(),
         image=_plate("rect"),
     )
+    assert report.visual_reviewed is True
     assert "sensitive" in report.hard_fail
     assert report.total <= 6
     assert report.scores.product_fidelity <= 3
@@ -98,7 +101,9 @@ def test_blank_mock_is_not_an_opinion() -> None:
         "evaluator": "mock",
         "notes": "mock",
     }
-    assert parse_opinion(blank) is None
+    parsed = parse_opinion(blank)
+    assert parsed.report is None
+    assert parsed.error == "mock"
     high = QAReport(
         scores=QAScores(
             product_fidelity=9,
@@ -112,6 +117,20 @@ def test_blank_mock_is_not_an_opinion() -> None:
         evaluator="qwen-vl-max",
         notes="clean",
     )
-    assert merge_opinions(high, None) is high
-    merged = apply_findings(None, [], has_pixels=False)
-    assert merged.total == 8.4
+    partial = {
+        "scores": {"product_fidelity": 9, "aesthetics": 9},
+        "hard_fail": [],
+        "total": 9,
+        "evaluator": "qwen-vl-max",
+        "notes": "short",
+    }
+    assert parse_opinion(partial).error == "missing_dimensions"
+    review = combine_judges(
+        ParsedOpinion(high, None),
+        ParsedOpinion(None, "timeout"),
+        live=True,
+    )
+    assert review.judges_used == 1
+    assert review.degraded is True
+    assert "degraded=true" in review.detail
+    assert "cross=timeout" in review.detail

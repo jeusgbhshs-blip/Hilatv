@@ -12,33 +12,68 @@ import binascii
 import math
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 
 GRID = 32
-# Cosine below this, against the anchor grid, is a warped product.
-# Identical plates, including a lightly compressed copy, stay near 1.
-DEFORM_MIN_SIMILARITY = 0.90
-FACE_MIN_SIMILARITY = 0.75
+
+
+class MediaLoad:
+    """Why a uri did not become pixels. ``ok`` is the only reviewable state."""
+
+    def __init__(self, image: Image.Image | None, status: str, reason: str) -> None:
+        self.image = image
+        self.status = status
+        self.reason = reason
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "ok" and self.image is not None
 
 
 def open_image(uri: str | None) -> Image.Image | None:
-    if not uri:
-        return None
-    text = str(uri)
+    """Pixels only. Callers that must tell missing from broken use ``load_image``."""
+
+    loaded = load_image(uri)
+    return loaded.image
+
+
+def load_image(uri: str | None) -> MediaLoad:
+    if uri is None or str(uri).strip() == "":
+        return MediaLoad(None, "missing", "no media uri")
+    text = str(uri).strip()
     if text.startswith("mock://"):
-        return None
+        return MediaLoad(None, "broken", f"mock uri is not reviewable: {text}")
+    if text.startswith(("http://", "https://")):
+        return MediaLoad(None, "broken", f"remote link was not fetched: {text}")
     if text.startswith("data:image"):
         raw = text.split(",", 1)[-1]
         try:
-            payload = base64.b64decode(raw)
+            payload = base64.b64decode(raw, validate=True)
         except binascii.Error:
-            return None
-        return Image.open(_buffer(payload)).convert("RGB")
+            return MediaLoad(None, "unreadable", "data uri is not valid base64")
+        return _decode(payload, "data uri")
     path = text[7:] if text.startswith("file://") else text
     file = Path(path)
+    if not file.exists():
+        return MediaLoad(None, "missing", f"file not found: {file}")
     if not file.is_file():
-        return None
-    return Image.open(file).convert("RGB")
+        return MediaLoad(None, "broken", f"path is not a file: {file}")
+    try:
+        payload = file.read_bytes()
+    except OSError as exc:
+        return MediaLoad(None, "unreadable", f"cannot read {file}: {exc}")
+    return _decode(payload, str(file))
+
+
+def _decode(payload: bytes, label: str) -> MediaLoad:
+    if not payload:
+        return MediaLoad(None, "unreadable", f"{label} is empty")
+    try:
+        image = Image.open(_buffer(payload))
+        image.load()
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        return MediaLoad(None, "unreadable", f"cannot decode {label}: {exc}")
+    return MediaLoad(image.convert("RGB"), "ok", "")
 
 
 def open_png_bytes(raw: bytes) -> Image.Image:

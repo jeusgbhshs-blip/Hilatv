@@ -8,11 +8,33 @@ from pydantic import ValidationError
 from workers.nodes.n09_keyframe_qa.node import run
 from workers.nodes.n09_keyframe_qa.qa import check
 from workers.qa.samples import _plate
+from workers.qa.scores import DIMS
 from workers.qa.tests.conftest import MockGateway, candidate
 from workers.schemas.director import DecisionAction
 
 
-def test_selects_the_higher_clean_frame(tmp_path) -> None:
+def _scores(evaluator: str) -> dict[str, object]:
+    return {
+        "scores": {name: 9 for name in DIMS},
+        "hard_fail": [],
+        "total": 9,
+        "evaluator": evaluator,
+        "notes": "ok",
+    }
+
+
+class _BothJudges:
+    def judge(self, prompt: str, **kwargs: object) -> dict[str, object]:
+        if kwargs.get("shot_type") == "cross_review":
+            return _scores("gemini-test")
+        return _scores("qwen-test")
+
+    def generate_text(self, prompt: str, **kwargs: object) -> dict[str, object]:
+        return {"text": prompt, "mock": True}
+
+
+def test_selects_the_higher_clean_frame(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
     clean = tmp_path / "clean.png"
     dirty = tmp_path / "dirty.png"
     anchor = tmp_path / "anchor.png"
@@ -31,7 +53,7 @@ def test_selects_the_higher_clean_frame(tmp_path) -> None:
                 "anchors": {"S01": str(anchor)},
             },
         },
-        gateway=MockGateway(),
+        gateway=_BothJudges(),
     )
     rows = check(result)
     selected = [row for row in rows if row.selected]

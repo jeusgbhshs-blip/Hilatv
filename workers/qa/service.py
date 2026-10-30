@@ -14,10 +14,11 @@ from typing import Any
 
 from PIL import Image
 
+from workers.logging import log_event
 from workers.qa.frames import sample_frames
-from workers.qa.pixels import open_image
-from workers.qa.rules import Finding, inspect_frames, inspect_image
-from workers.qa.scores import apply_findings
+from workers.qa.pixels import MediaLoad, load_image
+from workers.qa.rules import inspect_frames, inspect_image
+from workers.qa.scores import apply_findings, not_reviewed
 from workers.qa.vlm import cross_review
 from workers.schemas.asset import QAReport
 
@@ -37,44 +38,132 @@ def review_shot(
         raise TypeError("review_shot payload must be an object")
     data = dict(payload)
     gateway = gateway if gateway is not None else _default_gateway()
-    loaded, clip = _load(data, image=image, frames=frames)
-    anchor = open_image(_text(data.get("anchor_uri")))
+    media = _media(data, image=image, frames=frames)
+    if isinstance(media, MediaLoad) and not media.ok:
+        report = not_reviewed(media.status, media.reason)
+        event = "qa_text_only" if media.status == "text_only" else "qa_media_error"
+        log_event(
+            event,
+            project_id=_text(data.get("project_id")) or None,
+            node=_text(data.get("node")) or "n09_keyframe_qa",
+            shot_id=_text(data.get("shot_id")) or None,
+            attempt=1,
+            error=None if media.status == "text_only" else media.reason,
+            status=media.status,
+        )
+        return report
+    still, clip = media if isinstance(media, tuple) else (None, [])
+    anchor_problem = _anchor(data)
+    if anchor_problem is not None:
+        report = not_reviewed(anchor_problem.status, anchor_problem.reason)
+        log_event(
+            "qa_media_error",
+            project_id=_text(data.get("project_id")) or None,
+            node=_text(data.get("node")) or "n09_keyframe_qa",
+            shot_id=_text(data.get("shot_id")) or None,
+            attempt=1,
+            error=anchor_problem.reason,
+            status=anchor_problem.status,
+        )
+        return report
     expected = _expected_faces(data)
-    findings: list[Finding] = []
-    has_pixels = loaded is not None or bool(clip)
     if clip:
-        findings, _good = inspect_frames(clip, anchor=anchor, expected_faces=expected)
-    elif loaded is not None:
-        findings = inspect_image(loaded, anchor=anchor, expected_faces=expected)
+        findings, _good = inspect_frames(clip, anchor=_anchor_image(data), expected_faces=expected)
+        sheet = clip[0]
+    else:
+        assert still is not None
+        anchor_image = _anchor_image(data)
+        findings = inspect_image(still, anchor=anchor_image, expected_faces=expected)
+        sheet = still
     notes = "; ".join(f"{item.code}: {item.detail}" for item in findings) or "none"
-    sheet = loaded if loaded is not None else (clip[0] if clip else None)
-    image_b64 = _png_b64(sheet) if sheet is not None and _live() else None
-    opinion = cross_review(gateway, data, rule_notes=notes, image_b64=image_b64)
-    return apply_findings(opinion, findings, has_pixels=has_pixels)
+    image_b64 = _png_b64(sheet) if _live() else None
+    judged = cross_review(gateway, data, rule_notes=notes, image_b64=image_b64)
+    return apply_findings(judged, findings, has_pixels=True, pixels_shown=image_b64 is not None)
 
 
-def _load(
+def _media(
     payload: dict[str, Any],
     *,
     image: Image.Image | None,
     frames: list[Image.Image] | None,
-) -> tuple[Image.Image | None, list[Image.Image]]:
+) -> tuple[Image.Image | None, list[Image.Image]] | MediaLoad:
     if frames:
         return None, [frame.convert("RGB") for frame in frames]
     if image is not None:
         return image.convert("RGB"), []
-    listed: list[Image.Image] = []
-    for uri in payload.get("frame_uris") or []:
-        opened = open_image(str(uri))
-        if opened is not None:
-            listed.append(opened)
-    if listed:
-        return None, listed
-    uri = _text(payload.get("candidate_uri")) or _text(payload.get("uri")) or ""
-    if uri.lower().endswith((".mp4", ".mov", ".webm")):
-        path = uri[7:] if uri.startswith("file://") else uri
-        return None, sample_frames(Path(path))
-    return open_image(uri), []
+    if _text_only(payload) and not _claimed_uri(payload):
+        return MediaLoad(None, "text_only", "intentionally text-only; no pixels to review")
+    listed = payload.get("frame_uris")
+    if isinstance(listed, list) and listed:
+        images: list[Image.Image] = []
+        for uri in listed:
+            loaded = load_image(str(uri))
+            if not loaded.ok or loaded.image is None:
+                return loaded
+            images.append(loaded.image)
+        return None, images
+    uri = _text(payload.get("candidate_uri")) or _text(payload.get("uri"))
+    if not uri:
+        return MediaLoad(None, "missing", "no media uri")
+    if uri.lower().endswith((".mp4", ".mov", ".webm")) or uri.startswith("mock://"):
+        return _video(uri)
+    return _as_still(load_image(uri))
+
+
+def _video(uri: str) -> tuple[Image.Image | None, list[Image.Image]] | MediaLoad:
+    loaded = load_image(uri) if uri.startswith("mock://") else None
+    if loaded is not None:
+        return loaded
+    path_text = uri[7:] if uri.startswith("file://") else uri
+    file = Path(path_text)
+    if not file.exists():
+        return MediaLoad(None, "missing", f"file not found: {file}")
+    if not file.is_file():
+        return MediaLoad(None, "broken", f"path is not a file: {file}")
+    try:
+        frames = sample_frames(file)
+    except Exception as exc:
+        return MediaLoad(None, "unreadable", f"cannot decode video {file}: {exc}")
+    if not frames:
+        return MediaLoad(None, "unreadable", f"video has no frames: {file}")
+    return None, frames
+
+
+def _as_still(loaded: MediaLoad) -> tuple[Image.Image | None, list[Image.Image]] | MediaLoad:
+    if not loaded.ok or loaded.image is None:
+        return loaded
+    return loaded.image, []
+
+
+def _claimed_uri(payload: dict[str, Any]) -> bool:
+    if _text(payload.get("candidate_uri")) or _text(payload.get("uri")):
+        return True
+    listed = payload.get("frame_uris")
+    return isinstance(listed, list) and bool(listed)
+
+
+def _text_only(payload: dict[str, Any]) -> bool:
+    if payload.get("text_only") is True:
+        return True
+    return str(payload.get("generation_mode") or "") == "motion_graphics"
+
+
+def _anchor(payload: dict[str, Any]) -> MediaLoad | None:
+    uri = _text(payload.get("anchor_uri"))
+    if not uri:
+        return None
+    loaded = load_image(uri)
+    if loaded.ok:
+        return None
+    return MediaLoad(None, loaded.status, f"anchor {loaded.reason}")
+
+
+def _anchor_image(payload: dict[str, Any]) -> Image.Image | None:
+    uri = _text(payload.get("anchor_uri"))
+    if not uri:
+        return None
+    loaded = load_image(uri)
+    return loaded.image
 
 
 def _expected_faces(payload: dict[str, Any]) -> int:

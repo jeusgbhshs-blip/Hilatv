@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from workers.qa.rules import Finding
 from workers.schemas.asset import QAReport, QAScores
 
@@ -15,13 +17,6 @@ DIMS = (
 )
 DISAGREE = 2.0
 
-_STORYBOARD = {
-    "product_fidelity": 8,
-    "motion_quality": 8,
-    "aesthetics": 8,
-    "prompt_match": 8,
-    "artifact_free": 10,
-}
 _BASE = {
     "product_fidelity": 9,
     "motion_quality": 8,
@@ -45,8 +40,24 @@ _CAPS: dict[str, dict[str, int]] = {
 }
 
 
+@dataclass
+class ParsedOpinion:
+    report: QAReport | None
+    error: str | None
+
+
+@dataclass
+class JudgeReview:
+    opinion: QAReport | None
+    judges_used: int
+    degraded: bool
+    mock: bool
+    live_unavailable: bool
+    detail: str
+
+
 def is_blank(raw: dict[str, object]) -> bool:
-    """Mock schema-fill is all zeros. That is no opinion, not a score of zero."""
+    """Mock schema-fill is all zeros. That is not a score of zero."""
 
     scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else {}
     try:
@@ -63,25 +74,49 @@ def is_blank(raw: dict[str, object]) -> bool:
     )
 
 
-def parse_opinion(raw: object) -> QAReport | None:
-    if not isinstance(raw, dict) or is_blank(raw):
-        return None
-    if str(raw.get("evaluator") or "").startswith("mock"):
-        return None
-    scores = raw.get("scores") if isinstance(raw.get("scores"), dict) else {}
-    if any(name not in scores for name in DIMS):
-        return None
+def parse_opinion(raw: object) -> ParsedOpinion:
+    """A judge payload is valid only when every dimension is present. Nothing is filled in."""
+
+    if not isinstance(raw, dict):
+        return ParsedOpinion(None, "parse_failure")
+    if is_blank(raw) or str(raw.get("evaluator") or "").startswith("mock"):
+        return ParsedOpinion(None, "mock")
+    scores = raw.get("scores")
+    if not isinstance(scores, dict) or any(name not in scores for name in DIMS):
+        return ParsedOpinion(None, "missing_dimensions")
     try:
-        return QAReport.model_validate(raw)
+        return ParsedOpinion(QAReport.model_validate(raw), None)
     except Exception:
-        return None
+        return ParsedOpinion(None, "parse_failure")
 
 
-def merge_opinions(left: QAReport | None, right: QAReport | None) -> QAReport | None:
-    if left is None:
-        return right
-    if right is None:
-        return left
+def combine_judges(primary: ParsedOpinion, cross: ParsedOpinion, *, live: bool) -> JudgeReview:
+    valid = [item for item in (primary, cross) if item.report is not None]
+    if len(valid) == 2 and primary.report is not None and cross.report is not None:
+        merged = merge_opinions(primary.report, cross.report)
+        return JudgeReview(
+            merged,
+            2,
+            False,
+            False,
+            False,
+            "judges_used=2; degraded=false; primary=ok; cross=ok",
+        )
+    if len(valid) == 1:
+        kept = "primary" if primary.report is not None else "cross"
+        other = cross if kept == "primary" else primary
+        other_name = "cross" if kept == "primary" else "primary"
+        detail = (
+            f"judges_used=1; degraded=true; kept={kept}; {other_name}={other.error or 'invalid'}"
+        )
+        return JudgeReview(valid[0].report, 1, True, False, False, detail)
+    detail = f"judges_used=0; degraded=true; primary={primary.error}; cross={cross.error}"
+    if live:
+        return JudgeReview(None, 0, True, False, True, detail)
+    return JudgeReview(None, 0, True, True, False, f"{detail}; judge=mock; quality_pass=false")
+
+
+def merge_opinions(left: QAReport, right: QAReport) -> QAReport:
     hard = _union(left.hard_fail, right.hard_fail)
     if abs(left.total - right.total) >= DISAGREE:
         scores = {
@@ -97,21 +132,85 @@ def merge_opinions(left: QAReport | None, right: QAReport | None) -> QAReport | 
     return _report(scores, hard, evaluator="vlm-judge-v1", notes=notes)
 
 
+def not_reviewed(kind: str, reason: str) -> QAReport:
+    """No pixels to score. ``kind`` is text_only, missing, broken, or unreadable."""
+
+    notes = (
+        f"not_reviewed; media={kind}; reason={reason}; "
+        "judges_used=0; degraded=true; quality_pass=false"
+    )
+    return _zeros(["not_reviewed"], evaluator="not-reviewed", notes=notes)
+
+
+def judge_unavailable(detail: str, findings: list[Finding]) -> QAReport:
+    """Pixels existed, but no vision judge scored them. Not a pass."""
+
+    return _unavailable("judge_unavailable", detail, findings)
+
+
+def _unavailable(code: str, detail: str, findings: list[Finding]) -> QAReport:
+    codes = [code]
+    extra: list[str] = []
+    for finding in findings:
+        if finding.code not in codes:
+            codes.append(finding.code)
+        extra.append(f"{finding.code}: {finding.detail}")
+    notes = f"{detail}; quality_pass=false"
+    if extra:
+        notes = f"{notes}; {'; '.join(extra)}"
+    return _zeros(codes, evaluator="judge-unavailable", notes=notes)
+
+
 def apply_findings(
-    opinion: QAReport | None,
+    review: JudgeReview,
     findings: list[Finding],
     *,
     has_pixels: bool,
+    pixels_shown: bool,
 ) -> QAReport:
-    if not has_pixels and not findings:
-        if opinion is None:
-            return _report(
-                _STORYBOARD,
-                [],
-                evaluator="vlm-judge-v1",
-                notes="no pixels; storyboard-only review",
-            )
-        return _cap_hard(opinion)
+    """Rule-only scores are not a pass. A pass needs a judge that saw the frame."""
+
+    if not has_pixels:
+        return not_reviewed("missing", "no pixels")
+    saw_frame = (
+        pixels_shown
+        and review.judges_used >= 1
+        and review.opinion is not None
+        and not review.mock
+        and not review.live_unavailable
+    )
+    if not saw_frame:
+        detail = review.detail or "judge gave no opinion"
+        if "quality_pass=false" not in detail:
+            detail = f"{detail}; quality_pass=false"
+        return judge_unavailable(detail, findings)
+    report = _from_rules(findings, review.opinion)
+    passed = not report.hard_fail and report.total >= PASS_TOTAL
+    notes = f"{review.detail}; quality_pass={'true' if passed else 'false'}"
+    if report.notes:
+        notes = f"{notes}; {report.notes}"
+    return report.model_copy(
+        update={"evaluator": "vlm-judge-v1", "notes": notes, "visual_reviewed": True}
+    )
+
+
+def is_quality_pass(report: QAReport) -> bool:
+    """A calibrated pass. Mock judges and unreviewable shots never qualify."""
+
+    if not report.visual_reviewed:
+        return False
+    if report.hard_fail or report.total < PASS_TOTAL:
+        return False
+    if report.evaluator.startswith("mock"):
+        return False
+    if report.evaluator in {"not-reviewed", "judge-unavailable"}:
+        return False
+    if "quality_pass=false" in report.notes:
+        return False
+    return True
+
+
+def _from_rules(findings: list[Finding], opinion: QAReport | None) -> QAReport:
     scores = dict(_BASE)
     hard: list[str] = []
     details: list[str] = []
@@ -122,28 +221,35 @@ def apply_findings(
     if opinion is not None:
         for name in DIMS:
             scores[name] = min(scores[name], int(getattr(opinion.scores, name)))
-        hard = _union(hard, opinion.hard_fail)
+        hard = _union(hard, list(opinion.hard_fail))
         for code in opinion.hard_fail:
             _cap(scores, code)
     notes = "; ".join(details) if details else "rules found nothing"
     if opinion is not None and opinion.notes:
         notes = f"{notes}. {opinion.notes}"
-    evaluator = "vlm-judge-v1" if opinion is not None else "rule+vlm-v1"
-    return _report(scores, hard, evaluator=evaluator, notes=notes)
+    return _report(scores, hard, evaluator="vlm-judge-v1", notes=notes)
+
+
+def _zeros(hard: list[str], *, evaluator: str, notes: str) -> QAReport:
+    return QAReport(
+        scores=QAScores(
+            product_fidelity=0,
+            motion_quality=0,
+            aesthetics=0,
+            prompt_match=0,
+            artifact_free=0,
+        ),
+        hard_fail=_union(hard, []),
+        total=0,
+        evaluator=evaluator,
+        notes=notes,
+        visual_reviewed=False,
+    )
 
 
 def _cap(scores: dict[str, int], code: str) -> None:
     for name, limit in _CAPS.get(code, {"artifact_free": 3}).items():
         scores[name] = min(scores[name], limit)
-
-
-def _cap_hard(report: QAReport) -> QAReport:
-    if not report.hard_fail:
-        return report
-    scores = {name: int(getattr(report.scores, name)) for name in DIMS}
-    for code in report.hard_fail:
-        _cap(scores, code)
-    return _report(scores, report.hard_fail, evaluator=report.evaluator, notes=report.notes)
 
 
 def _union(left: list[str], right: list[str]) -> list[str]:
@@ -165,7 +271,10 @@ def _report(
     clean = {name: max(0, min(10, int(scores[name]))) for name in DIMS}
     total = round(sum(clean.values()) / len(DIMS), 1)
     codes = _union(hard, [])
-    if codes:
+    if "not_reviewed" in codes or "judge_unavailable" in codes:
+        clean = {name: 0 for name in DIMS}
+        total = 0.0
+    elif codes:
         total = min(total, 6.0)
     return QAReport(
         scores=QAScores.model_validate(clean),
@@ -173,4 +282,5 @@ def _report(
         total=total,
         evaluator=evaluator or "vlm-judge-v1",
         notes=notes or "reviewed",
+        visual_reviewed=False,
     )

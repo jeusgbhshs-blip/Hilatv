@@ -6,8 +6,29 @@ from workers.nodes.n11_video_qa.node import run
 from workers.nodes.n11_video_qa.qa import check
 from workers.qa.frames import write_mp4
 from workers.qa.samples import _plate
+from workers.qa.scores import DIMS
 from workers.qa.tests.conftest import MockGateway, candidate
 from workers.schemas.director import DecisionAction
+
+
+def _scores(evaluator: str) -> dict[str, object]:
+    return {
+        "scores": {name: 9 for name in DIMS},
+        "hard_fail": [],
+        "total": 9,
+        "evaluator": evaluator,
+        "notes": "ok",
+    }
+
+
+class _BothJudges:
+    def judge(self, prompt: str, **kwargs: object) -> dict[str, object]:
+        if kwargs.get("shot_type") == "cross_review":
+            return _scores("gemini-test")
+        return _scores("qwen-test")
+
+    def generate_text(self, prompt: str, **kwargs: object) -> dict[str, object]:
+        return {"text": prompt, "mock": True}
 
 
 def test_half_second_warp_is_not_selected(tmp_path) -> None:
@@ -38,7 +59,8 @@ def test_half_second_warp_is_not_selected(tmp_path) -> None:
     assert result.payload["decisions"][0]["max_attempts_left"] == 2
 
 
-def test_splice_keeps_the_clean_halves(tmp_path) -> None:
+def test_splice_keeps_the_clean_halves(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_LIVE", "1")
     clean = _plate("rect")
     bad = _plate("shear")
     left = tmp_path / "left.mp4"
@@ -62,7 +84,7 @@ def test_splice_keeps_the_clean_halves(tmp_path) -> None:
                 "anchors": {"S01": str(anchor)},
             },
         },
-        gateway=MockGateway(),
+        gateway=_BothJudges(),
     )
     rows = check(result)
     selected = [row for row in rows if row.selected]

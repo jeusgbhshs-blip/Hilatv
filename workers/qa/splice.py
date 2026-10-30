@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from PIL import Image
 
 from workers.qa.frames import SAMPLE_FPS
-from workers.qa.pixels import DEFORM_MIN_SIMILARITY, shape_similarity
+from workers.qa.pixels import shape_similarity
+from workers.qa.settings import deform_min_similarity
 
 
 @dataclass(frozen=True)
@@ -56,7 +57,7 @@ def plan_splice(
                 prev_id, _start, prev_end = pieces[-1]
                 prev = frames_for[prev_id][prev_end - 1]
                 nxt = frames_for[cid][index]
-                if shape_similarity(prev, nxt) < DEFORM_MIN_SIMILARITY:
+                if shape_similarity(prev, nxt) < deform_min_similarity():
                     continue
             pieces.append((cid, index, end))
             index = end

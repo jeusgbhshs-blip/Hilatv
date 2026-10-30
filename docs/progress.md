@@ -68,7 +68,10 @@
 - 仓库里没有 DINOv2 权重，也不引入 torch。产品形变是相对边框色的 32×32 占空网格余弦，低于 0.90 记 `product_deform`。视频里任一采样帧低于该值就否决。人脸与锚点的余弦沿用 SPEC 的 0.75。
 - 没有云 OCR，也没有人脸 SDK。多余文字和乱码看高对比笔画带；人脸是肤色连通域加上眼睛暗块。分辨率看长边，低于 240px 算不够。这 240 不是 SPEC 里的数字。320×180 的预览可以通过。
 - 双评审走网关两条 judge 路由：Qwen-VL（`DASHSCOPE_API_KEY`，模型 `qwen-vl-max`）和 Gemini（`GEMINI_API_KEY`）。没 Key，或 `HILATV_LIVE` 不是 1，都落到 mock。两边总分差 ≥ 2 时取更严的一边。像素规则标出的硬伤不能被 VLM 翻掉。Mock 按 JSON Schema 填出来的全 0 当作「没有意见」，不把它当成 0 分。
-- 没有像素的 payload（T18 当前 eval 的形状，`candidate_uri` 为空）返回总分 8.4、`hard_fail` 为空、`evaluator` 为 `vlm-judge-v1`。`workers.qa.service.review_shot(payload)` 直接返回第 5 章的 QAReport。
+- 没有可审像素的镜头不能通过。缺文件、打不开、`mock://` 和坏链接记成错误，`hard_fail` 为 `not_reviewed`，总分为 0，notes 里写明 missing / broken / unreadable。故意无画面（`text_only` 或 `motion_graphics` 且没有媒体地址）同样不能通过，但 notes 写 `media=text_only`，不当成文件错误。导演对这两种都不会返回 pass。
+- `QAReport.visual_reviewed` 只有在至少一家视觉评审真正看过实帧（不是 `mock://`、不是缺图或坏图）并且五项分数都合法时才是 true。没图、坏图、mock 评审、评审报错、超时、解析失败、缺维度，以及只靠规则打出的约 8.6 分，都是 false，并且 `hard_fail` 含 `not_reviewed` 或 `judge_unavailable`，不能当成通过。这个字段不在 SPEC 样例里，默认 false，旧 JSON 仍能读。T18 用它区分有没有看过画面。
+- `HILATV_LIVE=1` 时两个评审都没有合法意见，镜头失败：`hard_fail` 含 `judge_unavailable`，总分为 0。只回来一个合法评审时，notes 写 `judges_used=1; degraded=true`，`visual_reviewed` 仍可以是 true。缺维度是错误，不补默认分。Mock 不把规则分当成通过。
+- 形变余弦、人脸余弦、长边、闪烁阈值和项目级重生上限在环境变量里，默认 0.90、0.75、240、0.22 和 12。每镜 3 次和 7.5 分不变。项目上限用完后再要重生，决策改成 fallback。
 - 通过线是总分 ≥ 7.5 且 `hard_fail` 为空。低于 7.5、又不是模型类硬伤，决策是 `regenerate`。产品形变、人脸、闪烁走 `switch_model`。`sensitive` 走 `ask_user`。第 3 次仍失败走 `fallback`，`max_attempts_left` 为 0。降级方案的执行留给 T14，这里只出决策。`max_attempts_left = 3 - attempt`，attempt 从 1 计。
 - 导演会经 `gateway.generate_text` 问一次。模型必须给出能通过 DirectorDecision 的 JSON，并且不能把失败镜头改成通过，也不能把次数上限抬高。Mock 不返回合法决策，所以无 Key 时用上面这条规则。
 - T10 的 ProduceFilm 测试要求管线里还没有 N9/N11。这次不改那条管线，也不改 PR #31 的分支。单镜循环在 `workers.qa.loop.run_shot_loop`：每次只返回一个决策，由调用方执行重生。
