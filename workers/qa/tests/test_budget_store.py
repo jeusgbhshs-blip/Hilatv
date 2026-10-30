@@ -86,6 +86,35 @@ def test_try_take_n_does_not_double_charge(tmp_path, monkeypatch: pytest.MonkeyP
     assert open_project_budget("proj-race").used == 2
 
 
+def test_the_same_batch_key_charges_once_when_the_budget_has_room(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import threading
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "10")
+    start = threading.Barrier(2)
+    begun: list[str] = []
+
+    def worker() -> None:
+        start.wait()
+        budget = open_project_budget("proj-once")
+        status = budget.begin_batch(2, "batch-a")
+        begun.append(status)
+        if status == "begun":
+            assert budget.finish_batch(2, "batch-a") is True
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert begun.count("begun") == 1
+    assert open_project_budget("proj-once").used == 2
+    assert open_project_budget("proj-once").finish_batch(2, "batch-a") is False
+    assert open_project_budget("proj-once").used == 2
+
+
 def test_project_id_cannot_escape_the_directory(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     with pytest.raises(SettingsError):

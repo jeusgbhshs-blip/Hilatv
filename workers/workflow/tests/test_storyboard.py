@@ -500,8 +500,8 @@ def test_one_remaining_regen_refuses_without_charging(tmp_path, monkeypatch) -> 
         reset_gateway()
 
 
-def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch) -> None:
-    """The second take failing keeps the take that already landed and refuses the edit."""
+def test_narration_edit_refuses_the_pair_before_taking(tmp_path, monkeypatch) -> None:
+    """One ``try_take_n(2)``. A pair that does not fit leaves the ledger where it was."""
 
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
     monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "4")
@@ -511,22 +511,20 @@ def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch
     owner = open_session()
     project_id = "takefail"
     directory = _hold(project_id, enterprise_id=owner.enterprise_id)
-    _seed_budget(directory, 1)
+    _seed_budget(directory, 3)
     version_id = _plant_lower_budget(directory)
-    seen = _watch_budget(monkeypatch)
     calls = _block_generation(monkeypatch)
     from workers.qa.budget_store import ProjectBudget
 
-    real_take = ProjectBudget.try_take
+    real_take_n = ProjectBudget.try_take_n
 
-    def second_fails(self: ProjectBudget) -> bool:
-        second_fails.calls += 1
-        if second_fails.calls >= 2:
-            return False
-        return real_take(self)
+    def refuse_pair(self: ProjectBudget, count: int) -> bool:
+        refuse_pair.calls += 1
+        assert count == 2
+        return False if count == 2 else real_take_n(self, count)
 
-    second_fails.calls = 0
-    monkeypatch.setattr(ProjectBudget, "try_take", second_fails)
+    refuse_pair.calls = 0
+    monkeypatch.setattr(ProjectBudget, "try_take_n", refuse_pair)
     script_path = directory / "nodes" / "n06_voiceover.json"
     before_script = _sha(script_path)
     before_wav = {
@@ -552,9 +550,9 @@ def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch
             )
         assert hidden.status_code == 404
         assert hidden.json()["detail"] == "项目不存在"
-        assert second_fails.calls == 0
+        assert refuse_pair.calls == 0
         assert (
-            json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))["used"] == 1
+            json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))["used"] == 3
         )
         with TestClient(app, headers={"Authorization": f"Bearer {owner.token}"}) as client:
             refused = client.post(
@@ -563,23 +561,19 @@ def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch
             )
         assert refused.status_code == 422
         assert refused.json()["detail"] == REFUSAL
-        assert second_fails.calls == 2
+        assert refuse_pair.calls == 1
         assert calls == []
         _assert_still_paused(directory, before_script, before_wav)
         from workers.qa.budget_store import open_project_budget
 
-        assert min(seen) == 1
-        assert max(seen) == 2
-        assert seen == sorted(seen)
         stored = json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))
-        assert stored["used"] == 2
+        assert stored["used"] == 3
         assert stored["increase_only"] is True
-        assert stored["used"] <= stored["limit"]
-        assert open_project_budget(project_id).used == 2
+        assert open_project_budget(project_id).used == 3
         from workers.workflow.versions import restore_version
 
         restore_version(project_id, version_id)
-        assert open_project_budget(project_id).used == 2
+        assert open_project_budget(project_id).used == 3
         decoy = json.loads(
             (directory / "versions" / version_id / "regen_budget.json").read_text(encoding="utf-8")
         )
@@ -588,6 +582,52 @@ def test_second_regen_take_failure_does_not_refund_or_edit(tmp_path, monkeypatch
         assert "regen_used" not in restored
     finally:
         reset_gateway()
+
+
+def test_concurrent_narration_edits_charge_the_pair_once(tmp_path, monkeypatch) -> None:
+    """A second edit waits on the project lock, sees the flag, and does not charge."""
+
+    import threading
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "12")
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    directory = _hold("editrace")
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow(*_args: object, **_kwargs: object) -> None:
+        entered.set()
+        assert release.wait(5)
+
+    monkeypatch.setattr("workers.workflow.storyboard._moderate_narration", slow)
+    done: dict[str, object] = {}
+
+    def first() -> None:
+        try:
+            done["body"] = edit_voiceover(
+                "editrace",
+                "S01",
+                "先看这台柱塞泵。改过一句",
+                gateway=object(),
+            )
+        except Exception as exc:
+            done["error"] = exc
+
+    thread = threading.Thread(target=first)
+    thread.start()
+    assert entered.wait(5)
+    with pytest.raises(StoryboardError, match="分镜正在保存") as caught:
+        edit_voiceover("editrace", "S01", "先看这台柱塞泵。另一句", gateway=object())
+    assert caught.value.status == 409
+    from workers.qa.budget_store import open_project_budget
+
+    assert open_project_budget("editrace").used == 2
+    release.set()
+    thread.join(5)
+    assert not thread.is_alive()
+    stored = json.loads((directory / "regen_budget.json").read_text(encoding="utf-8"))
+    assert stored["used"] == 2
 
 
 def test_exhausted_budget_rejects_before_tts(tmp_path, monkeypatch) -> None:

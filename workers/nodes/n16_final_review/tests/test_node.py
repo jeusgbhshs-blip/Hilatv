@@ -10,7 +10,12 @@ from PIL import Image
 
 from workers.nodes.n16_final_review.node import run
 from workers.nodes.n16_final_review.qa import QAError
-from workers.nodes.n16_final_review.support import brand_elements, request_for, write_film
+from workers.nodes.n16_final_review.support import (
+    brand_elements,
+    plant_opening,
+    request_for,
+    write_film,
+)
 from workers.qa.budget_store import open_project_budget, project_folder
 from workers.qa.samples import _plate
 from workers.schemas.director import DirectorDecision
@@ -27,6 +32,7 @@ def _png(path: Path, image: Image.Image) -> str:
 
 def _three(tmp_path: Path) -> dict:
     anchor = _png(tmp_path / "t22flaw" / "anchor.png", _plate("rect"))
+    plant_opening("t22flaw", "S02", Path(anchor))
     frames = [_plate("rect"), _plate("shear"), _plate("rect")]
     film = write_film("t22flaw", frames)
     return request_for(
@@ -58,8 +64,12 @@ def test_hard_flaw_is_located_and_only_that_shot_is_redone(gateway, tmp_path: Pa
     assert decisions[0].changes["source"] == "ai_generated"
     used = json.loads((project_folder("t22flaw") / "regen_budget.json").read_text(encoding="utf-8"))
     assert used["used"] == 1
+    videos = json.loads(
+        (project_folder("t22flaw") / "nodes" / "n10_video.json").read_text(encoding="utf-8")
+    )
+    assert {row["shot_id"] for row in videos["videos"]} == {"S02"}
     tasks = {row["task"] for row in gateway.store.list_logs(project_id="t22flaw")}
-    assert {"judge", "asr", "content_safety"} <= tasks
+    assert {"judge", "asr", "content_safety", "video"} <= tasks
 
 
 def test_clean_film_releases_without_a_rerun(gateway, tmp_path: Path) -> None:
@@ -258,6 +268,7 @@ def _deliveries(project_id: str, owner_token: str, other_token: str) -> None:
 def test_live_flaw_holds_an_existing_master(gateway, tmp_path: Path, monkeypatch) -> None:
     owner, other = _owned_master(tmp_path, "t22held", monkeypatch)
     anchor = _png(tmp_path / "t22held" / "anchor.png", _plate("rect"))
+    plant_opening("t22held", "S02", Path(anchor))
     film = write_film("t22held", [_plate("rect"), _plate("shear"), _plate("rect")])
     raw = request_for(
         "t22held",
@@ -329,6 +340,8 @@ def test_short_budget_takes_nothing(gateway, tmp_path: Path, monkeypatch) -> Non
         anchors={"S01": anchor, "S02": anchor},
     )
     init_project("t22pair", sentence="一句", status="completed", deliverable=str(film))
+    plant_opening("t22pair", "S01", Path(anchor))
+    plant_opening("t22pair", "S02", Path(anchor))
     result = run(raw, gateway=gateway)
     assert result.payload["budget_taken"] == 0
     assert result.payload["decisions"] == []
@@ -353,6 +366,7 @@ def test_concurrent_reviews_charge_one_shot(tmp_path: Path, monkeypatch) -> None
         seconds_each=0.25,
         anchors={"S02": anchor},
     )
+    plant_opening("t22race", "S02", Path(anchor))
     gateways = [build_gateway(tmp_path / "gw-a"), build_gateway(tmp_path / "gw-b")]
     start = threading.Barrier(2)
     taken: list[int] = []
@@ -367,9 +381,125 @@ def test_concurrent_reviews_charge_one_shot(tmp_path: Path, monkeypatch) -> None
         thread.start()
     for thread in threads:
         thread.join()
-    assert sorted(taken) == [0, 1]
+    assert sum(taken) == 1
     used = json.loads((project_folder("t22race") / "regen_budget.json").read_text(encoding="utf-8"))
     assert used["used"] == 1
+    videos = json.loads(
+        (project_folder("t22race") / "nodes" / "n10_video.json").read_text(encoding="utf-8")
+    )
+    assert len(videos["videos"]) == 3
+
+
+def test_concurrent_reviews_with_room_in_the_budget_charge_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Budget larger than the batch must still charge each regenerated shot once."""
+
+    import threading
+
+    from workers.nodes.n16_final_review.tests.conftest import build_gateway
+
+    monkeypatch.setenv("HILATV_QA_PROJECT_RETRIES", "12")
+    anchor = _png(tmp_path / "t22wide" / "anchor.png", _plate("rect"))
+    plant_opening("t22wide", "S02", Path(anchor))
+    film = write_film("t22wide", [_plate("rect"), _plate("shear"), _plate("rect")])
+    raw = request_for(
+        "t22wide",
+        film,
+        ["S01", "S02", "S03"],
+        seconds_each=0.25,
+        anchors={"S02": anchor},
+    )
+    gateways = [build_gateway(tmp_path / "gw-wide-a"), build_gateway(tmp_path / "gw-wide-b")]
+    start = threading.Barrier(2)
+    taken: list[int] = []
+
+    def worker(index: int) -> None:
+        start.wait()
+        body = run(raw, gateway=gateways[index]).payload
+        taken.append(int(body["budget_taken"]))
+
+    threads = [threading.Thread(target=worker, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sum(taken) == 1
+    assert open_project_budget("t22wide").used == 1
+    videos = json.loads(
+        (project_folder("t22wide") / "nodes" / "n10_video.json").read_text(encoding="utf-8")
+    )
+    assert len(videos["videos"]) == 3
+
+
+def test_human_release_restores_the_held_master(gateway, tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_SESSION_SECRET", "t22-release")
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from workers.identity.session import open_session
+
+    owner = open_session()
+    other = open_session()
+    master = tmp_path / "t22rel" / "master.mp4"
+    master.parent.mkdir(parents=True, exist_ok=True)
+    payload = b"held-master-bytes"
+    master.write_bytes(payload)
+    init_project(
+        "t22rel",
+        sentence="一句",
+        status="completed",
+        deliverable=str(master),
+        enterprise_id=owner.enterprise_id,
+    )
+    film = write_film("t22rel", [_plate("rect")])
+    result = run(
+        request_for(
+            "t22rel",
+            film,
+            ["S01"],
+            seconds_each=1.0,
+            elements=brand_elements(logo=False),
+        ),
+        gateway=gateway,
+    )
+    assert result.payload["release"] is False
+    held = read_snapshot("t22rel") or {}
+    assert held["status"] == "needs_human_review"
+    assert not held.get("deliverable")
+    assert held["held_deliverable"] == str(master.resolve())
+    assert master.read_bytes() == payload
+    with TestClient(app) as client:
+        hidden = client.post(
+            "/v1/projects/t22rel/human-review/release",
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert hidden.status_code == 404
+        assert master.read_bytes() == payload
+        assert not (read_snapshot("t22rel") or {}).get("deliverable")
+        released = client.post(
+            "/v1/projects/t22rel/human-review/release",
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert released.status_code == 202, released.text
+        assert released.json()["status"] == "completed"
+        denied = client.post(
+            "/v1/projects/t22rel/deliveries",
+            json={},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert "待人工复核" not in denied.text
+        stranger = client.post(
+            "/v1/projects/t22rel/deliveries",
+            json={},
+            headers={"Authorization": f"Bearer {other.token}"},
+        )
+        assert stranger.status_code == 404
+    again = read_snapshot("t22rel") or {}
+    assert again["status"] == "completed"
+    assert again["deliverable"] == str(master.resolve())
+    assert "held_deliverable" not in again
+    assert master.read_bytes() == payload
 
 
 def test_n10_does_not_charge_the_redo_again(gateway, tmp_path: Path) -> None:

@@ -202,13 +202,37 @@ def read_snapshot(project_id: str) -> dict[str, Any] | None:
     return None
 
 
+def contained_file(project_id: str, raw: object) -> str | None:
+    """A real file inside this project directory. Missing or outside paths are ignored."""
+
+    if not isinstance(raw, str) or not raw.strip() or not valid_project_id(project_id):
+        return None
+    path = Path(raw).expanduser()
+    try:
+        resolved = path.resolve()
+    except OSError:
+        return None
+    root = project_path(project_id).resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        return None
+    if not resolved.is_file():
+        return None
+    return str(resolved)
+
+
 def record_human_release(
     project_id: str,
     *,
     releaser: str | None = None,
     enterprise_id: str | None = None,
 ) -> dict[str, Any]:
-    """Audit that a person released a held film. Time plus the releaser's identity."""
+    """Audit that a person released a held film. Time plus the releaser's identity.
+
+    When the hold kept a master file, the deliverable pointer is put back.
+    The file itself is not deleted or rewritten.
+    """
 
     if not valid_project_id(project_id):
         raise ValueError("invalid project id")
@@ -226,6 +250,15 @@ def record_human_release(
     }
     with _lock(project_id) as directory:
         snapshot = _read(directory, project_id)
+        kept = contained_file(project_id, snapshot.get("held_deliverable"))
+        if kept:
+            snapshot["deliverable"] = kept
+            snapshot.pop("held_deliverable", None)
+            snapshot["status"] = "completed"
+            snapshot["paused"] = False
+            snapshot["phase"] = "成片"
+            snapshot["message"] = "人工复核已放行"
+            snapshot["error"] = None
         events = list(snapshot.get("events") or [])
         events.append(summary)
         snapshot["events"] = events[-200:]

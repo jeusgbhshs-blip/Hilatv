@@ -171,6 +171,13 @@ def _measure(port: int) -> list[tuple[str, str, str]]:
 
 def _project_rows(client, project_id, own, theirs, before: bytes, snapshot: Path):
     rows = []
+    candidate_id = _plant_candidate(project_id)
+    from workers.workflow.store import project_path
+
+    root = project_path(project_id)
+    nodes_before = _digest(root / "nodes")
+    budget_before = _file_bytes(root / "regen_budget.json")
+    media_before = _file_bytes(root / "media" / "frame.png")
     hidden = client.get(f"/v1/projects/{project_id}", headers=theirs)
     rows.append(_status("GET /v1/projects/{other}", hidden, 404, absent=(SECRET_SENTENCE,)))
     visible = client.get(f"/v1/projects/{project_id}", headers=own)
@@ -211,10 +218,10 @@ def _project_rows(client, project_id, own, theirs, before: bytes, snapshot: Path
         (
             "POST",
             f"/v1/projects/{project_id}/expert/select",
-            {"node": "n08_keyframe", "shot_id": "S01", "candidate_id": "foreign"},
+            {"node": "n08_keyframe", "shot_id": "S01", "candidate_id": candidate_id},
         ),
         ("POST", f"/v1/projects/{project_id}/expert/timeline", {"overlays": [], "clips": []}),
-        ("GET", f"/v1/projects/{project_id}/expert/media/foreign", None),
+        ("GET", f"/v1/projects/{project_id}/expert/media/{candidate_id}", None),
     ]
     for method, path, payload in expert:
         response = client.request(method, path, headers=theirs, json=payload)
@@ -227,6 +234,23 @@ def _project_rows(client, project_id, own, theirs, before: bytes, snapshot: Path
         rows.append(("project file after cross-enterprise calls", "FAIL", "bytes changed"))
     else:
         rows.append(("project file after cross-enterprise calls", "PASS", "unchanged"))
+    if _digest(root / "nodes") != nodes_before:
+        rows.append(("node files after cross-enterprise calls", "FAIL", "bytes changed"))
+    else:
+        rows.append(("node files after cross-enterprise calls", "PASS", "unchanged"))
+    if _file_bytes(root / "regen_budget.json") != budget_before:
+        rows.append(("budget ledger after cross-enterprise calls", "FAIL", "bytes changed"))
+    else:
+        rows.append(("budget ledger after cross-enterprise calls", "PASS", "unchanged"))
+    if _file_bytes(root / "media" / "frame.png") != media_before:
+        rows.append(("candidate media after cross-enterprise calls", "FAIL", "bytes changed"))
+    else:
+        rows.append(("candidate media after cross-enterprise calls", "PASS", "unchanged"))
+    owner_media = client.get(
+        f"/v1/projects/{project_id}/expert/media/{candidate_id}",
+        headers=own,
+    )
+    rows.append(_status("GET /v1/projects/{id}/expert/media owner", owner_media, 200))
     upload = client.post(
         "/v1/uploads",
         headers=own,
@@ -362,6 +386,63 @@ def _status(
         if item and item in response.text:
             return (name, "FAIL", "leaked")
     return (name, "PASS", str(response.status_code))
+
+
+def _plant_candidate(project_id: str) -> str:
+    """A real keyframe the owner can open. Cross-enterprise calls must still 404."""
+
+    from workers.workflow.store import project_path
+
+    root = project_path(project_id)
+    folder = root / "media"
+    folder.mkdir(parents=True, exist_ok=True)
+    image = folder / "frame.png"
+    image.write_bytes(base64.b64decode(_PNG))
+    candidate_id = "candsec54real0001"
+    payload = {
+        "keyframes": [
+            {
+                "candidate_id": candidate_id,
+                "shot_id": "S01",
+                "node": "N8",
+                "model": "mock-image",
+                "params": {"frame": "first", "seed": 1, "prompt": "metal block"},
+                "uri": str(image.resolve()),
+                "qa": {
+                    "scores": {
+                        "product_fidelity": 8,
+                        "motion_quality": 8,
+                        "aesthetics": 8,
+                        "prompt_match": 8,
+                        "artifact_free": 8,
+                    },
+                    "hard_fail": [],
+                    "total": 8.0,
+                    "evaluator": "sec54",
+                    "notes": "未测",
+                    "visual_reviewed": False,
+                },
+                "selected": True,
+            }
+        ]
+    }
+    node_dir = root / "nodes"
+    node_dir.mkdir(parents=True, exist_ok=True)
+    (node_dir / "n08_keyframe.json").write_text(
+        json.dumps(payload, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    (root / "regen_budget.json").write_text(
+        json.dumps({"used": 3, "limit": 12, "increase_only": True}) + "\n",
+        encoding="utf-8",
+    )
+    return candidate_id
+
+
+def _file_bytes(path: Path) -> bytes:
+    if not path.is_file():
+        return b""
+    return path.read_bytes()
 
 
 def _digest(path: Path) -> str:

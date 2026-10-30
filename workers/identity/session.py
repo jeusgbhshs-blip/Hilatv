@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fcntl
 import hashlib
 import hmac
 import json
@@ -12,13 +13,15 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 _PROCESS_SECRET = secrets.token_bytes(32)
 _SESSION_TTL_S = 30 * 24 * 60 * 60
 _REVOKED: set[str] = set()
-_REVOKE_LOCK = threading.Lock()
+_REVOKE_LOCK = threading.RLock()
 
 
 class SessionError(Exception):
@@ -189,27 +192,26 @@ def _revocation_path() -> Path:
     if raw:
         return Path(raw)
     root = os.getenv("HILATV_PROJECT_DIR", "").strip()
-    base = Path(root) if root else Path(tempfile.gettempdir()) / "hilatv-sessions"
-    return base / "revoked-sessions.json"
+    if not root:
+        if live_mode():
+            raise SessionConfigError("HILATV_PROJECT_DIR is required when HILATV_LIVE=1")
+        return Path(tempfile.gettempdir()) / "hilatv-sessions" / "revoked-sessions.json"
+    return Path(root) / "revoked-sessions.json"
 
 
 def _load_revoked() -> set[str]:
+    """Read the revocation list. A missing file is empty. A bad file rejects the request."""
+
     path = _revocation_path()
-    if not path.is_file():
-        return set()
-    try:
-        loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return set()
-    if not isinstance(loaded, list):
-        return set()
-    return {item for item in loaded if isinstance(item, str)}
+    with _revocation_lock(path):
+        return _read_revoked(path)
 
 
 def _store_revoked(found: set[str]) -> None:
     path = _revocation_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sorted(found)), encoding="utf-8")
+    with _revocation_lock(path):
+        current = _read_revoked(path)
+        _write_revoked(path, current | found)
 
 
 def _is_revoked(jti: str) -> bool:
@@ -221,6 +223,61 @@ def _is_revoked(jti: str) -> bool:
             _REVOKED.add(jti)
             return True
     return False
+
+
+@contextmanager
+def _revocation_lock(path: Path) -> Iterator[None]:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    handle = lock_path.open("a+")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def _read_revoked(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise SessionError("revocation list is unreadable") from exc
+    if not raw.strip():
+        raise SessionError("revocation list is unreadable")
+    try:
+        loaded = json.loads(raw)
+    except ValueError as exc:
+        raise SessionError("revocation list is unreadable") from exc
+    bad_item = not isinstance(loaded, list) or any(
+        not isinstance(item, str) or not item for item in loaded
+    )
+    if bad_item:
+        raise SessionError("revocation list is unreadable")
+    return set(loaded)
+
+
+def _write_revoked(path: Path, found: set[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(sorted(found))
+    fd, tmp_name = tempfile.mkstemp(prefix=".revoked.", dir=path.parent)
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, path)
+        dir_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def _b64(raw: bytes) -> str:

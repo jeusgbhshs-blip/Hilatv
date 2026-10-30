@@ -19,7 +19,7 @@ from workers.identity.session import Identity, SessionError, verify_session
 from workers.schemas.brand import BrandKit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.service import run_and_wait, serve_worker
-from workers.workflow.store import load_checkpoint, record_human_release
+from workers.workflow.store import load_checkpoint, read_snapshot, record_human_release
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -139,6 +139,17 @@ def _cmd_release(args: argparse.Namespace) -> int:
         releaser=identity.member_id,
         enterprise_id=identity.enterprise_id,
     )
+    released = read_snapshot(args.project_id) or {}
+    if released.get("status") == "completed" and released.get("deliverable"):
+        _print_result(
+            {
+                "project_id": args.project_id,
+                "status": "completed",
+                "deliverable": released.get("deliverable"),
+                "phase": "成片",
+            }
+        )
+        return 0
     return _execute(
         project_id=args.project_id,
         sentence=str(snapshot.get("sentence") or ""),

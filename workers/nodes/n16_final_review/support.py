@@ -96,6 +96,41 @@ def brand_elements(*, logo: bool = True, cta: bool = True, ai_label: bool = True
     return rows
 
 
+def plant_opening(project_id: str, shot_id: str, image_path: Path) -> None:
+    """Save one selected N8 first frame so N16 can hand that shot to N10."""
+
+    from workers.workflow.store import load_checkpoint, save_node
+
+    row = {
+        "candidate_id": f"kf-{project_id}-{shot_id}",
+        "shot_id": shot_id,
+        "node": "N8",
+        "model": "mock-image",
+        "params": {"frame": "first", "seed": 1, "prompt": "metal block, no text"},
+        "uri": str(image_path),
+        "qa": {
+            "scores": {
+                "product_fidelity": 8,
+                "motion_quality": 8,
+                "aesthetics": 8,
+                "prompt_match": 8,
+                "artifact_free": 8,
+            },
+            "hard_fail": [],
+            "total": 8.0,
+            "evaluator": "test",
+            "notes": "未测",
+            "visual_reviewed": False,
+        },
+        "selected": True,
+    }
+    state = load_checkpoint(project_id)
+    rows = [item for item in state.get("keyframes") or [] if isinstance(item, dict)]
+    rows = [item for item in rows if item.get("shot_id") != shot_id]
+    rows.append(row)
+    save_node(project_id, "n08_keyframe", {"keyframes": rows})
+
+
 def write_film(project_id: str, frames: list[Image.Image]) -> Path:
     folder = project_path(project_id, create=True)
     path = folder / "film.mp4"
