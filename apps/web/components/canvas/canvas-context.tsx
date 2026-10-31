@@ -15,6 +15,7 @@ export type CanvasActions = {
   showPrompt: (shotId: string) => void;
   changeBrief: (nodeId: string, text: string) => void;
   uploadRefNode: (nodeId: string, file: File) => void;
+  derive: (nodeId: string, kind: "brief" | "ref_image") => void;
 };
 
 const CanvasActionsContext = createContext<CanvasActions | null>(null);

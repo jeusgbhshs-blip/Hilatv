@@ -112,7 +112,7 @@ export function seedCanvas(projectId: string): CanvasSnapshot {
     {
       id: shot2,
       kind: "shot",
-      position: { x: 520, y: 460 },
+      position: { x: 520, y: 720 },
       user_created: false,
       data: {
         shot_id: shot2,

@@ -38,6 +38,7 @@ function Shell({
   selected,
   dot,
   testId,
+  trailing,
   children,
 }: {
   id: string;
@@ -47,6 +48,7 @@ function Shell({
   selected: boolean;
   dot: string;
   testId?: string;
+  trailing?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -61,7 +63,10 @@ function Shell({
     >
       <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <h2 className="text-h3 font-medium text-text-1">{title}</h2>
-        <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", dot)} />
+        <span className="flex items-center gap-2">
+          {trailing}
+          <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", dot)} />
+        </span>
       </header>
       <div className="grid gap-2 p-3">{children}</div>
     </article>
@@ -150,6 +155,14 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
   const actions = useCanvasActions();
   const node = actions.doc.nodes.find((item) => item.id === id);
   const data = node ? asShot(node) : null;
+  const [deriveOpen, setDeriveOpen] = useState(false);
+  const [generatorOpen, setGeneratorOpen] = useState(false);
+  const [narration, setNarration] = useState(data?.narration ?? "");
+  const [prompt, setPrompt] = useState(data?.prompt_suffix ?? "");
+  useEffect(() => {
+    setNarration(data?.narration ?? "");
+    setPrompt(data?.prompt_suffix ?? "");
+  }, [data?.narration, data?.prompt_suffix]);
   if (!node || !data) return null;
   const upstream = upstreamFor(actions.doc, id);
   const choosing = actions.choosingId === id;
@@ -161,6 +174,43 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
       y={positionAbsoluteY}
       selected={selected}
       dot={verdictDot(data.verdict)}
+      trailing={
+        <span className="relative">
+          <button
+            type="button"
+            aria-label="从这一镜派生节点"
+            aria-expanded={deriveOpen}
+            className="nodrag nopan flex size-6 items-center justify-center rounded-sm text-caption text-text-2 hover:bg-hover hover:text-text-1"
+            onClick={() => setDeriveOpen((open) => !open)}
+          >
+            ＋
+          </button>
+          {deriveOpen ? (
+            <span className="nodrag nopan absolute right-0 top-7 z-20 flex w-24 flex-col rounded-sm border border-border bg-surface p-1">
+              <button
+                type="button"
+                className="rounded-sm px-2 py-1 text-left text-caption text-text-1 hover:bg-hover"
+                onClick={() => {
+                  actions.derive(id, "brief");
+                  setDeriveOpen(false);
+                }}
+              >
+                文本节点
+              </button>
+              <button
+                type="button"
+                className="rounded-sm px-2 py-1 text-left text-caption text-text-1 hover:bg-hover"
+                onClick={() => {
+                  actions.derive(id, "ref_image");
+                  setDeriveOpen(false);
+                }}
+              >
+                图片节点
+              </button>
+            </span>
+          ) : null}
+        </span>
+      }
     >
       <Handle type="target" position={Position.Left} id="in" data-testid={`handle-${id}-target`} />
       <Handle type="source" position={Position.Right} id="out" data-testid={`handle-${id}-source`} />
@@ -257,6 +307,43 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
           上传替换参考图
         </label>
       </div>
+      <button
+        type="button"
+        className={cn(actionClass, "border border-border")}
+        aria-expanded={generatorOpen}
+        onClick={() => setGeneratorOpen((open) => !open)}
+      >
+        生成器 {generatorOpen ? "收起" : "展开"}
+      </button>
+      {generatorOpen ? (
+        <div className="grid gap-1" data-testid={`generator-${id}`}>
+          <label className="text-caption text-text-3" htmlFor={`narration-${id}`}>
+            这一镜的话
+          </label>
+          <textarea
+            id={`narration-${id}`}
+            value={narration}
+            onChange={(event) => setNarration(event.target.value)}
+            className="nodrag nowheel min-h-16 rounded-sm border border-border bg-raised px-2 py-1 text-caption text-text-1"
+          />
+          <label className="text-caption text-text-3" htmlFor={`prompt-${id}`}>
+            补充提示词
+          </label>
+          <textarea
+            id={`prompt-${id}`}
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            className="nodrag nowheel min-h-16 rounded-sm border border-border bg-raised px-2 py-1 text-caption text-text-1"
+          />
+          <button
+            type="button"
+            className={cn(actionClass, "border border-blue text-text-1 hover:bg-blue-soft")}
+            onClick={() => actions.regenerate(data.shot_id, { narration, prompt_suffix: prompt })}
+          >
+            生成这一镜
+          </button>
+        </div>
+      ) : null}
       <button type="button" className={actionClass} onClick={() => actions.showPrompt(data.shot_id)}>
         查看提示词
       </button>

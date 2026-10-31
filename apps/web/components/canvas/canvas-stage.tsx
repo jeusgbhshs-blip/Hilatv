@@ -384,6 +384,33 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       changeBrief: (nodeId, text) => {
         run((client) => client.updateNodeData(nodeId, { kind: "brief", text }));
       },
+      derive: (nodeId, kind) => {
+        const client = clientRef.current;
+        const source = nodesRef.current.find((node) => node.id === nodeId);
+        if (!client || !source) return;
+        const before = new Set((docRef.current?.nodes ?? []).map((node) => node.id));
+        const position = { x: Math.max(0, source.position.x - 300), y: source.position.y + 40 };
+        void enqueue(async () => {
+          let next = await client.createNode({
+            kind,
+            position,
+            data:
+              kind === "brief"
+                ? { text: "写一句话交给这一镜" }
+                : { upload_id: "", thumbnail_url: null },
+          });
+          const created = next.nodes.find((node) => !before.has(node.id));
+          if (created) {
+            next = await client.createEdge({
+              source: created.id,
+              target: nodeId,
+              role: kind === "brief" ? "text" : "reference",
+            });
+            pendingSelect.current = created.id;
+          }
+          return next;
+        }, "adopt").catch(() => undefined);
+      },
       uploadRefNode: (nodeId, file) => {
         run(async (client) => {
           const uploaded = await client.uploadImage(file);

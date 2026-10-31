@@ -47,7 +47,7 @@ function projectId(path: string): string | null {
 
 function expertHref(path: string): string {
   const id = projectId(path);
-  return id ? `/projects/${id}/expert` : "/#expert-entry";
+  return id ? `/projects/${id}/expert` : "/canvas";
 }
 
 function items(path: string): NavItem[] {
