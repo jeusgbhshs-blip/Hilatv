@@ -1,7 +1,8 @@
 /**
  * 画布传输。
  * 已有能力走 lib/api.ts：GET /canvas、POST /expert/select、POST /expert/rerun、POST /expert/timeline、POST /uploads。
- * 契约里的新写接口只落在本地 mock，不请求尚未合并的路径。
+ * R2 合并后：布局、自建节点、自建连线、替换参考图、单镜再生、结构化时间轴都请求真接口。
+ * 老后端还缺这些路径时返回 404/405，界面回退到本地 overlay，演示不会空白。
  */
 
 import { apiFetch, errorMessage } from "./api";
@@ -52,6 +53,13 @@ export type CanvasClient = {
 
 const OVERLAY_PREFIX = "hilatv.canvas.overlay.v0.";
 
+/** R2 新接口在老后端上还不存在：这两个状态回退到本地 overlay。 */
+const MISSING_ROUTE = new Set([404, 405]);
+
+function canvasPath(projectId: string, suffix: string): string {
+  return `/v1/projects/${encodeURIComponent(projectId)}${suffix}`;
+}
+
 export function createCanvasClient(projectId: string, storage?: KeyValueStore): CanvasClient {
   const memory = storage ?? browserStorage();
   const store = new CanvasMockStore(memory, projectId);
@@ -81,6 +89,23 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
     memory.setItem(OVERLAY_PREFIX + projectId, JSON.stringify(next));
   }
 
+  /** 写进后端之后，本地 overlay 不能再用旧坐标和旧节点盖住服务端结果。 */
+  function resetOverlay() {
+    writeOverlay({ layout_version: 0, positions: {}, nodes: [], edges: [] });
+  }
+
+  /** api 来源以服务端 layout_version 为准；overlay 只提供本地补充。 */
+  function apiOverlay(): CanvasOverlay {
+    return { ...overlay(), layout_version: 0 };
+  }
+
+  function contractWith(body: unknown): CanvasSnapshot | null {
+    if (body && isContractCanvas(body)) {
+      return applyOverlay({ ...body, origin: "api", project_id: projectId }, apiOverlay());
+    }
+    return null;
+  }
+
   function remember(snapshot: CanvasSnapshot): CanvasSnapshot {
     last = snapshot;
     return snapshot;
@@ -91,11 +116,10 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/canvas`);
       if (!response.ok) return null;
       const body: unknown = await response.json();
-      const laid = overlay();
       if (isContractCanvas(body)) {
-        return applyOverlay({ ...body, origin: "api", project_id: projectId }, laid);
+        return applyOverlay({ ...body, origin: "api", project_id: projectId }, apiOverlay());
       }
-      if (isLegacyCanvas(body)) return adaptLegacyCanvas(body, laid);
+      if (isLegacyCanvas(body)) return adaptLegacyCanvas(body, overlay());
     } catch {
       return null;
     }
@@ -114,17 +138,34 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
     async saveLayout(body) {
       const current = last ?? (await this.load());
       if (current.origin === "api") {
-        const laid = overlay();
-        laid.positions = { ...laid.positions, ...body.positions };
-        laid.viewport = body.viewport;
-        laid.layout_version = body.layout_version + 1;
-        writeOverlay(laid);
-        return remember(
-          applyOverlay(
-            { ...current, nodes: current.nodes.map((node) => ({ ...node })) },
-            laid,
+        const write = {
+          layout_version: body.layout_version,
+          positions: body.positions,
+          viewport: body.viewport,
+        };
+        let response = await sendJson(canvasPath(projectId, "/canvas/layout"), "PUT", write);
+        if (response.status === 409) {
+          const fresh = await loadFromApi();
+          if (fresh) {
+            response = await sendJson(canvasPath(projectId, "/canvas/layout"), "PUT", {
+              ...write,
+              layout_version: fresh.layout_version,
+            });
+          }
+        }
+        if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+        const saved = (await response.json()) as { layout_version?: number };
+        resetOverlay();
+        const remote = await loadFromApi();
+        if (remote) return remember(remote);
+        return remember({
+          ...current,
+          layout_version: saved.layout_version ?? current.layout_version + 1,
+          viewport: body.viewport,
+          nodes: current.nodes.map((node) =>
+            body.positions[node.id] ? { ...node, position: body.positions[node.id] } : node,
           ),
-        );
+        });
       }
       return remember(markMock(store.saveLayout(body)));
     },
@@ -132,47 +173,43 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
     async createNode(body) {
       const current = last ?? (await this.load());
       if (current.origin !== "api") return remember(markMock(store.createNode(body)));
-      if (body.kind !== "brief" && body.kind !== "ref_image") {
-        throw new CanvasRequestError(422, "这里只能新建需求文本或参考图");
-      }
-      const id = nextLocalId(current.nodes, body.kind === "brief" ? "brief" : "ref");
-      const node: CanvasNode =
-        body.kind === "brief"
-          ? {
-              id,
-              kind: "brief",
-              position: body.position,
-              user_created: true,
-              data: { text: body.data && "text" in body.data ? body.data.text : "在这里写下要交给某一镜的话" },
-            }
-          : {
-              id,
-              kind: "ref_image",
-              position: body.position,
-              user_created: true,
-              data: {
-                upload_id: body.data && "upload_id" in body.data ? body.data.upload_id : "",
-                thumbnail_url: body.data && "thumbnail_url" in body.data ? (body.data.thumbnail_url ?? null) : null,
-              },
-            };
-      const laid = overlay();
-      laid.nodes = [...laid.nodes, node];
-      laid.layout_version += 1;
-      writeOverlay(laid);
-      return remember(applyOverlay(current, laid));
+      const response = await sendJson(canvasPath(projectId, "/canvas/nodes"), "POST", {
+        kind: body.kind,
+        position: body.position,
+        data: body.data ?? {},
+      });
+      if (MISSING_ROUTE.has(response.status)) return remember(markMock(store.createNode(body)));
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      const created = (await response.json()) as CanvasNode & { layout_version?: number };
+      resetOverlay();
+      const remote = await loadFromApi();
+      if (remote) return remember(remote);
+      return remember({
+        ...current,
+        nodes: [...current.nodes, created],
+        layout_version: created.layout_version ?? current.layout_version + 1,
+      });
     },
 
     async deleteNode(nodeId) {
       const current = last ?? (await this.load());
       if (current.origin !== "api") return remember(markMock(store.deleteNode(nodeId)));
-      const laid = overlay();
-      const target = laid.nodes.find((node) => node.id === nodeId);
-      if (!target?.user_created) throw new CanvasRequestError(422, "只能删除你新建的文本或参考图");
-      laid.nodes = laid.nodes.filter((node) => node.id !== nodeId);
-      laid.edges = laid.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId);
-      laid.layout_version += 1;
-      writeOverlay(laid);
-      return remember(applyOverlay({ ...current, nodes: current.nodes.filter((node) => node.id !== nodeId), edges: current.edges.filter((edge) => edge.source !== nodeId && edge.target !== nodeId) }, laid));
+      const response = await apiFetch(
+        canvasPath(projectId, `/canvas/nodes/${encodeURIComponent(nodeId)}`),
+        { method: "DELETE" },
+      );
+      if (MISSING_ROUTE.has(response.status)) return remember(markMock(store.deleteNode(nodeId)));
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      await response.json().catch(() => null);
+      resetOverlay();
+      const remote = await loadFromApi();
+      if (remote) return remember(remote);
+      const drop = (edge: CanvasEdge) => edge.source !== nodeId && edge.target !== nodeId;
+      return remember({
+        ...current,
+        nodes: current.nodes.filter((node) => node.id !== nodeId),
+        edges: current.edges.filter(drop),
+      });
     },
 
     async createEdge(body) {
@@ -184,40 +221,62 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       const target = current.nodes.find((node) => node.id === body.target);
       const role = source && target ? connectionRole(source.kind, target.kind) : null;
       if (!role) throw new CanvasRequestError(422, "只能把参考图或需求文本连到某一镜，或把某一镜连到成片");
-      const added: CanvasEdge = {
-        id: `edge-${body.source}-${body.target}`,
+      const response = await sendJson(canvasPath(projectId, "/canvas/edges"), "POST", {
         source: body.source,
         target: body.target,
+        role: body.role ?? role,
         source_handle: body.source_handle ?? (role === "feeds_final" ? "out" : role),
         target_handle: body.target_handle ?? "in",
-        role,
-        user_created: true,
-      };
-      const laid = overlay();
-      laid.edges = [...laid.edges, added];
-      laid.layout_version += 1;
-      writeOverlay(laid);
-      return remember(applyOverlay(current, laid));
+      });
+      if (MISSING_ROUTE.has(response.status)) return remember(markMock(store.createEdge(body)));
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      const created = (await response.json()) as CanvasEdge & { layout_version?: number };
+      resetOverlay();
+      const remote = await loadFromApi();
+      if (remote) return remember(remote);
+      return remember({
+        ...current,
+        edges: [...current.edges, created],
+        layout_version: created.layout_version ?? current.layout_version + 1,
+      });
     },
 
     async deleteEdge(edgeId) {
       const current = last ?? (await this.load());
       if (current.origin !== "api") return remember(markMock(store.deleteEdge(edgeId)));
-      const laid = overlay();
-      laid.edges = laid.edges.filter((edge) => edge.id !== edgeId);
-      laid.layout_version += 1;
-      writeOverlay(laid);
-      return remember(
-        applyOverlay(
-          { ...current, edges: current.edges.filter((edge) => edge.id !== edgeId) },
-          laid,
-        ),
+      const response = await apiFetch(
+        canvasPath(projectId, `/canvas/edges/${encodeURIComponent(edgeId)}`),
+        { method: "DELETE" },
       );
+      if (MISSING_ROUTE.has(response.status)) return remember(markMock(store.deleteEdge(edgeId)));
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      await response.json().catch(() => null);
+      resetOverlay();
+      const remote = await loadFromApi();
+      if (remote) return remember(remote);
+      return remember({ ...current, edges: current.edges.filter((edge) => edge.id !== edgeId) });
     },
 
     async updateNodeData(nodeId, patch) {
       const current = last ?? (await this.load());
-      if (current.origin !== "api") return remember(markMock(store.updateNodeData(nodeId, patch)));
+      if (current.origin === "api") {
+        // R8 之前没有「修改镜头正文」的写接口；旁白和补充提示词先进本地，再生时随请求带走。
+        if (patch.kind !== "shot") {
+          const data = patch.kind === "brief" ? { text: patch.text } : { upload_id: patch.upload_id };
+          const response = await sendJson(
+            canvasPath(projectId, `/canvas/nodes/${encodeURIComponent(nodeId)}`),
+            "PATCH",
+            { data },
+          );
+          if (!MISSING_ROUTE.has(response.status) && response.ok) {
+            resetOverlay();
+            const remote = await loadFromApi();
+            if (remote) return remember(remote);
+          }
+        }
+      } else {
+        return remember(markMock(store.updateNodeData(nodeId, patch)));
+      }
       const nodes = current.nodes.map((node) => {
         if (node.id !== nodeId) return node;
         if (patch.kind === "brief" && node.kind === "brief") return { ...node, data: { text: patch.text } };
@@ -246,17 +305,34 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       const shot = shotById(current, shotId);
       const data = shot ? asShot(shot) : null;
       const selected = data?.candidates.find((item) => item.candidate_id === data.selected_candidate_id);
-      const payload = buildRerunBody(shotId, selected, body?.prompt_suffix ?? data?.prompt_suffix ?? "");
+      const suffix = body?.prompt_suffix ?? data?.prompt_suffix ?? "";
+      const narration = body?.narration ?? data?.narration ?? "";
+      if (current.origin === "api") {
+        const response = await sendJson(
+          canvasPath(projectId, `/shots/${encodeURIComponent(shotId)}/regenerate`),
+          "POST",
+          { prompt_suffix: suffix, narration },
+        );
+        if (!MISSING_ROUTE.has(response.status)) {
+          if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+          const parsed = (await response.json()) as { canvas?: unknown };
+          const remote = contractWith(parsed.canvas);
+          if (remote) return remember(remote);
+          const reloaded = await loadFromApi();
+          if (reloaded) return remember(reloaded);
+          throw new CanvasRequestError(502, "重做之后没有拿到画布");
+        }
+      }
+      const payload = buildRerunBody(shotId, selected, suffix);
       if (current.origin === "api") {
         const response = await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/rerun`, payload);
         if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
         const parsed = (await response.json()) as { canvas?: unknown };
         if (parsed.canvas && isLegacyCanvas(parsed.canvas)) return remember(adaptLegacyCanvas(parsed.canvas, overlay()));
-        if (parsed.canvas && isContractCanvas(parsed.canvas)) {
-          return remember(applyOverlay({ ...parsed.canvas, origin: "api" }, overlay()));
-        }
-        const remote = await loadFromApi();
+        const remote = contractWith(parsed.canvas);
         if (remote) return remember(remote);
+        const reloaded = await loadFromApi();
+        if (reloaded) return remember(reloaded);
         throw new CanvasRequestError(502, "重跑之后没有拿到画布");
       }
       await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/rerun`, payload).catch(() => null);
@@ -266,11 +342,26 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
     async replaceReference(shotId, body) {
       const current = last ?? (await this.load());
       if (current.origin !== "api") return remember(markMock(store.replaceReference(shotId, body)));
-      const laid = overlay();
-      laid.references = { ...laid.references, [shotId]: body };
-      laid.layout_version += 1;
-      writeOverlay(laid);
-      return remember(applyOverlay(current, laid));
+      const response = await sendJson(
+        canvasPath(projectId, `/shots/${encodeURIComponent(shotId)}/reference`),
+        "POST",
+        { upload_id: body.upload_id },
+      );
+      if (!MISSING_ROUTE.has(response.status)) {
+        if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+        const parsed = (await response.json()) as { canvas?: unknown };
+        const remote = contractWith(parsed.canvas);
+        if (remote) return remember(remote);
+        const reloaded = await loadFromApi();
+        if (reloaded) return remember(reloaded);
+      }
+      if (MISSING_ROUTE.has(response.status)) {
+        const laid = overlay();
+        laid.references = { ...laid.references, [shotId]: body };
+        writeOverlay(laid);
+        return remember(applyOverlay(current, laid));
+      }
+      throw new CanvasRequestError(502, "替换参考图之后没有拿到画布");
     },
 
     async selectCandidate(body) {
@@ -299,20 +390,35 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       if ("ai_label" in body && body.ai_label === false) {
         throw new CanvasRequestError(422, "AI 生成标识不能关闭");
       }
-      const posted = buildTimelineBody(current.server_timeline, body.clips);
       if (current.origin === "api") {
-        const response = await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/timeline`, posted);
-        if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+        const response = await sendJson(canvasPath(projectId, "/timeline"), "PUT", {
+          clips: body.clips.map((clip) => ({
+            shot_id: clip.shot_id,
+            candidate_id: clip.candidate_id,
+            in_s: clip.in_s,
+            out_s: clip.out_s,
+          })),
+        });
+        if (!MISSING_ROUTE.has(response.status)) {
+          if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+          const parsed = (await response.json()) as { canvas?: unknown; ai_label?: boolean };
+          if (parsed.ai_label === false) throw new CanvasRequestError(422, "AI 生成标识不能关闭");
+          const remote = contractWith(parsed.canvas);
+          if (remote) return remember(remote);
+          const reloaded = await loadFromApi();
+          if (reloaded) return remember(reloaded);
+          throw new CanvasRequestError(502, "保存时间轴之后没有拿到画布");
+        }
+        // 老后端：沿用 expert/timeline 保住「AI生成」，入点出点先只记在本地。
+        const posted = buildTimelineBody(current.server_timeline, body.clips);
+        const legacy = await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/timeline`, posted);
+        if (!legacy.ok) throw new CanvasRequestError(legacy.status, await errorMessage(legacy));
         const laid = overlay();
         laid.clips = body.clips;
-        laid.layout_version += 1;
         writeOverlay(laid);
-        const parsed = (await response.json()) as { canvas?: unknown; ai_label?: boolean };
-        if (parsed.ai_label === false) throw new CanvasRequestError(422, "AI 生成标识不能关闭");
-        if (parsed.canvas && isLegacyCanvas(parsed.canvas)) return remember(adaptLegacyCanvas(parsed.canvas, laid));
         return remember(applyOverlay(current, laid));
       }
-      await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/timeline`, posted).catch(() => null);
+      await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/timeline`, buildTimelineBody(current.server_timeline, body.clips)).catch(() => null);
       return remember(markMock(store.saveTimeline(body)));
     },
 
@@ -342,19 +448,14 @@ function markMock(snapshot: CanvasSnapshot): CanvasSnapshot {
   return snapshot;
 }
 
-function nextLocalId(nodes: { id: string }[], prefix: string): string {
-  let n = nodes.length + 1;
-  let id = `${prefix}-${n}`;
-  while (nodes.some((node) => node.id === id)) {
-    n += 1;
-    id = `${prefix}-${n}`;
-  }
-  return id;
+
+async function postJson(path: string, body: unknown, method = "POST"): Promise<Response> {
+  return sendJson(path, method, body);
 }
 
-async function postJson(path: string, body: unknown): Promise<Response> {
+async function sendJson(path: string, method: string, body: unknown): Promise<Response> {
   return apiFetch(path, {
-    method: "POST",
+    method,
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });

@@ -40,7 +40,8 @@ export const CANVAS_CONTRACT_NOTES = [
   "项目已在后端时：读取走 GET /canvas，选用走 POST /expert/select，再生走 POST /expert/rerun（带 shot_id 和 prompt_suffix），时间轴保存走 POST /expert/timeline，上传走 POST /uploads。这些都经 lib/api.ts。",
   "上述现有接口失败或项目不存在时，演示画布回退到本地 mock，避免没有后端项目时页面空白。回退不会改写已成功的后端结果。",
   "现有 expert/timeline 只接收 overlays 和带 clip_id 的 clips，不写入点出点。入点出点和顺序先记在本地；提交时原样带回 overlays，因此「AI生成」不会被拿掉。",
-  "布局、自建节点、自建连线、替换参考图，以及契约里的 PUT /timeline、POST /shots/{id}/regenerate，在 R2 合并前只写本地 mock，不请求这些新路径。",
+  "布局、自建节点、自建连线、替换参考图、单镜再生、结构化时间轴走 R2 新接口。后端返回 404/405（R2 未合并）时回退到本地 overlay，演示不空白。",
+  "布局保存遇到 409（版本冲突）会重新读画布，用服务端版本重试一次；写成功后清空本地 overlay，避免旧坐标盖住服务端结果。",
   "旧的 live 专家画布端到端测试在这条里跳过，界面演示改到 canvas-demo.spec.ts。",
 ] as const;
 
