@@ -14,7 +14,7 @@ test("storyboard cards can be read and the narration edited", async ({ page }) =
   await page.goto("/");
   await page.getByLabel("一句话").fill(SENTENCE);
   await page.getByRole("radio", { name: "先看分镜" }).check();
-  await page.getByRole("button", { name: "开始生成" }).click();
+  await page.getByRole("button", { name: "生成", exact: true }).click();
   await page.waitForURL(/\/projects\/[0-9a-f-]+$/);
 
   const strip = page.getByTestId("storyboard");
