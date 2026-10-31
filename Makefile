@@ -1,4 +1,4 @@
-.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 accept-t04 accept-t05 accept-t06 accept-t07 accept-t08 accept-t09 accept-t10 accept-t11 accept-t12 accept-t13 accept-t14 accept-t15 accept-t16 accept-t17 accept-t18 accept-t19 accept-t20 accept-t21 accept-t22 accept-t23 accept-t25 accept-sec54 accept-ui01 accept-sec63 install api
+.PHONY: up down ps test lint accept-t01 accept-t02 accept-t03 accept-t04 accept-t05 accept-t06 accept-t07 accept-t08 accept-t09 accept-t10 accept-t11 accept-t12 accept-t13 accept-t14 accept-t15 accept-t16 accept-t17 accept-t18 accept-t19 accept-t20 accept-t21 accept-t22 accept-t23 accept-t25 accept-sec54 accept-ui01 accept-sec63 accept-r2 install api
 
 ROOT := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 ENV_FILE := $(ROOT)/.env
@@ -93,6 +93,13 @@ accept-t18:
 
 accept-t19:
 	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t19.sh
+
+accept-r2:
+	HILATV_LIVE=0 HILATV_BUDGET_CNY=0 HILATV_DAILY_BUDGET_CNY=0 DATABASE_URL= \
+	$(PYTHON) -m pytest -o addopts="" -q --tb=short \
+	  workers/expert/tests/test_canvas_desk.py \
+	  workers/expert/tests/test_canvas_regen.py \
+	  apps/api/tests/test_canvas_api.py
 
 accept-t20:
 	ENV_FILE=$(ENV_FILE) bash $(ROOT)/infra/scripts/accept_t20.sh

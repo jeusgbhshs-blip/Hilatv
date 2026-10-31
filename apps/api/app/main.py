@@ -18,7 +18,9 @@ from app.settings import get_settings
 from workers.identity.session import assert_live_session_configured
 from workers.workflow.runtime import shutdown_runtime
 
-_MEDIA_QUERY = re.compile(r"^/v1/projects/[^/]+/(?:storyboard/[^/]+/frame|expert/media/[^/]+)$")
+_MEDIA_QUERY = re.compile(
+    r"^/v1/projects/[^/]+/(?:storyboard/[^/]+/frame|expert/media/[^/]+|expert/uploads/[a-f0-9]{32})$"
+)
 
 
 def web_origins() -> list[str]:

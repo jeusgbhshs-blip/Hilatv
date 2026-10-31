@@ -61,7 +61,12 @@ def test_canvas_review_selection_and_rerun(tmp_path, monkeypatch) -> None:
     built = build_film("film1")
     canvas = build_canvas("film1")
     assert [node["id"] for node in canvas["nodes"]][0] == "n01_brief"
-    assert canvas["nodes"][-1]["id"] == "n15_compose"
+    from workers.workflow.contract import PIPELINE
+
+    prefix = [node["id"] for node in canvas["nodes"][: len(PIPELINE)]]
+    assert prefix == list(PIPELINE)
+    assert canvas["nodes"][-1]["kind"] == "final"
+    assert canvas["nodes"][-1]["data"]["ai_label"] is True
     keyframes = canvas["shots"][0]["keyframes"]
     videos = canvas["shots"][0]["videos"]
     assert len(keyframes) == 3
