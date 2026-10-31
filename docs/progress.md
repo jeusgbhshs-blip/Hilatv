@@ -6,7 +6,7 @@
 
 | 任务 | 名称 | 依赖 | 状态 | 分支 / PR | 备注 |
 |---|---|---|---|---|---|
-| R2 | 专家画布 P0 后端 | T19 | 🔵 | redesign/r2-canvas-api | 验收中。画布位置、连线、单镜再生、结构化时间轴。head 改为 `r02_canvas_0003`。假设见下方 |
+| R2 | 专家画布 P0 后端 | T19 | 🔵 | [redesign/r2-canvas-api](https://github.com/jeusgbhshs-blip/Hilatv/pull/69) | 验收中，未合并。645 passed / 1 skipped。head 为 `r02_canvas_0003`。假设见下方 |
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
