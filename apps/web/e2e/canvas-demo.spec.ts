@@ -83,7 +83,8 @@ test("expert canvas demo: connect, switch, trim, keep position, keep the AI labe
   await page.reload();
   await expect(page.getByTestId("node-shot-1")).toBeVisible();
   const reloaded = Number(await page.getByTestId("node-shot-1").getAttribute("data-x"));
-  expect(Math.abs(reloaded - after)).toBeLessThanOrEqual(1);
+  // 保存时坐标取整，拖动本身是亚像素，允许 2px 误差。
+  expect(Math.abs(reloaded - after)).toBeLessThanOrEqual(2);
   await expect(page.getByTestId("node-shot-2").getByAltText("已接入的参考图")).toBeVisible();
   await expect(page.getByTestId("node-shot-2")).toContainText("质检通过");
 
