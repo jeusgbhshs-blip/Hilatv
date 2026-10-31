@@ -22,6 +22,7 @@ from workers.expert.desk import (
     put_layout,
 )
 from workers.expert.gates import GateError
+from workers.expert.node_generate import generate_node
 from workers.expert.rerun import rerun_span, save_timeline, select_candidate
 from workers.expert.script_flow import build_storyboard
 from workers.expert.shot_action import regenerate_shot, set_reference
@@ -265,6 +266,35 @@ def project_media(
         raise HTTPException(status_code=404, detail="没有可看的画面")
     media_type = _MEDIA.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media_type, filename=Path(path).name)
+
+
+class GenerateBody(BaseModel):
+    """节点上直接生成：图片节点出图、视频节点出视频。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str | None = Field(default=None, max_length=4000)
+    count: int | None = Field(default=None, ge=1, le=4)
+
+
+@router.post("/v1/projects/{project_id}/canvas/nodes/{node_id}/generate")
+def project_canvas_generate(
+    project_id: str,
+    node_id: str,
+    body: GenerateBody,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    from gateway import get_gateway
+
+    return _call(
+        lambda: generate_node(
+            project_id,
+            node_id,
+            body.model_dump(exclude_none=True),
+            gateway=get_gateway(),
+        )
+    )
 
 
 class ScriptBody(BaseModel):

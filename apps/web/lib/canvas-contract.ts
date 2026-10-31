@@ -51,7 +51,7 @@ export type CanvasViewport = { x: number; y: number; zoom: number };
 
 export type ShotVerdict = "unreviewed" | "pass" | "hard_fail";
 
-export type CandidateKind = "keyframe" | "video";
+export type CandidateKind = "keyframe" | "video" | "image";
 
 export type EdgeRole = "reference" | "text" | "feeds_final" | "pipeline";
 
@@ -113,7 +113,33 @@ export type PipelineData = {
   label?: string;
 };
 
-export type CanvasNodeData = BriefData | RefImageData | ShotData | FinalData | PipelineData;
+export type ContentCandidate = {
+  candidate_id: string;
+  kind: CandidateKind;
+  uri?: string;
+  thumbnail_url?: string | null;
+  model: string;
+  verdict: ShotVerdict;
+  duration_s?: number | null;
+};
+
+/** 图片/视频节点：节点上写提示词，直接生成候选。 */
+export type ImageData = {
+  prompt: string;
+  candidates: ContentCandidate[];
+  selected_candidate_id?: string | null;
+  thumbnail_url?: string | null;
+};
+
+export type VideoData = ImageData;
+
+export type CanvasNodeData =
+  | BriefData
+  | RefImageData
+  | ShotData
+  | FinalData
+  | PipelineData
+  | ImageData;
 
 export type CanvasNode = {
   id: string;
@@ -192,9 +218,9 @@ export type LayoutWrite = {
 };
 
 export type CreateNodeWrite = {
-  kind: "brief" | "ref_image";
+  kind: "brief" | "ref_image" | "image" | "video";
   position: CanvasPoint;
-  data?: BriefData | RefImageData;
+  data?: BriefData | RefImageData | { prompt?: string };
 };
 
 export type CreateEdgeWrite = {

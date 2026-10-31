@@ -32,7 +32,9 @@ from workers.workflow.store import (
 _MAX_NODES = 40
 _MAX_EDGES = 200
 _MAX_TEXT = 4000
-_USER_KINDS = frozenset({"brief", "ref_image"})
+_USER_KINDS = frozenset({"brief", "ref_image", "image", "video"})
+_CONTENT_KINDS = frozenset({"image", "video"})
+_LABELS = {"brief": "需求文本", "ref_image": "参考图", "image": "图片", "video": "视频"}
 _ROLES = frozenset({"reference", "text", "feeds_final", "pipeline"})
 
 
@@ -269,13 +271,14 @@ def add_node(project_id: str, body: dict[str, Any], *, enterprise_id: str) -> di
         if len(doc.user_nodes) >= _MAX_NODES:
             raise GateError("节点太多了")
         if kind == "brief":
-            text = _brief_text(data.get("text"))
-            stored = {"text": text}
+            stored = {"text": _brief_text(data.get("text"))}
+        elif kind == "ref_image":
+            stored = {"upload_id": _upload_id(data.get("upload_id"), enterprise_id)}
         else:
-            upload_id = _upload_id(data.get("upload_id"), enterprise_id)
-            stored = {"upload_id": upload_id}
+            stored = {"prompt": _prompt_text(data.get("prompt")), "candidates": []}
+        prefix = {"brief": "brief", "ref_image": "ref", "image": "img", "video": "vid"}[str(kind)]
         node = UserNode(
-            id=_fresh_id("brief" if kind == "brief" else "ref"),
+            id=_fresh_id(prefix),
             kind=str(kind),
             position=position,
             data=stored,
@@ -313,12 +316,17 @@ def patch_node(
         if data is not None:
             if node.kind == "brief":
                 node.data = {"text": _brief_text(data.get("text", node.data.get("text")))}
-            else:
+            elif node.kind == "ref_image":
                 upload_id = _upload_id(
                     data.get("upload_id", node.data.get("upload_id")),
                     enterprise_id,
                 )
                 node.data = {"upload_id": upload_id}
+            else:
+                node.data = {
+                    **node.data,
+                    "prompt": _prompt_text(data.get("prompt", node.data.get("prompt"))),
+                }
         if position is not None:
             node.position = position
             doc.positions[node.id] = position
@@ -459,9 +467,11 @@ def _closes_cycle(edges: list[DeskEdge], source: str, target: str) -> bool:
 
 def _compatible(source_kind: str, target_kind: str, role: str) -> bool:
     if role == "reference":
-        return source_kind == "ref_image" and target_kind == "shot"
+        if source_kind == "ref_image" and target_kind in {"shot", "image"}:
+            return True
+        return source_kind == "image" and target_kind == "video"
     if role == "text":
-        return source_kind == "brief" and target_kind == "shot"
+        return source_kind == "brief" and target_kind in {"shot", "image", "video"}
     if role == "feeds_final":
         return source_kind == "shot" and target_kind == "final"
     if role == "pipeline":
@@ -588,7 +598,16 @@ def _user_node(project_id: str, node: UserNode, positions: dict[str, Position]) 
     data = dict(node.data)
     if node.kind == "ref_image" and isinstance(data.get("upload_id"), str):
         data["thumbnail_url"] = _upload_url(project_id, data["upload_id"])
-    label = "需求文本" if node.kind == "brief" else "参考图"
+    if node.kind in _CONTENT_KINDS:
+        data["candidates"] = [
+            _content_candidate(item, node.kind) for item in data.get("candidates") or []
+        ]
+        selected = data.get("selected_candidate_id")
+        chosen = next(
+            (item for item in data["candidates"] if item["candidate_id"] == selected), None
+        )
+        data["thumbnail_url"] = (chosen or {}).get("thumbnail_url")
+    label = _LABELS.get(node.kind, "节点")
     return {
         "id": node.id,
         "kind": node.kind,
@@ -723,6 +742,26 @@ def _version(raw: Any) -> int:
     if raw < 0:
         raise GateError("画布版本无效")
     return raw
+
+
+def _prompt_text(raw: Any) -> str:
+    text = str(raw or "").strip()
+    return text[:_MAX_TEXT]
+
+
+def _content_candidate(raw: Any, kind: str) -> dict[str, Any]:
+    item = raw if isinstance(raw, dict) else {}
+    return {
+        "candidate_id": str(item.get("candidate_id") or ""),
+        "kind": str(item.get("kind") or kind),
+        "thumbnail_url": item.get("thumbnail_url")
+        if isinstance(item.get("thumbnail_url"), str)
+        else None,
+        "model": str(item.get("model") or ""),
+        "verdict": str(item.get("verdict") or "unreviewed"),
+        "uri": str(item.get("uri") or ""),
+        "duration_s": item.get("duration_s"),
+    }
 
 
 def _brief_text(raw: Any) -> str:

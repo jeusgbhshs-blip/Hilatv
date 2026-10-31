@@ -408,3 +408,44 @@ def test_blank_canvas_grows_a_storyboard_from_one_sentence(tmp_path, monkeypatch
     assert canvas["timeline"]["present"] is False
     snapshot = client.get(f"/v1/projects/{project_id}").json()
     assert snapshot["status"] == "draft"
+
+
+def test_image_and_video_nodes_generate_on_the_canvas(tmp_path, monkeypatch) -> None:
+    """图片节点自己出图、视频节点自己出视频，都是 mock、都记 unreviewed。"""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    ident = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+    project_id = client.post("/v1/projects/blank", json={"sentence": ""}).json()["project_id"]
+    image = client.post(
+        f"/v1/projects/{project_id}/canvas/nodes",
+        json={"kind": "image", "position": {"x": 10, "y": 10}, "data": {"prompt": "香水瓶广告"}},
+    )
+    assert image.status_code == 200, image.text
+    image_id = image.json()["id"]
+    made = client.post(
+        f"/v1/projects/{project_id}/canvas/nodes/{image_id}/generate",
+        json={"count": 2},
+    )
+    assert made.status_code == 200, made.text
+    node = next(item for item in made.json()["canvas"]["nodes"] if item["id"] == image_id)
+    assert len(node["data"]["candidates"]) == 2
+    assert all(row["verdict"] == "unreviewed" for row in node["data"]["candidates"])
+    video = client.post(
+        f"/v1/projects/{project_id}/canvas/nodes",
+        json={"kind": "video", "position": {"x": 400, "y": 10}, "data": {"prompt": "镜头缓慢推进"}},
+    )
+    video_id = video.json()["id"]
+    made_video = client.post(f"/v1/projects/{project_id}/canvas/nodes/{video_id}/generate", json={})
+    assert made_video.status_code == 200, made_video.text
+    video_node = next(
+        item for item in made_video.json()["canvas"]["nodes"] if item["id"] == video_id
+    )
+    assert len(video_node["data"]["candidates"]) == 1
+    assert (
+        video_node["data"]["selected_candidate_id"]
+        == video_node["data"]["candidates"][0]["candidate_id"]
+    )

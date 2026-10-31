@@ -17,6 +17,7 @@ export type CanvasActions = {
   uploadRefNode: (nodeId: string, file: File) => void;
   derive: (nodeId: string, kind: "brief" | "ref_image") => void;
   storyboard: (sentence: string) => Promise<void>;
+  generateNode: (nodeId: string, body?: { prompt?: string; count?: number }) => Promise<void>;
 };
 
 const CanvasActionsContext = createContext<CanvasActions | null>(null);

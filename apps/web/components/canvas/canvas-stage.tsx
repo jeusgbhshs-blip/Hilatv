@@ -27,6 +27,7 @@ import { CanvasActionsProvider, type CanvasActions } from "@/components/canvas/c
 import { Inspector, type InspectorFocus } from "@/components/canvas/inspector";
 import {
   BriefNode,
+  ContentNode,
   FinalNode,
   PipelineNode,
   RefNode,
@@ -56,15 +57,19 @@ const nodeTypes = {
   brief: BriefNode,
   ref_image: RefNode,
   shot: ShotNode,
+  image: ContentNode,
+  video: ContentNode,
   final: FinalNode,
   pipeline: PipelineNode,
 };
 
-const FREE = new Set(["brief", "ref_image", "shot", "final"]);
+const FREE = new Set(["brief", "ref_image", "shot", "final", "image", "video"]);
 
 /** 管线工序是内部节点，LibTV 式画布只铺内容节点。 */
 function visibleFlow(snapshot: CanvasSnapshot): { nodes: CanvasNode[]; edges: CanvasSnapshot["edges"] } {
-  const content = snapshot.nodes.filter((node) => ["brief", "ref_image", "shot"].includes(node.kind));
+  const content = snapshot.nodes.filter((node) =>
+    ["brief", "ref_image", "shot", "image", "video"].includes(node.kind),
+  );
   const nodes = snapshot.nodes.filter((node) => FREE.has(node.kind) && (node.kind !== "final" || content.length > 0));
   const ids = new Set(nodes.map((node) => node.id));
   return { nodes, edges: snapshot.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
@@ -349,6 +354,11 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const actions = useMemo<CanvasActions>(() => {
     return {
       doc: doc ?? emptyDoc(projectId),
+      generateNode: async (nodeId: string, body?: { prompt?: string; count?: number }) => {
+        const client = clientRef.current;
+        if (!client) return;
+        await enqueue(() => client.generateNode(nodeId, body), "adopt").catch(() => undefined);
+      },
       storyboard: async (sentence: string) => {
         const client = clientRef.current;
         if (!client) return;
@@ -439,7 +449,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     };
   }, [choosingId, doc, enqueue, projectId, run]);
 
-  function create(kind: "brief" | "ref_image", at?: CanvasPoint) {
+  function create(kind: "brief" | "ref_image" | "image" | "video", at?: CanvasPoint) {
     const client = clientRef.current;
     if (!client) return;
     const position = at ?? nextPosition(nodesRef.current);
@@ -451,7 +461,9 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         data:
           kind === "brief"
             ? { text: "在这里写下要交给某一镜的话" }
-            : { upload_id: "", thumbnail_url: null },
+            : kind === "ref_image"
+              ? { upload_id: "", thumbnail_url: null }
+              : { prompt: "" },
       });
       pendingSelect.current = next.nodes.find((node) => !before.has(node.id))?.id ?? null;
       return next;
@@ -469,7 +481,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   }
 
   const isEmpty = !doc.nodes.some((node) =>
-    ["brief", "ref_image", "shot"].includes(node.kind),
+    ["brief", "ref_image", "shot", "image", "video"].includes(node.kind),
   );
 
   return (
@@ -514,10 +526,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
                   <span>文本节点</span>
                   <span className="text-caption text-text-3">写一句话</span>
                 </button>
-                <button type="button" className="hilatv-canvas-empty-card" onClick={() => create("ref_image")}>
+                <button type="button" className="hilatv-canvas-empty-card" onClick={() => create("image")}>
                   <ImageIcon aria-hidden="true" className="size-5" strokeWidth={1.5} />
                   <span>图片节点</span>
-                  <span className="text-caption text-text-3">产品图 / 参考图</span>
+                  <span className="text-caption text-text-3">写提示词直接出图</span>
                 </button>
                 <button
                   type="button"
@@ -528,10 +540,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
                   <span>脚本分镜</span>
                   <span className="text-caption text-text-3">一句话出分镜</span>
                 </button>
-                <button type="button" className="hilatv-canvas-empty-card" disabled>
+                <button type="button" className="hilatv-canvas-empty-card" onClick={() => create("video")}>
                   <Clapperboard aria-hidden="true" className="size-5" strokeWidth={1.5} />
                   <span>视频节点</span>
-                  <span className="text-caption text-text-3">建设中</span>
+                  <span className="text-caption text-text-3">从图片或提示词出视频</span>
                 </button>
               </div>
               {scriptOpen ? (
@@ -757,6 +769,8 @@ function toFlowEdge(edge: CanvasSnapshot["edges"][number], busyShotId: string | 
 function labelFor(node: CanvasNode): string {
   if (node.kind === "brief") return "需求文本";
   if (node.kind === "ref_image") return "参考图";
+  if (node.kind === "image") return "图片";
+  if (node.kind === "video") return "视频";
   if (node.kind === "final") return "成片";
   const shot = asShot(node);
   if (shot) return `第 ${shot.index} 镜`;

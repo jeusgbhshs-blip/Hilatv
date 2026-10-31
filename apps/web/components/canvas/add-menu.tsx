@@ -18,15 +18,16 @@ import type { CanvasPoint } from "@/lib/canvas-contract";
 
 const KINDS = [
   { kind: "brief", label: "文本", icon: TextCursorInput, ready: true },
-  { kind: "ref_image", label: "图片", icon: ImageIcon, ready: true },
-  { kind: "video", label: "视频", icon: Clapperboard, ready: false },
+  { kind: "image", label: "图片", icon: ImageIcon, ready: true },
+  { kind: "video", label: "视频", icon: Clapperboard, ready: true },
+  { kind: "ref_image", label: "参考图", icon: ImageIcon, ready: true },
   { kind: "audio", label: "音频", icon: AudioLines, ready: false },
   { kind: "script", label: "脚本", icon: Sparkles, ready: false },
 ] as const;
 
 export const CANVAS_ADD_EVENT = "hilatv:canvas-add";
 
-type Placeable = "brief" | "ref_image";
+type Placeable = "brief" | "ref_image" | "image" | "video";
 
 /**
  * LibTV 式「添加节点」面板：左侧工具栏的「＋」和双击画布都会打开它。

@@ -13,6 +13,7 @@ import {
   asFinal,
   asRef,
   asShot,
+  type ImageData,
   shotVerdictLabel,
   upstreamFor,
   type CanvasNode,
@@ -419,6 +420,70 @@ export function FinalNode({ id, selected, positionAbsoluteX, positionAbsoluteY }
         {doc.timeline.duration_s.toFixed(1)} 秒
         {data.version_id ? ` · ${data.version_id}` : ""}
       </p>
+    </Shell>
+  );
+}
+
+export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY }: NodeProps<Node<FlowData, "image" | "video">>) {
+  const actions = useCanvasActions();
+  const node = actions.doc.nodes.find((item) => item.id === id);
+  const data = node && (node.kind === "image" || node.kind === "video") ? (node.data as ImageData) : null;
+  const [prompt, setPrompt] = useState(data?.prompt ?? "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setPrompt(data?.prompt ?? "");
+  }, [data?.prompt]);
+  if (!node || !data) return null;
+  const isVideo = node.kind === "video";
+  const candidates = data.candidates ?? [];
+  const chosen = candidates.find((item) => item.candidate_id === data.selected_candidate_id) ?? candidates[0];
+  return (
+    <Shell
+      id={id}
+      title={isVideo ? "视频" : "图片"}
+      x={positionAbsoluteX}
+      y={positionAbsoluteY}
+      selected={selected}
+      dot={chosen ? "bg-success" : "bg-warning"}
+    >
+      <Handle type="target" position={Position.Left} id="in" data-testid={`handle-${id}-target`} />
+      <Handle type="source" position={Position.Right} id="out" data-testid={`handle-${id}-source`} />
+      <FrameView
+        url={chosen?.thumbnail_url ?? null}
+        alt={isVideo ? "视频画面" : "图片"}
+        testId={`frame-${id}`}
+      />
+      {candidates.length > 0 ? (
+        <div data-testid={`candidates-${id}`} className="grid grid-cols-3 gap-1">
+          {candidates.slice(-6).map((item) => (
+            <span key={item.candidate_id} className="flex aspect-video items-center justify-center rounded-xs bg-stage text-caption text-text-3">
+              {item.kind === "video" ? "视频" : "图"}
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <textarea
+        aria-label={isVideo ? "视频提示词" : "图片提示词"}
+        value={prompt}
+        onChange={(event) => setPrompt(event.target.value)}
+        placeholder={isVideo ? "想要的镜头运动，例如：镜头缓慢推进" : "想要的画面，例如：香水瓶特写，夜色，丝绒质感"}
+        className="nodrag nowheel min-h-16 rounded-sm border border-border bg-raised px-2 py-1 text-caption text-text-1"
+      />
+      <button
+        type="button"
+        className={cn(actionClass, "border border-blue text-text-1 hover:bg-blue-soft")}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await actions.generateNode(id, { prompt, count: isVideo ? 1 : 2 });
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "正在生成" : isVideo ? "生成视频" : "生成图片"}
+      </button>
     </Shell>
   );
 }
