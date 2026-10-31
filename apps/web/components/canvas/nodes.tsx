@@ -169,6 +169,26 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
         alt={`第 ${data.index} 镜画面`}
         testId={`frame-${id}`}
       />
+      {data.candidates.length > 0 ? (
+        <div data-testid={`candidates-${id}`} className="grid grid-cols-3 gap-1">
+          {data.candidates.slice(0, 6).map((item) => (
+            <span key={item.candidate_id} className="aspect-video overflow-hidden rounded-xs bg-stage">
+              {item.thumbnail_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={item.thumbnail_url}
+                  alt={`候选 ${item.candidate_id}`}
+                  className="size-full object-cover"
+                />
+              ) : (
+                <span className="flex size-full items-center justify-center text-caption text-text-3">
+                  {item.kind === "video" ? "视频" : "图"}
+                </span>
+              )}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <Badge tone={verdictTone(data.verdict)}>{shotVerdictLabel(data.verdict, data.review)}</Badge>
         <span className="tabular text-caption text-text-2">{data.duration_s.toFixed(1)} 秒</span>

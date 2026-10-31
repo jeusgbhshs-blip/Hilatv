@@ -558,7 +558,7 @@ def _shot_node(
         "completed": bool(frames or videos),
         "generative": True,
         "user_created": False,
-        "position": _point(positions, node_id, {"x": 460, "y": max(order - 1, 0) * 180}),
+        "position": _point(positions, node_id, {"x": 460, "y": max(order - 1, 0) * 560}),
         "data": data,
     }
 

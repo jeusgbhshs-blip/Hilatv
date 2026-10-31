@@ -2,7 +2,8 @@
 
 import {
   Background,
-  Controls,
+  BackgroundVariant,
+
   MiniMap,
   ReactFlow,
   SelectionMode,
@@ -16,8 +17,11 @@ import {
   type OnBeforeDelete,
   type OnConnectEnd,
 } from "@xyflow/react";
+import Image from "next/image";
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { CanvasAddMenu, CanvasToolRail } from "@/components/canvas/add-menu";
 import { CanvasActionsProvider, type CanvasActions } from "@/components/canvas/canvas-context";
 import { Inspector, type InspectorFocus } from "@/components/canvas/inspector";
 import {
@@ -29,7 +33,6 @@ import {
   type FlowData,
 } from "@/components/canvas/nodes";
 import { TimelineTrack } from "@/components/canvas/timeline-track";
-import { Button } from "@/components/ui/button";
 import { createCanvasClient, type CanvasClient } from "@/lib/canvas-client";
 import {
   AI_LABEL_COPY,
@@ -57,6 +60,13 @@ const nodeTypes = {
 };
 
 const FREE = new Set(["brief", "ref_image", "shot", "final"]);
+
+/** 管线工序是内部节点，LibTV 式画布只铺内容节点。 */
+function visibleFlow(snapshot: CanvasSnapshot): { nodes: CanvasNode[]; edges: CanvasSnapshot["edges"] } {
+  const nodes = snapshot.nodes.filter((node) => FREE.has(node.kind));
+  const ids = new Set(nodes.map((node) => node.id));
+  return { nodes, edges: snapshot.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
+}
 
 const ariaLabelConfig = {
   "node.a11yDescription.default":
@@ -115,10 +125,11 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       selected.add(pendingSelect.current);
       pendingSelect.current = null;
     }
-    const flowNodes = next.nodes.map((node) => toFlowNode(node, positions.get(node.id), selected.has(node.id)));
+    const visible = visibleFlow(next);
+    const flowNodes = visible.nodes.map((node) => toFlowNode(node, positions.get(node.id), selected.has(node.id)));
     nodesRef.current = flowNodes;
     setNodes(flowNodes);
-    setEdges(next.edges.map((edge) => toFlowEdge(edge, busyRef.current)));
+    setEdges(visible.edges.map((edge) => toFlowEdge(edge, busyRef.current)));
     setSelectedIds(flowNodes.filter((node) => node.selected).map((node) => node.id));
   }, []);
 
@@ -196,11 +207,12 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       versionRef.current = snapshot.layout_version;
       docRef.current = snapshot;
       viewportRef.current = snapshot.viewport;
-      const flowNodes = snapshot.nodes.map((node) => toFlowNode(node));
+      const visible = visibleFlow(snapshot);
+      const flowNodes = visible.nodes.map((node) => toFlowNode(node));
       nodesRef.current = flowNodes;
       setDoc(snapshot);
       setNodes(flowNodes);
-      setEdges(snapshot.edges.map((edge) => toFlowEdge(edge, null)));
+      setEdges(visible.edges.map((edge) => toFlowEdge(edge, null)));
       setZoom(snapshot.viewport.zoom);
       lastPersist.current = JSON.stringify({
         positions: Object.fromEntries(
@@ -383,10 +395,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     };
   }, [choosingId, doc, enqueue, projectId, run]);
 
-  function create(kind: "brief" | "ref_image") {
+  function create(kind: "brief" | "ref_image", at?: CanvasPoint) {
     const client = clientRef.current;
     if (!client) return;
-    const position = nextPosition(nodesRef.current);
+    const position = at ?? nextPosition(nodesRef.current);
     const before = new Set((docRef.current?.nodes ?? []).map((node) => node.id));
     void enqueue(async () => {
       const next = await client.createNode({
@@ -406,45 +418,45 @@ export function CanvasStage({ projectId }: { projectId: string }) {
 
   if (!doc || !ready) {
     return (
-      <div className="hilatv-canvas-workspace" data-theme="dark" data-stage="canvas">
+      <div className="hilatv-canvas-workspace" data-theme="dark" data-stage="canvas" data-standalone="true">
         <p className="p-6 text-small text-text-2">正在读取节点</p>
       </div>
     );
   }
 
   return (
-    <div className="hilatv-canvas-workspace" data-theme="dark" data-stage="canvas">
-      <header className="hilatv-canvas-toolbar">
-        <div className="min-w-0">
-          <h1 className="text-h2 font-medium">专家画布</h1>
-          <p className="max-w-lg truncate text-caption text-text-2">{doc.sentence}</p>
+    <div className="hilatv-canvas-workspace" data-theme="dark" data-stage="canvas" data-standalone="true">
+      <header className="hilatv-canvas-topbar">
+        <Link href="/" className="hilatv-canvas-brand" aria-label="HiLatv 首页">
+          {/* 公司标志原样使用：不改色、不拉伸、不加效果 */}
+          <Image src="/brand/mark.svg" alt="" width={20} height={20} aria-hidden="true" />
+          <span className="text-small font-medium text-text-1">HiLatv</span>
+          <span className="hilatv-canvas-brand-sep" aria-hidden="true" />
+          <span className="max-w-sm truncate text-small text-text-2">{doc.sentence || "未命名项目"}</span>
+        </Link>
+        <div className="ml-auto flex items-center gap-3">
+          <p className="tabular text-caption text-text-2">
+            重生次数 <span data-testid="regen-used">{doc.budget.used}</span> / {doc.budget.limit}
+          </p>
+          <Link href={`/projects/${projectId}`} className="hilatv-canvas-back">
+            返回项目
+          </Link>
         </div>
-        <p className="tabular text-small text-text-2">
-          重生次数 <span data-testid="regen-used">{doc.budget.used}</span> / {doc.budget.limit}
-        </p>
         <p data-testid="viewport-zoom" className="tabular text-caption text-text-3">
           {Math.round(zoom * 100)}%
         </p>
         <p data-testid="layout-version" className="sr-only">
           {doc.layout_version}
         </p>
-        <div className="ml-auto flex flex-wrap gap-2">
-          <Button type="button" variant="secondary" onClick={() => create("brief")}>
-            新建文本
-          </Button>
-          <Button type="button" variant="secondary" onClick={() => create("ref_image")}>
-            新建参考图
-          </Button>
-        </div>
-        <p className="w-full text-caption text-text-3">拖动画布平移，滚轮缩放，按住 Shift 框选。方向键移动选中的节点。</p>
         {notice ? (
-          <p role="alert" data-testid="canvas-notice" className="w-full text-caption text-danger">
+          <p role="alert" data-testid="canvas-notice" className="hilatv-canvas-notice">
             {notice}
           </p>
         ) : null}
       </header>
       <div className="hilatv-canvas-body">
         <div className="hilatv-canvas-pane" data-testid="expert-flow">
+          <CanvasToolRail />
           <CanvasActionsProvider value={actions}>
             <ReactFlow
               className="hilatv-canvas"
@@ -489,8 +501,11 @@ export function CanvasStage({ projectId }: { projectId: string }) {
               ariaLabelConfig={ariaLabelConfig}
             >
               <CanvasHotkeys />
-              <Background color="var(--border)" gap={24} size={1} />
-              <Controls showInteractive={false} aria-label="画布控制" />
+              <CanvasAddMenu onCreate={create} />
+              <CanvasZoomPill />
+              <AutoFitView ready={ready} />
+              <Background variant={BackgroundVariant.Dots} color="var(--border-strong)" gap={22} size={1.5} />
+
               <MiniMap
                 pannable
                 zoomable
@@ -503,6 +518,8 @@ export function CanvasStage({ projectId }: { projectId: string }) {
             </ReactFlow>
           </CanvasActionsProvider>
         </div>
+        {selectedIds.length > 0 ? (
+        <div className="hilatv-canvas-inspector-float">
         <Inspector
           doc={doc}
           selectedIds={selectedIds}
@@ -525,6 +542,8 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           }}
           onBrief={(nodeId, text) => actions.changeBrief(nodeId, text)}
         />
+        </div>
+        ) : null}
       </div>
       <TimelineTrack
         doc={doc}
@@ -534,6 +553,40 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         }}
       />
       <p className="sr-only">{AI_LABEL_COPY}</p>
+    </div>
+  );
+}
+
+function AutoFitView({ ready }: { ready: boolean }) {
+  const { fitView } = useReactFlow();
+  const done = useRef(false);
+  useEffect(() => {
+    if (!ready || done.current) return;
+    done.current = true;
+    const timer = window.setTimeout(() => void fitView({ padding: 0.2, duration: 0 }), 240);
+    return () => window.clearTimeout(timer);
+  }, [fitView, ready]);
+  return null;
+}
+
+function CanvasZoomPill() {
+  const { zoomIn, zoomOut, fitView, getZoom } = useReactFlow();
+  const [value, setValue] = useState(Math.round(getZoom() * 100));
+  useEffect(() => {
+    const timer = window.setInterval(() => setValue(Math.round(getZoom() * 100)), 400);
+    return () => window.clearInterval(timer);
+  }, [getZoom]);
+  return (
+    <div className="hilatv-canvas-zoompill" aria-label="画布控制">
+      <button type="button" aria-label="缩小" onClick={() => void zoomOut()}>
+        −
+      </button>
+      <button type="button" aria-label="适配画面" onClick={() => void fitView({ padding: 0.2 })}>
+        {value}%
+      </button>
+      <button type="button" aria-label="放大" onClick={() => void zoomIn()}>
+        ＋
+      </button>
     </div>
   );
 }
