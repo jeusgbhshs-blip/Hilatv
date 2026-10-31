@@ -7,7 +7,7 @@
 | 任务 | 名称 | 依赖 | 状态 | 分支 / PR | 备注 |
 |---|---|---|---|---|---|
 | R2 | 专家画布 P0 后端 | T19 | ✅ | [redesign/r2-canvas-api](https://github.com/jeusgbhshs-blip/Hilatv/pull/69) | 已合并（本机验收：accept-r2 6/6，pytest 全量 638/640，2 项为本机缺 tesseract / ffmpeg 版本差；迁移升/降 SQL 已验证）。head 为 `r02_canvas_0003`。假设见下方 |
-| R3 | 专家画布 P0（整页画布、四类节点、自建连线、时间轴） | R1, R2 | 🔵 | [redesign/r3-expert-canvas](https://github.com/jeusgbhshs-blip/Hilatv/pull/68) | 验收中。已接 R2 真接口（布局/节点/连线/单镜再生/参考图/结构化时间轴）；首页新增「专家画布」入口模块。本机：tsc / eslint / 单测 26 + vitest 22 / build 通过；canvas-demo 1/1。 |
+| R3 | 专家画布 P0（整页画布、四类节点、自建连线、时间轴） | R1, R2 | ✅ | [redesign/r3-expert-canvas](https://github.com/jeusgbhshs-blip/Hilatv/pull/68) | 已合并（本机：tsc / eslint / 单测 26 + vitest 22 / build 通过；canvas-demo 1/1；真实项目验证 layout 持久化与单镜再生 200）。已接 R2 真接口（布局/节点/连线/单镜再生/参考图/结构化时间轴）；首页新增「专家画布」入口模块。本机：tsc / eslint / 单测 26 + vitest 22 / build 通过；canvas-demo 1/1。 |
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
