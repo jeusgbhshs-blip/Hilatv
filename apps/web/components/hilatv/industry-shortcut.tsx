@@ -51,7 +51,7 @@ export function IndustryShortcut({
           : "flex items-center gap-2.5 rounded-md px-3 py-2.5 transition-colors duration-fast md:flex-col md:items-start md:gap-2 md:py-3",
         pressed
           ? variant === "tile"
-            ? "border-blue bg-blue-soft text-text-1"
+            ? "border-blue text-text-1"
             : "border-blue bg-blue-soft text-text-1 ring-1 ring-blue"
           : "border-border text-text-2 hover:border-border-strong hover:text-text-1",
       )}

@@ -122,6 +122,9 @@ test("home generate posts the existing project API", async ({ page }) => {
   await page.getByLabel("素材链接").fill("https://example.com/pump");
   await page.getByRole("button", { name: "添加链接" }).click();
   await page.getByRole("radio", { name: "直接出片" }).check();
+  for (const label of ["比例", "时长", "语言", "品牌资料"]) {
+    await expect(page.getByRole("button", { name: `${label} · 建设中` })).toBeDisabled();
+  }
 
   const created = page.waitForRequest(
     (request) => request.method() === "POST" && new URL(request.url()).pathname === "/v1/projects",
@@ -134,11 +137,17 @@ test("home generate posts the existing project API", async ({ page }) => {
     attachments: { kind: string; filename?: string; uri?: string; upload_id?: string }[];
     aspect_ratio?: string;
     duration_s?: number;
+    language?: string;
+    brand_id?: string;
+    brand_kit?: unknown;
   };
   expect(body.sentence).toBe(sentence);
   expect(body.skip_storyboard).toBe(true);
   expect(body.aspect_ratio).toBeUndefined();
   expect(body.duration_s).toBeUndefined();
+  expect(body.language).toBeUndefined();
+  expect(body.brand_id).toBeUndefined();
+  expect(body.brand_kit).toBeUndefined();
   expect(body.attachments).toEqual(
     expect.arrayContaining([
       expect.objectContaining({ kind: "image", filename: "product.png", upload_id: UPLOAD }),
@@ -266,6 +275,10 @@ test("desktop dark and light home screenshots", async ({ page }) => {
   await page.getByRole("button", { name: "房产案场" }).click();
   await page.locator("#expert-entry").screenshot({
     path: `${SHOTS}/home-desktop-entries.png`,
+    animations: "disabled",
+  });
+  await page.locator("form").screenshot({
+    path: `${SHOTS}/home-desktop-options.png`,
     animations: "disabled",
   });
   await shoot(page, "home-desktop-dark");

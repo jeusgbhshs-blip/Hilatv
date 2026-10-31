@@ -39,10 +39,14 @@ const ICONS: Record<string, LucideIcon> = {
 
 const RISE = ["rise-d5", "rise-d6", "rise-d7", "rise-d8", "rise-d9", "rise-d10", "rise-d11"];
 
-const ASPECTS = ["自动", "16:9", "9:16", "1:1"] as const;
-const DURATIONS = ["15 秒", "30 秒", "45 秒", "60 秒"] as const;
-const LANGUAGES = ["中文", "English"] as const;
-const BRANDS = ["自动", "不套用"] as const;
+/**
+ * CreateProject (apps/api) accepts sentence, attachments, skip_storyboard,
+ * brand_kit, brand_id, and concept_selection. It rejects any other field.
+ * Aspect, duration, and language are not on that schema. brand_id is an id,
+ * not the 「自动 / 不套用」 switch, and there is no field for “don’t apply”.
+ * Those four chips stay visible but cannot be chosen.
+ */
+const FROZEN_OPTIONS = ["比例", "时长", "语言", "品牌资料"] as const;
 
 type PickedFile = { id: string; file: File; preview: string | null };
 type LinkItem = { id: string; uri: string };
@@ -85,75 +89,15 @@ function useTypewriter(paused: boolean) {
   return { line, alive };
 }
 
-function OptionChip<T extends string>({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string;
-  value: T;
-  options: readonly T[];
-  onChange: (next: T) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onPointer(event: PointerEvent) {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
-    }
-    function onKey(event: KeyboardEvent) {
-      if (event.key === "Escape") setOpen(false);
-    }
-    window.addEventListener("pointerdown", onPointer);
-    window.addEventListener("keydown", onKey);
-    return () => {
-      window.removeEventListener("pointerdown", onPointer);
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
+function FrozenOption({ label }: { label: string }) {
   return (
-    <div ref={root} className="relative">
-      <button
-        type="button"
-        aria-expanded={open}
-        aria-haspopup="listbox"
-        className="inline-flex min-h-11 items-center rounded-full border border-border px-3 text-caption text-text-2 hover:border-border-strong hover:text-text-1 md:min-h-7"
-        onClick={() => setOpen((current) => !current)}
-      >
-        {label} · {value}
-      </button>
-      {open ? (
-        <ul
-          role="listbox"
-          aria-label={label}
-          className="absolute bottom-full left-0 z-20 mb-1 min-w-full rounded-sm border border-border-strong bg-raised p-1 shadow-pop"
-        >
-          {options.map((option) => (
-            <li key={option}>
-              <button
-                type="button"
-                role="option"
-                aria-selected={option === value}
-                className={cn(
-                  "flex min-h-11 w-full items-center rounded-sm px-3 text-left text-small md:min-h-8",
-                  option === value ? "bg-hover text-text-1" : "text-text-2 hover:bg-hover hover:text-text-1",
-                )}
-                onClick={() => {
-                  onChange(option);
-                  setOpen(false);
-                }}
-              >
-                {option}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
+    <button
+      type="button"
+      disabled
+      className="inline-flex min-h-11 cursor-not-allowed items-center rounded-full border border-border px-3 text-caption text-text-disabled md:min-h-7"
+    >
+      {label} · 建设中
+    </button>
   );
 }
 
@@ -170,10 +114,6 @@ export function HomeStudio() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [skipStoryboard, setSkipStoryboard] = useState(false);
-  const [aspect, setAspect] = useState<(typeof ASPECTS)[number]>("自动");
-  const [duration, setDuration] = useState<(typeof DURATIONS)[number]>("30 秒");
-  const [language, setLanguage] = useState<(typeof LANGUAGES)[number]>("中文");
-  const [brand, setBrand] = useState<(typeof BRANDS)[number]>("自动");
   const typed = sentence.trim().length > 0;
   const placeholder = useTypewriter(typed);
   filesRef.current = files;
@@ -404,11 +344,10 @@ export function HomeStudio() {
               ) : null}
 
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-                <div className="flex flex-wrap gap-2">
-                  <OptionChip label="比例" value={aspect} options={ASPECTS} onChange={setAspect} />
-                  <OptionChip label="时长" value={duration} options={DURATIONS} onChange={setDuration} />
-                  <OptionChip label="语言" value={language} options={LANGUAGES} onChange={setLanguage} />
-                  <OptionChip label="品牌资料" value={brand} options={BRANDS} onChange={setBrand} />
+                <div className="flex flex-wrap gap-2" aria-label="生成选项">
+                  {FROZEN_OPTIONS.map((label) => (
+                    <FrozenOption key={label} label={label} />
+                  ))}
                 </div>
                 <Button
                   type="submit"
