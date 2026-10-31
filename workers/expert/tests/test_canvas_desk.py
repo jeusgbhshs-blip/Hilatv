@@ -119,3 +119,25 @@ def test_timeline_rejects_a_false_ai_label_and_a_trim_past_the_media(tmp_path, m
             },
         )
     assert saved["canvas"]["timeline"]["edit"]["clips"][0]["out_s"] == 0.6
+
+
+def test_timeline_accepts_a_shot_without_candidates(tmp_path, monkeypatch) -> None:
+    """片尾这类没有候选画面的镜头按分镜时长校验，保留成固定段。"""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    enterprise = "00000000-0000-4000-8000-000000000001"
+    init_project("fixed", sentence="一句", status="completed", enterprise_id=enterprise)
+    save_node("fixed", "n05_storyboard", {"script": storyboard(shot(duration_s=6.0))})
+    saved = save_structured_timeline(
+        "fixed",
+        {"clips": [{"shot_id": "S01", "candidate_id": "S01", "in_s": 0.5, "out_s": 5.5}]},
+    )
+    assert saved["ai_label"] is True
+    assert saved["canvas"]["timeline"]["edit"]["clips"][0]["out_s"] == 5.5
+    with pytest.raises(GateError, match="超出") as too_long:
+        save_structured_timeline(
+            "fixed",
+            {"clips": [{"shot_id": "S01", "candidate_id": "S01", "in_s": 0, "out_s": 9}]},
+        )
+    assert too_long.value.status == 422

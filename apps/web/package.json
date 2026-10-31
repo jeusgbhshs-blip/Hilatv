@@ -33,10 +33,6 @@
     "eslint-config-next": "15.5.28",
     "tailwindcss": "^4",
     "typescript": "^5",
-<<<<<<< HEAD
-    "vitest": "^3.2.4"
-=======
     "vitest": "^3.2.7"
->>>>>>> e8eb516 (R3 画布接上现有选用、重跑和时间轴)
   }
 }
