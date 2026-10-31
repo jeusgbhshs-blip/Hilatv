@@ -36,6 +36,7 @@ import {
   type FlowData,
 } from "@/components/canvas/nodes";
 import { TimelineTrack } from "@/components/canvas/timeline-track";
+import { SharePanel } from "@/components/share/share-panel";
 import { createCanvasClient, type CanvasClient } from "@/lib/canvas-client";
 import {
   addGroup,
@@ -669,6 +670,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           <p className="tabular text-caption text-text-2">
             重生次数 <span data-testid="regen-used">{doc.budget.used}</span> / {doc.budget.limit}
           </p>
+          <SharePanel projectId={projectId} />
           <Link href={`/projects/${projectId}`} className="hilatv-canvas-back">
             返回项目
           </Link>

@@ -52,6 +52,17 @@ export function ProjectsIndex() {
     void load();
   }, []);
 
+  async function copyProject(projectId: string) {
+    try {
+      const response = await apiFetch(`/v1/projects/${projectId}/copy`, { method: "POST" });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const created = (await response.json()) as { project_id?: string };
+      if (created.project_id) router.push(`/projects/${created.project_id}/expert`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "复制没有成功");
+    }
+  }
+
   async function createBlank() {
     setBusy(true);
     setError(null);
@@ -122,6 +133,13 @@ export function ProjectsIndex() {
                 >
                   项目进度
                 </Link>
+                <button
+                  type="button"
+                  className="inline-flex min-h-10 items-center rounded-full px-3 text-caption text-text-2 hover:bg-hover hover:text-text-1"
+                  onClick={() => void copyProject(row.project_id)}
+                >
+                  复制项目
+                </button>
               </div>
             </li>
           ))}

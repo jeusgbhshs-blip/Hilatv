@@ -16,7 +16,9 @@ from app.identity import router as identity_router
 from app.logging import log_event
 from app.projects import router
 from app.settings import get_settings
+from app.shares import router as share_router
 from app.templates import router as template_router
+from app.usage import router as usage_router
 from workers.identity.session import assert_live_session_configured
 from workers.workflow.runtime import shutdown_runtime
 
@@ -56,6 +58,8 @@ app.include_router(delivery_router)
 app.include_router(expert_router)
 app.include_router(assets_router)
 app.include_router(template_router)
+app.include_router(share_router)
+app.include_router(usage_router)
 
 
 @app.middleware("http")
