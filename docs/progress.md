@@ -6,6 +6,7 @@
 
 | 任务 | 名称 | 依赖 | 状态 | 分支 / PR | 备注 |
 |---|---|---|---|---|---|
+| R2 | 专家画布 P0 后端 | T19 | 🔵 | redesign/r2-canvas-api | 验收中。画布位置、连线、单镜再生、结构化时间轴。head 改为 `r02_canvas_0003`。假设见下方 |
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
@@ -79,6 +80,11 @@
 - 正在做什么：
 - 需要提供什么：
 -->
+
+### 2026-10-31
+- 合并了哪些：还没有。R2 只开 PR，不合并。
+- 正在做什么：专家画布 P0 后端。位置、视口、用户节点和连线写入项目 `canvas.json`；单镜再生只跑关键帧和视频；结构化时间轴不重编码。无 Key，`HILATV_LIVE` 关闭。外部模型走现有 mock。
+- 需要提供什么：无。不新增厂商 Key。
 
 ### 2026-10-30
 - 正在做什么：T21-F1 画面切点对齐。已并入 main `c551c3d`（#56 会话企业、#57 预算预检、#58 N16 终审）。N16 的分镜窗口用时间线上对齐后的时长。无 Key，`HILATV_LIVE` 关闭。
@@ -197,6 +203,15 @@
 - 授权记录只用 main 上 N12 的 `LicenseRecord` / `LicensingSummary`（`workers/nodes/n12_music/schema.py`），没有第二套类。T20 只把 `kind` 扩成也包含 `font` 和 `voice`，给字体和库存旁白用。缺来源、许可、证明、到期或使用范围时，沿用 N12 的 `incomplete_reason` 阻断。`expires_on` 为 `none` 表示不到期；ISO 日期早于今天（上海时区，当天仍有效）也阻断。`HILATV_LIVE=1` 时拒绝 `hilatv-test-` 来源和 `CC0-1.0` 测试曲库许可，与 N12 相同。
 - 素材说明写在项目目录 `compliance/materials-and-licences.txt`，路径由服务端生成。客户给的绝对路径必须落在项目目录内。http(s) 证明默认只做 SSRF 分类，不下载；`HILATV_FETCH_LICENCE_PROOF=1` 时才经 SEC-01 的 `fetch_bytes` 拉取。
 - 不新增 Alembic revision，head 仍是 `t03_gateway_0002`。备案登记和私有化部署不在本任务。
+
+## R2 假设
+
+- 运行中的画布以项目目录 `canvas.json` 为准，和现有 checkpoint 一样，刷新靠 GET `/canvas`。`HILATV_CANVAS_DB=1` 且 `DATABASE_URL` 可用时，再同步到 Postgres 表 `canvas_documents`（revision `r02_canvas_0003`，可升可降）。默认关闭，无库的 CI 不连数据库。权威读路径不经过这张表。
+- 不改 `rerun_span`、`select_candidate`、`save_timeline`、`reserve`、`invoke_node`。单镜再生另走新函数，账本仍是 `open_project_budget.try_take_n`。上游文本、旁白和参考图 id 从现有 `prompt_suffix` 进入 N8/N10，不改节点入参。其他镜头的候选行在保存前用再生前的副本盖回去，避免现有评审把别的镜头重写进返回值。
+- 新候选在写入前把 `visual_reviewed` 置为 false。请求里的 `qa_passed` / `visual_reviewed` 不读取。选用仍走原来的 `POST .../expert/select`，未评审不会变成通过。
+- 结构化时间轴只保存镜头顺序和入出点，不调用 N15，不改成片文件。原 `POST .../expert/timeline` 仍负责叠层和重编码。`ai_label` 以及 `omit_ai_label` 一类字段出现在请求里就拒绝。成片节点上的 `ai_label` 固定为 true。
+- 画面上的字、Logo、价格、电话仍只由后期叠加。再生提示词沿用节点里的无文字约束。测试图是 1×1 的程序像素，不是客户照片。
+- Alembic head 从 `t03_gateway_0002` 改为 `r02_canvas_0003`。`call_logs` / `alerts` 仍由 `t03` 创建。
 
 ## T19 假设
 

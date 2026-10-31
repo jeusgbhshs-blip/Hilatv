@@ -382,6 +382,33 @@ def read_events(project_id: str, offset: int = 0) -> list[dict[str, Any]]:
     return found
 
 
+_PROJECT_JSON = frozenset({"canvas.json"})
+
+
+def read_project_json(project_id: str, name: str) -> dict[str, Any] | None:
+    """Read one extra JSON document under the project directory."""
+
+    if name not in _PROJECT_JSON or not valid_project_id(project_id):
+        return None
+    path = project_root() / project_id / name
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else None
+
+
+def write_project_json(project_id: str, name: str, payload: dict[str, Any]) -> None:
+    """Atomically replace one extra JSON document. Callers may already hold the lock."""
+
+    if name not in _PROJECT_JSON:
+        raise ValueError("unsupported project file")
+    if not valid_project_id(project_id):
+        raise ValueError("invalid project id")
+    text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    with _lock(project_id) as directory:
+        _atomic_text(directory / name, text)
+
+
 def save_node(project_id: str, node: str, patch: dict[str, Any]) -> None:
     if node not in PIPELINE:
         raise ValueError(f"unknown node {node}")

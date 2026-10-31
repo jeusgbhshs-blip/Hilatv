@@ -77,6 +77,34 @@ def _billable(node: str, shots: list[dict[str, Any]], shot_id: str | None) -> in
     return count
 
 
+def picture_regen_cost(shots: list[dict[str, Any]] | None, shot_id: str) -> int:
+    """Keyframe plus video for one shot. Downstream nodes are not included."""
+
+    if shots is None:
+        rows = [{"shot_id": shot_id}]
+    else:
+        rows = [item for item in shots if item.get("shot_id") == shot_id]
+        if not rows:
+            rows = [{"shot_id": shot_id}]
+    return _billable("n08_keyframe", rows, None) + _billable("n10_video", rows, None)
+
+
+def reserve_picture(
+    project_id: str,
+    shots: list[dict[str, Any]] | None,
+    shot_id: str,
+) -> int:
+    """Charge the shared ledger for one shot's picture only."""
+
+    count = picture_regen_cost(shots, shot_id)
+    if count == 0:
+        return 0
+    budget = open_project_budget(project_id)
+    if not budget.try_take_n(count):
+        raise BudgetExhausted(project_id, budget.used, budget.limit)
+    return count
+
+
 def reserve(
     project_id: str,
     start: str,

@@ -62,7 +62,7 @@ def build_canvas(project_id: str) -> dict[str, Any]:
     videos = _candidates(state.get("videos"))
     budget = open_project_budget(project_id)
     shots = _shots(state, keyframes, videos, project_id)
-    return {
+    body = {
         "project_id": project_id,
         "sentence": snapshot.get("sentence") or "",
         "status": snapshot.get("status") or "",
@@ -85,6 +85,9 @@ def build_canvas(project_id: str) -> dict[str, Any]:
         "timeline": _timeline_view(project_id, state),
         "master": _master(keyframes, videos, snapshot),
     }
+    from workers.expert.desk import extend_canvas
+
+    return extend_canvas(project_id, state, snapshot, body)
 
 
 def media_file(project_id: str, candidate_id: str) -> Path | None:
