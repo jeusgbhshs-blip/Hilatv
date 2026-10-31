@@ -8,6 +8,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.assets import router as assets_router
 from app.brands import router as brand_router
 from app.deliveries import router as delivery_router
 from app.expert import router as expert_router
@@ -15,6 +16,7 @@ from app.identity import router as identity_router
 from app.logging import log_event
 from app.projects import router
 from app.settings import get_settings
+from app.templates import router as template_router
 from workers.identity.session import assert_live_session_configured
 from workers.workflow.runtime import shutdown_runtime
 
@@ -52,6 +54,8 @@ app.include_router(router)
 app.include_router(brand_router)
 app.include_router(delivery_router)
 app.include_router(expert_router)
+app.include_router(assets_router)
+app.include_router(template_router)
 
 
 @app.middleware("http")
