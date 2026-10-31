@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { CinematicWash } from "@/components/hilatv/cinematic-wash";
+import { CanvasEntry } from "@/components/hilatv/canvas-entry";
 import { FlowSteps } from "@/components/hilatv/flow-steps";
 import { IndustryShortcut } from "@/components/hilatv/industry-shortcut";
 import { Button } from "@/components/ui/button";
@@ -210,6 +211,8 @@ export function HomeStudio() {
       if (!response.ok) throw new Error(await errorMessage(response));
       const created = (await response.json()) as { project_id?: string };
       if (!created.project_id) throw new Error("没有拿到项目编号");
+      // 首页的「专家画布」模块靠这个编号直接进画布。
+      window.localStorage.setItem("hilatv.lastProject", created.project_id);
       const path =
         destination === "expert"
           ? `/projects/${created.project_id}/expert`
@@ -501,6 +504,7 @@ export function HomeStudio() {
           </div>
         </div>
       </section>
+      <CanvasEntry />
       <FlowSteps />
       <footer className="border-t border-border px-4 py-6 text-center text-caption text-text-3">
         © 2026 HiLatv · 一句成片

@@ -68,6 +68,22 @@ def save_structured_timeline(project_id: str, body: dict[str, Any]) -> dict[str,
             seen.add(clip.shot_id)
             if clip.out_s <= clip.in_s:
                 raise GateError("出点必须晚于入点")
+            if not _has_picture(state, clip.shot_id):
+                # 没有候选画面的镜头（例如片尾合成段）：按分镜时长校验，保留为固定段。
+                fixed = _shot_duration(state, clip.shot_id) or 0
+                if fixed <= 0:
+                    raise GateError("无法确认素材时长")
+                if clip.out_s > fixed + _EPSILON:
+                    raise GateError("入点出点超出素材时长")
+                saved.append(
+                    SavedClip(
+                        shot_id=clip.shot_id,
+                        candidate_id=clip.candidate_id,
+                        in_s=clip.in_s,
+                        out_s=clip.out_s,
+                    )
+                )
+                continue
             candidate = _candidate(state, clip.shot_id, clip.candidate_id)
             if content_blocked(candidate.qa):
                 raise GateError("内容安全硬伤不能进入成片")
@@ -105,6 +121,14 @@ def save_structured_timeline(project_id: str, body: dict[str, Any]) -> dict[str,
 
     saved_body["canvas"] = build_canvas(project_id)
     return saved_body
+
+
+def _has_picture(state: dict[str, Any], shot_id: str) -> bool:
+    for key in ("keyframes", "videos"):
+        for raw in state.get(key) or []:
+            if isinstance(raw, dict) and raw.get("shot_id") == shot_id:
+                return True
+    return False
 
 
 def _candidate(state: dict[str, Any], shot_id: str, candidate_id: str) -> Candidate:

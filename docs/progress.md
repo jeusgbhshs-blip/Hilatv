@@ -7,6 +7,7 @@
 | 任务 | 名称 | 依赖 | 状态 | 分支 / PR | 备注 |
 |---|---|---|---|---|---|
 | R2 | 专家画布 P0 后端 | T19 | ✅ | [redesign/r2-canvas-api](https://github.com/jeusgbhshs-blip/Hilatv/pull/69) | 已合并（本机验收：accept-r2 6/6，pytest 全量 638/640，2 项为本机缺 tesseract / ffmpeg 版本差；迁移升/降 SQL 已验证）。head 为 `r02_canvas_0003`。假设见下方 |
+| R3 | 专家画布 P0（整页画布、四类节点、自建连线、时间轴） | R1, R2 | 🔵 | [redesign/r3-expert-canvas](https://github.com/jeusgbhshs-blip/Hilatv/pull/68) | 验收中。已接 R2 真接口（布局/节点/连线/单镜再生/参考图/结构化时间轴）；首页新增「专家画布」入口模块。本机：tsc / eslint / 单测 26 + vitest 22 / build 通过；canvas-demo 1/1。 |
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
@@ -86,6 +87,11 @@
 - 合并了哪些：无（等验收）。R1、R2 都以 PR 形式等待合并。
 - 正在做什么：R1 首页、导航壳和设计令牌（`redesign/r1-home-shell`）；R2 专家画布 P0 后端（`redesign/r2-canvas-api`）：位置、视口、用户节点和连线写入项目 `canvas.json`，单镜再生只跑关键帧和视频，结构化时间轴不重编码。R1 的行业入口改为与输入框对齐的等宽网格（桌面 7 列，390 宽 2 列）。`HILATV_LIVE` 关闭，只走 mock。专家画布前端留给 R3。
 - 需要提供什么：无。不新增厂商 Key。积分余额还没有接口，顶栏显示「—」，不写虚构数字。
+### 2026-10-31 合并与 R3 接入
+- 合并了哪些：R2 #69（60e239d）、R1 #67（5c80822）已进 main（4590386）。R3 待合。
+- 正在做什么：R3 画布接 R2 真接口，并用真实项目验证：拖动镜头 → `PUT /canvas/layout` 200 且刷新后位置仍在；「再生这一镜」→ `POST /shots/{id}/regenerate` 200。修掉两个真实问题：完成态项目打开画布白屏（老时间轴 clip 没有 in_s/out_s，undefined.toFixed 崩）；没有候选画面的镜头（片尾合成段）保存时间轴 404 → 现在按分镜时长校验成固定段。首页新增「专家画布」入口模块，生成过后直接进该项目画布。
+- 需要提供什么：无。`HILATV_LIVE` 保持关闭，全部走 mock。
+
 
 ### 2026-10-30
 - 正在做什么：T21-F1 画面切点对齐。已并入 main `c551c3d`（#56 会话企业、#57 预算预检、#58 N16 终审）。N16 的分镜窗口用时间线上对齐后的时长。无 Key，`HILATV_LIVE` 关闭。

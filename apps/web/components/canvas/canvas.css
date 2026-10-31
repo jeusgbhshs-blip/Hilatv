@@ -1,0 +1,187 @@
+/* 专家画布局部样式。颜色只用 globals.css 里的 token，不新增设计令牌。 */
+
+.hilatv-canvas-workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: -24px -16px -96px;
+  height: calc(100dvh - 52px - 56px);
+  background: var(--stage);
+  color: var(--text-1);
+}
+
+.hilatv-canvas-toolbar,
+.hilatv-timeline,
+.hilatv-inspector {
+  background: var(--surface);
+}
+
+.hilatv-canvas-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 12px 16px;
+}
+
+.hilatv-canvas-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+.hilatv-canvas-pane {
+  position: relative;
+  min-width: 0;
+  min-height: 240px;
+  flex: 1;
+  background: var(--stage);
+}
+
+.hilatv-canvas-pane .hilatv-canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.hilatv-inspector {
+  width: 100%;
+  max-height: 280px;
+  overflow: auto;
+  border-top: 1px solid var(--border);
+  padding: 16px;
+}
+
+.hilatv-timeline {
+  border-top: 1px solid var(--border);
+  background: var(--stage);
+  padding: 12px 16px 16px;
+}
+
+.hilatv-track {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+}
+
+.hilatv-clip {
+  display: flex;
+  height: 64px;
+  min-width: 96px;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--raised);
+}
+
+.hilatv-trim {
+  width: 14px;
+  flex: 0 0 auto;
+  border: 0;
+  background: var(--hover);
+  touch-action: none;
+  cursor: ew-resize;
+}
+
+.hilatv-clip-body {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 8px;
+  touch-action: none;
+  cursor: grab;
+}
+
+@media (min-width: 768px) {
+  .hilatv-canvas-workspace {
+    margin: -32px -24px -40px;
+    height: calc(100dvh - 60px);
+  }
+}
+
+@media (min-width: 1024px) {
+  .hilatv-canvas-body {
+    flex-direction: row;
+  }
+
+  .hilatv-inspector {
+    width: 372px;
+    max-height: none;
+    flex-shrink: 0;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+}
+
+.hilatv-canvas .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+
+.hilatv-canvas .react-flow__controls-button {
+  width: 28px;
+  height: 28px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  fill: var(--text-1);
+}
+
+.hilatv-canvas .react-flow__controls-button:hover {
+  background: var(--hover);
+}
+
+.hilatv-canvas .react-flow__minimap {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.hilatv-canvas .react-flow__edge-path {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.hilatv-canvas .react-flow__edge.hilatv-edge-running .react-flow__edge-path {
+  stroke: var(--blue);
+}
+
+.hilatv-canvas .react-flow__selection,
+.hilatv-canvas .react-flow__nodesselection-rect {
+  border: 1px solid var(--blue);
+  background: var(--blue-soft);
+}
+
+.hilatv-canvas .react-flow__handle {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--surface);
+  border-radius: 999px;
+  background: var(--border-strong);
+}
+
+.hilatv-canvas .react-flow__handle-connecting {
+  background: var(--blue);
+}
+
+.hilatv-canvas .react-flow__handle-valid {
+  background: var(--success);
+}
+
+.hilatv-canvas .react-flow__attribution {
+  background: transparent;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.hilatv-canvas .react-flow__edge-textbg {
+  fill: var(--surface);
+}
