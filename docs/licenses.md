@@ -47,6 +47,7 @@
 | shadcn/ui | 组件源码在 `apps/web/components/ui` | MIT | 按钮、输入、文本域、标签、卡片、徽章。不是运行时依赖 |
 | Playwright | 1.x（`@playwright/test`） | Apache-2.0 | T11 桌面与手机视口 E2E |
 | @xyflow/react | 12.8.6 | MIT | T19 专家模式节点画布。界面是自写节点，不用第三方画布素材 |
+| Vitest | 3.2.7 | MIT | 专家画布契约与 mock 的单元测试（开发依赖） |
 | Noto Sans SC（思源黑体简体，网页子集） | google/fonts `ofl/notosanssc/NotoSansSC[wght].ttf`，固定为 400 / 500 两个字重，子集为 GB2312 一级汉字 + 符号区 + ASCII + 界面用到的全部字符：`apps/web/public/fonts/NotoSansSC-Regular-subset.woff2`、`NotoSansSC-Medium-subset.woff2`（共约 1.3 MB） | SIL OFL 1.1（同目录 `OFL.txt`） | UI-01 网页界面字体，`next/font/local` 自托管，不从 Google Fonts 在线加载。版权归 Adobe 与 Noto CJK 项目，保留字体名。子集用 fontTools（MIT，仅开发时使用，不进仓库依赖）生成 |
 
 尚未引入、因此未登记：Remotion、厂商模型 SDK、boto3、MinIO Python SDK、librosa。对象存储走自写的 SigV4 HTTP 客户端。
