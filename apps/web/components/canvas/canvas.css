@@ -185,3 +185,223 @@
 .hilatv-canvas .react-flow__edge-textbg {
   fill: var(--surface);
 }
+
+/* LibTV 式工作台外壳：返回按钮、左侧竖工具栏、双击添加节点面板。 */
+.hilatv-canvas-back {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  padding: 0 14px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+
+.hilatv-canvas-back:hover {
+  border-color: var(--text-3);
+}
+
+.hilatv-canvas-rail {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  z-index: 10;
+  display: flex;
+  transform: translateY(-50%);
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 6px;
+}
+
+.hilatv-canvas-rail-btn {
+  display: flex;
+  width: 52px;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  border-radius: 8px;
+  padding: 8px 0;
+  font-size: 11px;
+  color: var(--text-2);
+}
+
+.hilatv-canvas-rail-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text-1);
+}
+
+.hilatv-canvas-rail-btn:disabled {
+  cursor: not-allowed;
+  color: var(--text-disabled);
+}
+
+.hilatv-canvas-rail-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border);
+}
+
+.hilatv-canvas-addmenu {
+  position: fixed;
+  z-index: 60;
+  width: 240px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 8px;
+}
+
+.hilatv-canvas-addmenu-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  padding: 8px;
+  color: var(--text-1);
+}
+
+.hilatv-canvas-addmenu-row:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.hilatv-canvas-addmenu-row:disabled {
+  cursor: not-allowed;
+  color: var(--text-disabled);
+}
+
+/* 独立工作台：没有应用侧栏时自己占满窗口。 */
+.hilatv-canvas-workspace[data-standalone="true"] {
+  margin: 0;
+  height: 100dvh;
+}
+
+/* LibTV 式顶栏：品牌 + 项目名 + 积分/返回；不再放大标题。 */
+.hilatv-canvas-topbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 56px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--stage);
+  padding: 0 16px;
+}
+
+.hilatv-canvas-brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.hilatv-canvas-brand-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border-strong);
+}
+
+.hilatv-canvas-notice {
+  position: absolute;
+  left: 50%;
+  top: 64px;
+  z-index: 30;
+  transform: translateX(-50%);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  background: var(--raised);
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--danger);
+}
+
+/* 左侧工具条：图标按钮，第一项是主操作。 */
+.hilatv-canvas-rail-btn {
+  width: 44px;
+  padding: 10px 0;
+}
+
+.hilatv-canvas-rail-primary {
+  background: var(--blue);
+  color: var(--paper);
+}
+
+.hilatv-canvas-rail-primary:hover:not(:disabled) {
+  background: var(--blue-hover);
+  color: var(--paper);
+}
+
+.hilatv-canvas-addmenu-icon {
+  display: inline-flex;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--text-1);
+}
+
+.hilatv-canvas-addmenu-sep {
+  height: 1px;
+  margin: 6px 4px;
+  background: var(--border);
+}
+
+.hilatv-canvas-zoompill {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  padding: 4px;
+}
+
+.hilatv-canvas-zoompill button {
+  min-width: 32px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+
+.hilatv-canvas-zoompill button:hover {
+  background: var(--hover);
+  color: var(--text-1);
+}
+
+/* 检查器改成右侧浮层，只在选中节点时出现（LibTV 没有常驻面板）。 */
+.hilatv-canvas-body {
+  position: relative;
+}
+
+.hilatv-canvas-inspector-float {
+  position: absolute;
+  right: 16px;
+  top: 16px;
+  bottom: 16px;
+  z-index: 15;
+  width: 340px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.hilatv-canvas-inspector-float .hilatv-inspector {
+  width: 100%;
+  max-height: none;
+  border: 0;
+  background: transparent;
+}
