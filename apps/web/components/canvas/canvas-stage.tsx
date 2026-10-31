@@ -136,6 +136,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const [toolboxOpen, setToolboxOpen] = useState(false);
   const [groups, setGroups] = useState<ToolboxGroup[]>([]);
   const [groupName, setGroupName] = useState("");
+  const [filmRunning, setFilmRunning] = useState(false);
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentText, setAgentText] = useState("");
+  const pollRef = useRef<number>(0);
   const [scriptText, setScriptText] = useState("");
   const [scriptBusy, setScriptBusy] = useState(false);
 
@@ -247,6 +251,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     return () => {
       cancel = true;
       window.clearTimeout(timerRef.current);
+      window.clearInterval(pollRef.current);
     };
   }, [projectId]);
 
@@ -372,9 +377,56 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     [enqueue],
   );
 
+  const beginPolling = useCallback(
+    (client: CanvasClient) => {
+      window.clearInterval(pollRef.current);
+      pollRef.current = window.setInterval(async () => {
+        try {
+          const next = await client.load();
+          versionRef.current = next.layout_version;
+          docRef.current = next;
+          setDoc(next);
+          syncFlow(next);
+          const status = next.status ?? "";
+          if (status && status !== "running") {
+            window.clearInterval(pollRef.current);
+            setFilmRunning(false);
+            setNotice(
+              status === "completed"
+                ? "成片出来了"
+                : status === "needs_human_review"
+                  ? "画面需要你确认后再放行"
+                  : "已停止",
+            );
+          }
+        } catch {
+          // 网络抖一下不影响出片
+        }
+      }, 6000);
+    },
+    [syncFlow],
+  );
+
   const actions = useMemo<CanvasActions>(() => {
     return {
       doc: doc ?? emptyDoc(projectId),
+      startFilm: async (sentence: string) => {
+        const client = clientRef.current;
+        if (!client) return;
+        await client.startFilm(sentence);
+        setAgentOpen(false);
+        setFilmRunning(true);
+        setNotice("AI 开始出片，约 1–2 分钟");
+        beginPolling(client);
+      },
+      releaseFilm: async () => {
+        const client = clientRef.current;
+        if (!client) return;
+        await client.releaseFilm();
+        setFilmRunning(true);
+        setNotice("已放行，正在合成成片");
+        beginPolling(client);
+      },
       saveGroup: (name: string) => {
         const current = docRef.current;
         if (!current) return;
@@ -557,7 +609,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         });
       },
     };
-  }, [choosingId, doc, enqueue, groups.length, projectId, run, selectedIds]);
+  }, [beginPolling, choosingId, doc, enqueue, groups.length, projectId, run, selectedIds]);
 
   function create(
     kind: "brief" | "ref_image" | "image" | "video" | "script" | "audio",
@@ -607,6 +659,12 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           <span className="hilatv-canvas-brand-sep" aria-hidden="true" />
           <span className="max-w-sm truncate text-small text-text-2">{doc.sentence || "未命名项目"}</span>
         </Link>
+        {filmRunning ? <p className="hilatv-canvas-running">AI 正在出片…</p> : null}
+        {doc.status === "needs_human_review" ? (
+          <button type="button" className="hilatv-canvas-release" onClick={() => void actions.releaseFilm()}>
+            人工放行，继续出片
+          </button>
+        ) : null}
         <div className="ml-auto flex items-center gap-3">
           <p className="tabular text-caption text-text-2">
             重生次数 <span data-testid="regen-used">{doc.budget.used}</span> / {doc.budget.limit}
@@ -633,6 +691,45 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           {isEmpty ? (
             <div className="hilatv-canvas-empty" data-testid="canvas-empty">
               <p className="hilatv-canvas-empty-hint">双击画布，自由生成节点</p>
+              {agentOpen ? (
+                <div className="hilatv-canvas-empty-compose" role="dialog" aria-label="一句话出整条片">
+                  <label className="text-caption text-text-3" htmlFor="canvas-agent">
+                    或者让 AI 一句话跑完整条片（会先生成分镜，再逐镜出画面）
+                  </label>
+                  <textarea
+                    id="canvas-agent"
+                    value={agentText}
+                    onChange={(event) => setAgentText(event.target.value)}
+                    placeholder="例如：给高压球阀做一条 15 秒产品宣传片，面向采购，风格稳重"
+                    className="min-h-24 rounded-sm border border-border bg-raised px-2 py-2 text-small text-text-1"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex min-h-10 items-center rounded-full border border-blue px-4 text-small text-text-1 hover:bg-blue-soft disabled:cursor-not-allowed disabled:text-text-disabled"
+                      disabled={!agentText.trim()}
+                      onClick={() => void actions.startFilm(agentText)}
+                    >
+                      开始出片
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex min-h-10 items-center rounded-full px-3 text-small text-text-2 hover:bg-hover hover:text-text-1"
+                      onClick={() => setAgentOpen(false)}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="hilatv-canvas-empty-agent"
+                  onClick={() => setAgentOpen(true)}
+                >
+                  ✦ 一句话出整条片（AI 自动搭工作流）
+                </button>
+              )}
               <div className="hilatv-canvas-empty-actions">
                 <button type="button" className="hilatv-canvas-empty-card" onClick={() => create("brief")}>
                   <TextCursorInput aria-hidden="true" className="size-5" strokeWidth={1.5} />

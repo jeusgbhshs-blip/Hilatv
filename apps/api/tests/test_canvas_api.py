@@ -496,3 +496,28 @@ def test_audio_node_generates_music_on_the_canvas(tmp_path, monkeypatch) -> None
     assert len(node["data"]["candidates"]) == 1
     assert node["data"]["candidates"][0]["kind"] == "audio"
     assert node["data"]["candidates"][0]["verdict"] == "unreviewed"
+
+
+def test_agent_entry_runs_the_whole_film_on_an_existing_canvas(tmp_path, monkeypatch) -> None:
+    """Agent 入口：空白画布上直接开跑整条片，项目状态变 running。"""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.setenv("HILATV_TEMPORAL_MODE", "embedded")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    ident = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+    project_id = client.post("/v1/projects/blank", json={"sentence": ""}).json()["project_id"]
+
+    async def fake_start(**kwargs) -> str:
+        assert kwargs["project_id"] == project_id
+        assert kwargs["sentence"] == "给高压球阀做一条 15 秒产品宣传片，面向采购"
+        return "wf-test"
+
+    monkeypatch.setattr("app.projects.start_film", fake_start)
+    started = client.post(
+        f"/v1/projects/{project_id}/film/start",
+        json={"sentence": "给高压球阀做一条 15 秒产品宣传片，面向采购"},
+    )
+    assert started.status_code == 202, started.text
+    assert started.json()["workflow_id"] == "wf-test"

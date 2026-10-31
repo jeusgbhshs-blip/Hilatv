@@ -469,6 +469,41 @@ def list_projects(identity: Identity = Depends(require_identity)) -> dict[str, A
     return {"projects": rows[:50]}
 
 
+class FilmStart(BaseModel):
+    """Agent 入口：在已有项目（通常是空白画布）上直接跑完整条片。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str = Field(default="", max_length=4000)
+
+
+@router.post("/v1/projects/{project_id}/film/start")
+async def start_film_on_project(
+    project_id: str,
+    body: FilmStart,
+    identity: Identity = Depends(require_identity),
+) -> JSONResponse:
+    snapshot = _snapshot_or_404(project_id, identity)
+    if snapshot.get("status") == "running":
+        raise HTTPException(status_code=409, detail="项目仍在运行")
+    sentence = body.sentence.strip() or str(snapshot.get("sentence") or "").strip()
+    if not sentence:
+        raise HTTPException(status_code=422, detail="先写一句话")
+    workflow_id = await start_film(
+        project_id=project_id,
+        sentence=sentence,
+        brand_kit=snapshot.get("brand_kit"),
+        brand_id=snapshot.get("brand_id"),
+        enterprise_id=identity.enterprise_id,
+        attachments=snapshot.get("attachments") or [],
+        skip_storyboard=True,
+    )
+    return JSONResponse(
+        status_code=202,
+        content={"project_id": project_id, "workflow_id": workflow_id, "status": "running"},
+    )
+
+
 @router.get("/v1/projects/{project_id}")
 def project_status(
     project_id: str,

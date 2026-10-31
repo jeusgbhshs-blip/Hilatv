@@ -515,3 +515,37 @@
   background: var(--surface);
   padding: 8px;
 }
+
+/* Agent 入口与出片中的提示。 */
+.hilatv-canvas-empty-agent {
+  border: 1px solid var(--blue);
+  border-radius: 999px;
+  padding: 8px 18px;
+  font-size: 13px;
+  color: var(--text-1);
+  pointer-events: auto;
+}
+
+.hilatv-canvas-empty-agent:hover {
+  background: var(--blue-soft);
+}
+
+.hilatv-canvas-running {
+  border: 1px solid var(--blue);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--blue-text);
+}
+
+.hilatv-canvas-release {
+  border: 1px solid var(--warning);
+  border-radius: 999px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: var(--text-1);
+}
+
+.hilatv-canvas-release:hover {
+  background: var(--hover);
+}

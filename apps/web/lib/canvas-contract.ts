@@ -196,6 +196,8 @@ export type CanvasSnapshot = {
   timeline: CanvasTimeline;
   /** api：来自现有 GET /canvas。mock：后端没有这个项目时的演示底稿。 */
   origin?: "api" | "mock";
+  /** 项目状态：draft / running / needs_human_review / completed。 */
+  status?: string;
   /** 现有 POST /expert/timeline 的正文。入点出点不在这里。 */
   server_timeline?: ServerTimeline;
 };

@@ -51,6 +51,8 @@ export type CanvasClient = {
   uploadImage(file: File): Promise<{ upload_id: string; thumbnail_url: string }>;
   buildStoryboard(sentence: string): Promise<CanvasSnapshot>;
   generateNode(nodeId: string, body?: { prompt?: string; count?: number }): Promise<CanvasSnapshot>;
+  startFilm(sentence: string): Promise<void>;
+  releaseFilm(): Promise<void>;
 };
 
 const OVERLAY_PREFIX = "hilatv.canvas.overlay.v0.";
@@ -454,6 +456,22 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       const reloaded = await loadFromApi();
       if (reloaded) return remember(reloaded);
       throw new CanvasRequestError(502, "生成之后没有拿到画布");
+    },
+
+    async startFilm(sentence) {
+      const response = await sendJson(`/v1/projects/${encodeURIComponent(projectId)}/film/start`, "POST", {
+        sentence,
+      });
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      await response.json().catch(() => null);
+    },
+
+    async releaseFilm() {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`, {
+        method: "POST",
+      });
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      await response.json().catch(() => null);
     },
 
     async uploadImage(file) {
