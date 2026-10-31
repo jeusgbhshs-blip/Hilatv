@@ -6,7 +6,7 @@
 
 | 任务 | 名称 | 依赖 | 状态 | 分支 / PR | 备注 |
 |---|---|---|---|---|---|
-| R2 | 专家画布 P0 后端 | T19 | 🔵 | [redesign/r2-canvas-api](https://github.com/jeusgbhshs-blip/Hilatv/pull/69) | 验收中，未合并。645 passed / 1 skipped。head 为 `r02_canvas_0003`。假设见下方 |
+| R2 | 专家画布 P0 后端 | T19 | ✅ | [redesign/r2-canvas-api](https://github.com/jeusgbhshs-blip/Hilatv/pull/69) | 已合并（本机验收：accept-r2 6/6，pytest 全量 638/640，2 项为本机缺 tesseract / ffmpeg 版本差；迁移升/降 SQL 已验证）。head 为 `r02_canvas_0003`。假设见下方 |
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
@@ -36,7 +36,7 @@
 | SEC-54 | enterprise_id 只来自登录会话 | T15, T20 | 🔵 | cursor/sec54-enterprise-identity-2c9f | 请求体和查询不能指定企业。跨企业访问 404。假设见下方 |
 | SEC-53 | TTS 必须经过 consent_gate | T20 | 🔵 | 同上 | `Gateway.tts` 要授权门发出的声音令牌。 |
 | UI-01 | 现有前端迁移到 DESIGN.md（换皮 + 主题随时间切换） | #32 | 🔵 | ui01-design-reskin | 验收中。只换外观，不改交互流程和接口。`make accept-ui01`。假设见下方 |
-| R1 | UI 重做：设计底座、导航壳、首页 | UI-01 | 🔵 | redesign/r1-home-shell | 验收中。样稿与 DESIGN.md 冲突处按 DESIGN.md。假设见 PR。不改专家画布文件。 |
+| R1 | UI 重做：设计底座、导航壳、首页 | UI-01 | ✅ | [redesign/r1-home-shell](https://github.com/jeusgbhshs-blip/Hilatv/pull/67) | 已合并（本机验收：tsc / eslint / 单测 26 + vitest 4 / build 通过；r1-home 端到端 5/5）。首审四条已修：四个生成选项改「建设中」禁用、选中卡只留蓝描边、vitest 接进 `test:unit`。样稿与 DESIGN.md 冲突处按 DESIGN.md。 |
 
 状态：⬜ 未开始 · 🟡 开发中 · 🔵 验收中 · ✅ 已合并 · ⛔ 阻塞
 
