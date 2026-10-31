@@ -170,7 +170,7 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
         testId={`frame-${id}`}
       />
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <Badge tone={verdictTone(data.verdict)}>{shotVerdictLabel(data.verdict)}</Badge>
+        <Badge tone={verdictTone(data.verdict)}>{shotVerdictLabel(data.verdict, data.review)}</Badge>
         <span className="tabular text-caption text-text-2">{data.duration_s.toFixed(1)} 秒</span>
       </div>
       <p className="tabular text-caption text-text-3">重生 {data.regen_count} 次</p>
@@ -276,7 +276,7 @@ function CandidateOption({
       onClick={onPick}
     >
       <span>{candidate.kind === "keyframe" ? "关键帧" : "视频"}</span>
-      <span>{shotVerdictLabel(candidate.verdict)}</span>
+      <span>{shotVerdictLabel(candidate.verdict, candidate.review)}</span>
       {candidate.thumbnail_url ? null : <span>{EMPTY_FRAME_COPY}</span>}
     </button>
   );

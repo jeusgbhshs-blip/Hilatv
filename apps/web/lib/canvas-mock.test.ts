@@ -10,7 +10,9 @@ import {
   type TimelineClip,
 } from "./canvas-contract";
 import type { Verdict } from "./expert";
+import { adaptLegacyCanvas, buildSelectBody, buildTimelineBody } from "./canvas-adapt";
 import { CanvasMockStore, CanvasRequestError, seedCanvas, type KeyValueStore } from "./canvas-mock";
+import type { ExpertCanvas } from "./expert";
 
 const unreviewed: Verdict = {
   visual_reviewed: false,
@@ -39,9 +41,10 @@ describe("verdict", () => {
   it("does not call an unreviewed result a pass", () => {
     expect(shotVerdictFromLegacy(unreviewed)).toBe("unreviewed");
     expect(shotVerdictLabel("unreviewed")).toBe("未评审");
-    expect(shotVerdictLabel("unreviewed")).not.toBe("通过");
-    expect(shotVerdictLabel("pass")).toBe("通过");
-    expect(shotVerdictLabel("hard_fail")).toBe("硬伤");
+    expect(shotVerdictLabel("unreviewed")).not.toBe("质检通过");
+    expect(shotVerdictLabel("pass", unreviewed)).toBe("未评审");
+    expect(shotVerdictLabel("pass")).toBe("质检通过");
+    expect(shotVerdictLabel("hard_fail")).toBe("内容安全硬伤");
   });
 });
 
@@ -228,6 +231,64 @@ describe("timeline math", () => {
     expect(trimClip(clips[1], "in", 0.74, 6).in_s).toBe(0.7);
     expect(trimClip(clips[1], "out", 12, 6).out_s).toBe(6);
     expect(trimClip(clips[1], "in", -2, 6).in_s).toBe(0);
+  });
+});
+
+describe("legacy canvas", () => {
+  it("keeps an unreviewed score from being labeled as a pass and drops the model prompt", () => {
+    const legacy: ExpertCanvas = {
+      project_id: "live1",
+      sentence: "一条产品片",
+      status: "completed",
+      budget: { used: 1, limit: 12, remaining: 11 },
+      nodes: [],
+      edges: [],
+      shots: [
+        {
+          shot_id: "S1",
+          order: 1,
+          purpose: "产品转一圈",
+          keyframes: [
+            {
+              candidate_id: "k1",
+              shot_id: "S1",
+              node: "N8",
+              model: "试用画面",
+              seed: 1,
+              frame: "first",
+              prompt: "no text, no letters, product only",
+              selected: true,
+              verdict: unreviewed,
+              media_url: null,
+              media_note: "mock 无画面",
+            },
+          ],
+          videos: [],
+        },
+      ],
+      timeline: {
+        present: true,
+        ai_label: true,
+        duration_s: 4,
+        clips: [{ clip_id: "S1", transition_out: "cut" }],
+        overlays: [{ kind: "ai_label", text: "AI生成" }],
+      },
+      master: { ready: false, qa_passed: false, blocked: false, reason: "未评审" },
+    };
+    const shot = adaptLegacyCanvas(legacy).nodes.find((node) => node.id === "S1");
+    if (!shot || !("verdict" in shot.data)) throw new Error("missing shot");
+    expect(shot.data.verdict).toBe("unreviewed");
+    expect(shotVerdictLabel(shot.data.verdict, shot.data.review)).toBe("未评审");
+    expect(JSON.stringify(shot.data)).not.toContain("no text, no letters");
+    const body = buildSelectBody("S1", shot.data.candidates[0]);
+    expect(body).toEqual({ node: "n08_keyframe", shot_id: "S1", candidate_id: "k1" });
+    expect(body).not.toHaveProperty("qa_passed");
+    const timeline = buildTimelineBody(
+      { overlays: [{ kind: "ai_label", text: "AI生成" }], clips: [{ clip_id: "S1", transition_out: "cut" }] },
+      [{ shot_id: "S1", candidate_id: "k1", in_s: 0.5, out_s: 3 }],
+    );
+    expect(timeline.overlays.some((item) => item.text === "AI生成")).toBe(true);
+    expect(timeline.clips[0]?.clip_id).toBe("S1");
   });
 });
 

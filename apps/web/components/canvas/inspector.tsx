@@ -16,7 +16,6 @@ import {
   type CanvasNode,
   type CanvasSnapshot,
   type ShotData,
-  type ShotVerdict,
 } from "@/lib/canvas-contract";
 
 export type InspectorFocus = {
@@ -199,7 +198,7 @@ function ShotInspector({
   return (
     <div className="mt-4 grid gap-4">
       <div className="flex flex-wrap items-center gap-2">
-        <VerdictText verdict={shot.verdict} />
+        <span className="text-small">{shotVerdictLabel(shot.verdict, shot.review)}</span>
         <span className="tabular text-caption text-text-2">重生 {shot.regen_count} 次</span>
         <span className="tabular text-caption text-text-2">{shot.duration_s.toFixed(1)} 秒</span>
       </div>
@@ -234,7 +233,7 @@ function ShotInspector({
                 >
                   <span>{candidate.kind === "keyframe" ? "关键帧" : "视频"}</span>
                   <span className="font-mono text-text-3">{candidate.model}</span>
-                  <span>{shotVerdictLabel(candidate.verdict)}</span>
+                  <span>{shotVerdictLabel(candidate.verdict, candidate.review)}</span>
                   <span className="tabular">
                     {candidate.score == null || candidate.verdict === "unreviewed" ? "—" : candidate.score.toFixed(1)}
                   </span>
@@ -305,8 +304,4 @@ function ShotInspector({
       </label>
     </div>
   );
-}
-
-function VerdictText({ verdict }: { verdict: ShotVerdict }) {
-  return <span className="text-small">{shotVerdictLabel(verdict)}</span>;
 }

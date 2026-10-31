@@ -2,7 +2,7 @@
  * 画布 mock。形状对齐 canvas-contract.ts。不访问网络，不读环境变量。
  */
 
-import { finalFrame, productFrame, shotFrame } from "./canvas-frames";
+import { productFrame, shotFrame } from "./canvas-frames";
 import {
   AI_LABEL_COPY,
   asBrief,
@@ -371,6 +371,7 @@ export class CanvasMockStore {
       data.selected_candidate_id = candidate.candidate_id;
       data.thumbnail_url = candidate.thumbnail_url ?? null;
       data.verdict = candidate.verdict;
+      data.review = candidate.review;
       for (const clip of doc.timeline.clips) {
         if (clip.shot_id === data.shot_id) clip.candidate_id = candidate.candidate_id;
       }
