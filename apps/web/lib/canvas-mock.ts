@@ -3,6 +3,7 @@
  */
 
 import { productFrame, shotFrame } from "./canvas-frames";
+import type { ImageData } from "./canvas-contract";
 import {
   AI_LABEL_COPY,
   asBrief,
@@ -306,11 +307,13 @@ export class CanvasMockStore {
         if (!data) throw new CanvasRequestError(422, "这不是镜头");
         if (patch.narration !== undefined) data.narration = patch.narration;
         if (patch.prompt_suffix !== undefined) data.prompt_suffix = patch.prompt_suffix;
-      } else {
+      } else if (patch.kind === "ref_image") {
         const data = asRef(node);
         if (!data) throw new CanvasRequestError(422, "这不是参考图");
         data.upload_id = patch.upload_id;
         data.thumbnail_url = patch.thumbnail_url ?? null;
+      } else if (node.kind === "image" || node.kind === "video" || node.kind === "script") {
+        (node.data as ImageData).prompt = patch.prompt;
       }
       doc.layout_version += 1;
     });

@@ -266,7 +266,12 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       if (current.origin === "api") {
         // R8 之前没有「修改镜头正文」的写接口；旁白和补充提示词先进本地，再生时随请求带走。
         if (patch.kind !== "shot") {
-          const data = patch.kind === "brief" ? { text: patch.text } : { upload_id: patch.upload_id };
+          const data =
+            patch.kind === "brief"
+              ? { text: patch.text }
+              : patch.kind === "ref_image"
+                ? { upload_id: patch.upload_id }
+                : { prompt: patch.prompt };
           const response = await sendJson(
             canvasPath(projectId, `/canvas/nodes/${encodeURIComponent(nodeId)}`),
             "PATCH",

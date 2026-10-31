@@ -22,12 +22,12 @@ const KINDS = [
   { kind: "video", label: "视频", icon: Clapperboard, ready: true },
   { kind: "ref_image", label: "参考图", icon: ImageIcon, ready: true },
   { kind: "audio", label: "音频", icon: AudioLines, ready: false },
-  { kind: "script", label: "脚本", icon: Sparkles, ready: false },
+  { kind: "script", label: "脚本", icon: Sparkles, ready: true },
 ] as const;
 
 export const CANVAS_ADD_EVENT = "hilatv:canvas-add";
 
-type Placeable = "brief" | "ref_image" | "image" | "video";
+type Placeable = "brief" | "ref_image" | "image" | "video" | "script";
 
 /**
  * LibTV 式「添加节点」面板：左侧工具栏的「＋」和双击画布都会打开它。

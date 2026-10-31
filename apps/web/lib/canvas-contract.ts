@@ -218,7 +218,7 @@ export type LayoutWrite = {
 };
 
 export type CreateNodeWrite = {
-  kind: "brief" | "ref_image" | "image" | "video";
+  kind: "brief" | "ref_image" | "image" | "video" | "script";
   position: CanvasPoint;
   data?: BriefData | RefImageData | { prompt?: string };
 };
@@ -255,7 +255,8 @@ export type TimelineWrite = {
 export type BriefPatch = { kind: "brief"; text: string };
 export type ShotCopyPatch = { kind: "shot"; narration?: string; prompt_suffix?: string };
 export type RefPatch = { kind: "ref_image"; upload_id: string; thumbnail_url?: string | null };
-export type NodeDataPatch = BriefPatch | ShotCopyPatch | RefPatch;
+export type ContentPromptPatch = { kind: "prompt"; prompt: string };
+export type NodeDataPatch = BriefPatch | ShotCopyPatch | RefPatch | ContentPromptPatch;
 
 export const VERDICT_COPY: Record<ShotVerdict, "未评审" | "通过" | "硬伤"> = {
   unreviewed: "未评审",

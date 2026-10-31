@@ -31,6 +31,7 @@ import {
   FinalNode,
   PipelineNode,
   RefNode,
+  ScriptNode,
   ShotNode,
   type FlowData,
 } from "@/components/canvas/nodes";
@@ -59,11 +60,12 @@ const nodeTypes = {
   shot: ShotNode,
   image: ContentNode,
   video: ContentNode,
+  script: ScriptNode,
   final: FinalNode,
   pipeline: PipelineNode,
 };
 
-const FREE = new Set(["brief", "ref_image", "shot", "final", "image", "video"]);
+const FREE = new Set(["brief", "ref_image", "shot", "final", "image", "video", "script"]);
 
 /** 管线工序是内部节点，LibTV 式画布只铺内容节点。 */
 function visibleFlow(snapshot: CanvasSnapshot): { nodes: CanvasNode[]; edges: CanvasSnapshot["edges"] } {
@@ -449,7 +451,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     };
   }, [choosingId, doc, enqueue, projectId, run]);
 
-  function create(kind: "brief" | "ref_image" | "image" | "video", at?: CanvasPoint) {
+  function create(
+    kind: "brief" | "ref_image" | "image" | "video" | "script",
+    at?: CanvasPoint,
+  ) {
     const client = clientRef.current;
     if (!client) return;
     const position = at ?? nextPosition(nodesRef.current);
@@ -481,7 +486,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   }
 
   const isEmpty = !doc.nodes.some((node) =>
-    ["brief", "ref_image", "shot", "image", "video"].includes(node.kind),
+    ["brief", "ref_image", "shot", "image", "video", "script"].includes(node.kind),
   );
 
   return (

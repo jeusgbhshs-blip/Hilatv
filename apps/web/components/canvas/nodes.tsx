@@ -424,12 +424,51 @@ export function FinalNode({ id, selected, positionAbsoluteX, positionAbsoluteY }
   );
 }
 
+const PRO_FEATURES = [
+  {
+    label: "多机位九宫格",
+    note: "同一主体的九个机位",
+    prompt: "九宫格多机位：正面、侧面、背面、俯拍、仰拍、特写、全景、过肩、低角度，风格统一，人物一致",
+  },
+  {
+    label: "剧情推演四宫格",
+    note: "起承转合一格一张",
+    prompt: "四宫格剧情推演：起、承、转、合各一格，人物、服装和场景保持一致",
+  },
+  {
+    label: "25 宫格连贯分镜",
+    note: "一格一个镜头",
+    prompt: "25 宫格连贯分镜：一格一个镜头，动作连贯，人物一致，镜头之间不跳戏",
+  },
+  {
+    label: "角色三视图",
+    note: "正面 / 侧面 / 背面",
+    prompt: "角色三视图：正面、侧面、背面，纯色背景，比例一致，服装细节一致",
+  },
+  {
+    label: "画面推演（3 秒后）",
+    note: "顺着当前画面往后推",
+    prompt: "按当前画面推演 3 秒后的画面，动作自然延续，光线和构图不变",
+  },
+  {
+    label: "画面推演（5 秒前）",
+    note: "补出前因",
+    prompt: "按当前画面推演 5 秒前的画面，补出合理的起因，光线和构图不变",
+  },
+  {
+    label: "电影级光影校正",
+    note: "主光 / 轮廓光 / 冷暖",
+    prompt: "电影级光影：明确主光方向、加轮廓光、冷暖对比，保持原有构图和主体",
+  },
+] as const;
+
 export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY }: NodeProps<Node<FlowData, "image" | "video">>) {
   const actions = useCanvasActions();
   const node = actions.doc.nodes.find((item) => item.id === id);
   const data = node && (node.kind === "image" || node.kind === "video") ? (node.data as ImageData) : null;
   const [prompt, setPrompt] = useState(data?.prompt ?? "");
   const [busy, setBusy] = useState(false);
+  const [proOpen, setProOpen] = useState(false);
   useEffect(() => {
     setPrompt(data?.prompt ?? "");
   }, [data?.prompt]);
@@ -469,6 +508,35 @@ export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY
         placeholder={isVideo ? "想要的镜头运动，例如：镜头缓慢推进" : "想要的画面，例如：香水瓶特写，夜色，丝绒质感"}
         className="nodrag nowheel min-h-16 rounded-sm border border-border bg-raised px-2 py-1 text-caption text-text-1"
       />
+      <div className="relative">
+        <button
+          type="button"
+          className={cn(actionClass, "border border-border text-text-2")}
+          aria-expanded={proOpen}
+          onClick={() => setProOpen((open) => !open)}
+        >
+          ✦ 专业功能（/）
+        </button>
+        {proOpen ? (
+          <div className="nodrag nopan absolute bottom-8 left-0 z-20 flex w-56 flex-col rounded-sm border border-border bg-surface p-1">
+            {PRO_FEATURES.map((item) => (
+              <button
+                key={item.label}
+                type="button"
+                className="rounded-sm px-2 py-1 text-left text-caption text-text-1 hover:bg-hover"
+                onClick={() => {
+                  const base = prompt.trim();
+                  setPrompt(base ? `${base}；${item.prompt}` : item.prompt);
+                  setProOpen(false);
+                }}
+              >
+                {item.label}
+                <span className="ml-1 text-text-3">{item.note}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
       <button
         type="button"
         className={cn(actionClass, "border border-blue text-text-1 hover:bg-blue-soft")}
@@ -483,6 +551,45 @@ export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY
         }}
       >
         {busy ? "正在生成" : isVideo ? "生成视频" : "生成图片"}
+      </button>
+    </Shell>
+  );
+}
+
+export function ScriptNode({ id, selected, positionAbsoluteX, positionAbsoluteY }: NodeProps<Node<FlowData, "script">>) {
+  const actions = useCanvasActions();
+  const node = actions.doc.nodes.find((item) => item.id === id);
+  const data = node && node.kind === "script" ? (node.data as ImageData) : null;
+  const [prompt, setPrompt] = useState(data?.prompt ?? "");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setPrompt(data?.prompt ?? "");
+  }, [data?.prompt]);
+  if (!node || !data) return null;
+  return (
+    <Shell id={id} title="脚本" x={positionAbsoluteX} y={positionAbsoluteY} selected={selected} dot="bg-warning">
+      <Handle type="target" position={Position.Left} id="in" data-testid={`handle-${id}-target`} />
+      <textarea
+        aria-label="脚本提示"
+        value={prompt}
+        onChange={(event) => setPrompt(event.target.value)}
+        placeholder="写一句话，生成分镜脚本"
+        className="nodrag nowheel min-h-20 rounded-sm border border-border bg-raised px-2 py-1 text-caption text-text-1"
+      />
+      <button
+        type="button"
+        className={cn(actionClass, "border border-blue text-text-1 hover:bg-blue-soft")}
+        disabled={busy || !prompt.trim()}
+        onClick={async () => {
+          setBusy(true);
+          try {
+            await actions.storyboard(prompt);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {busy ? "正在生成分镜" : "生成分镜"}
       </button>
     </Shell>
   );

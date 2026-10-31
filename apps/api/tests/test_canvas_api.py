@@ -449,3 +449,24 @@ def test_image_and_video_nodes_generate_on_the_canvas(tmp_path, monkeypatch) -> 
         video_node["data"]["selected_candidate_id"]
         == video_node["data"]["candidates"][0]["candidate_id"]
     )
+
+
+def test_script_node_is_a_place_to_write_and_grow_a_storyboard(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    ident = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+    project_id = client.post("/v1/projects/blank", json={"sentence": ""}).json()["project_id"]
+    made = client.post(
+        f"/v1/projects/{project_id}/canvas/nodes",
+        json={"kind": "script", "position": {"x": 0, "y": 0}, "data": {"prompt": "香水广告"}},
+    )
+    assert made.status_code == 200, made.text
+    node = made.json()
+    assert node["kind"] == "script"
+    assert node["data"]["prompt"] == "香水广告"
+    grow = client.post(
+        f"/v1/projects/{project_id}/canvas/script", json={"sentence": "香水广告，夜色"}
+    )
+    assert grow.status_code == 200, grow.text
