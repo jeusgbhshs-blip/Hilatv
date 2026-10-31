@@ -13,8 +13,8 @@ import {
   buildSelectBody,
   buildTimelineBody,
   emptyOverlay,
-  isContractCanvas,
   isLegacyCanvas,
+  normalizeContractCanvas,
 } from "./canvas-adapt";
 import {
   CanvasMockStore,
@@ -100,8 +100,9 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
   }
 
   function contractWith(body: unknown): CanvasSnapshot | null {
-    if (body && isContractCanvas(body)) {
-      return applyOverlay({ ...body, origin: "api", project_id: projectId }, apiOverlay());
+    const normalized = normalizeContractCanvas(body);
+    if (normalized) {
+      return applyOverlay({ ...normalized, project_id: projectId }, apiOverlay());
     }
     return null;
   }
@@ -116,8 +117,9 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/canvas`);
       if (!response.ok) return null;
       const body: unknown = await response.json();
-      if (isContractCanvas(body)) {
-        return applyOverlay({ ...body, origin: "api", project_id: projectId }, apiOverlay());
+      const normalized = normalizeContractCanvas(body);
+      if (normalized) {
+        return applyOverlay({ ...normalized, project_id: projectId }, apiOverlay());
       }
       if (isLegacyCanvas(body)) return adaptLegacyCanvas(body, overlay());
     } catch {
@@ -376,9 +378,8 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
         if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
         const parsed = (await response.json()) as { canvas?: unknown };
         if (parsed.canvas && isLegacyCanvas(parsed.canvas)) return remember(adaptLegacyCanvas(parsed.canvas, overlay()));
-        if (parsed.canvas && isContractCanvas(parsed.canvas)) {
-          return remember(applyOverlay({ ...parsed.canvas, origin: "api" }, overlay()));
-        }
+        const remote = contractWith(parsed.canvas);
+        if (remote) return remember(remote);
         throw new CanvasRequestError(502, "选用之后没有拿到画布");
       }
       await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/select`, payload).catch(() => null);

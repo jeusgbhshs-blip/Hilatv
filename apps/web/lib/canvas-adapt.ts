@@ -27,6 +27,74 @@ export function isContractCanvas(body: unknown): body is CanvasSnapshot {
   return value.nodes.every((node) => node && typeof node.kind === "string" && !!node.position);
 }
 
+type RawContractCanvas = Omit<CanvasSnapshot, "timeline"> & {
+  timeline?: (ServerTimeline & { edit?: { clips?: unknown } | null }) | null;
+};
+
+/**
+ * R2 的 GET /canvas 把老时间轴和结构化入点出点放在同一个 timeline 里：
+ * timeline.edit 是 PUT /timeline 存下的入点出点，timeline.clips 是老接口的 clip_id。
+ * 画布只认 TimelineClip，所以这里统一收口；没有结构化入点时按镜头时长补 0–时长。
+ */
+export function normalizeContractCanvas(body: unknown): CanvasSnapshot | null {
+  if (!isContractCanvas(body)) return null;
+  const raw = body as unknown as RawContractCanvas;
+  const legacy = raw.timeline;
+  const server: ServerTimeline | undefined =
+    legacy && Array.isArray(legacy.overlays)
+      ? { overlays: legacy.overlays, clips: Array.isArray(legacy.clips) ? legacy.clips : [] }
+      : undefined;
+  const structured = cleanClips(legacy?.edit?.clips);
+  const clips = structured.length ? structured : clipsFromShotNodes(raw.nodes);
+  return {
+    ...(raw as unknown as CanvasSnapshot),
+    timeline: {
+      clips,
+      ai_label: true,
+      duration_s: clips.reduce((sum, clip) => sum + Math.max(0, clip.out_s - clip.in_s), 0),
+    },
+    server_timeline: server,
+    origin: "api",
+  };
+}
+
+function cleanClips(raw: unknown): TimelineClip[] {
+  if (!Array.isArray(raw)) return [];
+  const clips: TimelineClip[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const clip = item as Partial<TimelineClip>;
+    if (typeof clip.shot_id !== "string" || typeof clip.candidate_id !== "string") continue;
+    const inS = Number(clip.in_s);
+    const outS = Number(clip.out_s);
+    if (!Number.isFinite(inS) || !Number.isFinite(outS)) continue;
+    clips.push({
+      shot_id: clip.shot_id,
+      candidate_id: clip.candidate_id,
+      in_s: Math.max(0, inS),
+      out_s: Math.max(inS, outS),
+    });
+  }
+  return clips;
+}
+
+function clipsFromShotNodes(nodes: CanvasNode[]): TimelineClip[] {
+  const clips: TimelineClip[] = [];
+  for (const node of nodes) {
+    const shot = asShot(node);
+    if (!shot) continue;
+    const duration = Number(shot.duration_s);
+    const out = Number.isFinite(duration) && duration > 0 ? duration : 4;
+    clips.push({
+      shot_id: shot.shot_id,
+      candidate_id: shot.selected_candidate_id || shot.candidates[0]?.candidate_id || shot.shot_id,
+      in_s: 0,
+      out_s: out,
+    });
+  }
+  return clips;
+}
+
 export function isLegacyCanvas(body: unknown): body is ExpertCanvas {
   if (!body || typeof body !== "object") return false;
   if (isContractCanvas(body)) return false;
