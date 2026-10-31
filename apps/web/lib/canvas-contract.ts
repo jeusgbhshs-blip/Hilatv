@@ -6,6 +6,8 @@
 
 import { verdictLabel, type Verdict } from "./expert";
 
+export type { Verdict };
+
 export const CANVAS_STORAGE_PREFIX = "hilatv.canvas.v0.";
 
 /** 与 workers/qa/settings.py 的 PROJECT_RETRIES 对齐。mock 不读环境变量。 */
@@ -34,7 +36,12 @@ export const CANVAS_CONTRACT_NOTES = [
   "导出不生成视频文件，只在导出结果里保留「AI生成」，并且没有关闭开关。",
   "minZoom 0.25、maxZoom 1.75。原来的 0.8–1.4 看不出整张画布。",
   "检查器宽度 372px 写在画布自己的样式里，没有改 globals.css，也没有用任意值 Tailwind 类。",
-  "旧的 live 专家画布端到端测试在 R2 对齐前跳过，避免对 mock 画布断言管线节点。",
+  "质检文案只走 expert.ts 的 verdictLabel，不另写一套通过规则。",
+  "项目已在后端时：读取走 GET /canvas，选用走 POST /expert/select，再生走 POST /expert/rerun（带 shot_id 和 prompt_suffix），时间轴保存走 POST /expert/timeline，上传走 POST /uploads。这些都经 lib/api.ts。",
+  "上述现有接口失败或项目不存在时，演示画布回退到本地 mock，避免没有后端项目时页面空白。回退不会改写已成功的后端结果。",
+  "现有 expert/timeline 只接收 overlays 和带 clip_id 的 clips，不写入点出点。入点出点和顺序先记在本地；提交时原样带回 overlays，因此「AI生成」不会被拿掉。",
+  "布局、自建节点、自建连线、替换参考图，以及契约里的 PUT /timeline、POST /shots/{id}/regenerate，在 R2 合并前只写本地 mock，不请求这些新路径。",
+  "旧的 live 专家画布端到端测试在这条里跳过，界面演示改到 canvas-demo.spec.ts。",
 ] as const;
 
 export type CanvasPoint = { x: number; y: number };
@@ -60,6 +67,10 @@ export type ShotCandidate = {
   verdict: ShotVerdict;
   /** 假设：契约候选没有分数字段。null 表示没有评分。 */
   score?: number | null;
+  /** 现有 expert/select、expert/rerun 需要的节点名，例如 n08_keyframe。 */
+  source_node?: string;
+  /** 现有质检对象。有它时文案只走 verdictLabel。 */
+  review?: Verdict;
 };
 
 export type ShotData = {
@@ -79,6 +90,8 @@ export type ShotData = {
   /** 假设：最近一次再生读到的上游，用来证明连线进了这一镜。 */
   reference_upload_ids?: string[];
   text_inputs?: string[];
+  /** 选中候选的质检对象，文案走 verdictLabel。 */
+  review?: Verdict;
 };
 
 export type RefImageData = {
@@ -139,6 +152,11 @@ export type CanvasBudget = {
   remaining: number;
 };
 
+export type ServerTimeline = {
+  overlays: { kind: string; text: string }[];
+  clips: { clip_id: string; transition_out: string }[];
+};
+
 export type CanvasSnapshot = {
   project_id: string;
   nodes: CanvasNode[];
@@ -149,6 +167,21 @@ export type CanvasSnapshot = {
   sentence: string;
   budget: CanvasBudget;
   timeline: CanvasTimeline;
+  /** api：来自现有 GET /canvas。mock：后端没有这个项目时的演示底稿。 */
+  origin?: "api" | "mock";
+  /** 现有 POST /expert/timeline 的正文。入点出点不在这里。 */
+  server_timeline?: ServerTimeline;
+};
+
+/** 现有接口之外的布局和自建节点。只存在浏览器本地。 */
+export type CanvasOverlay = {
+  layout_version: number;
+  positions: Record<string, CanvasPoint>;
+  viewport?: CanvasViewport;
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+  clips?: TimelineClip[];
+  references?: Record<string, { upload_id: string; thumbnail_url?: string | null }>;
 };
 
 export type LayoutWrite = {
@@ -216,8 +249,40 @@ const ROLE_BY_PAIR: Record<string, EdgeRole> = {
   "shot>final": "feeds_final",
 };
 
-export function shotVerdictLabel(verdict: ShotVerdict): "未评审" | "通过" | "硬伤" {
-  return VERDICT_COPY[verdict];
+/** 没有完整质检对象时，先收成现有 Verdict，再交给 verdictLabel。 */
+export function verdictAsLegacy(verdict: ShotVerdict): Verdict {
+  if (verdict === "pass") {
+    return {
+      visual_reviewed: true,
+      qa_passed: true,
+      hard_fail: [],
+      total: null,
+      notes: "",
+      blocked: false,
+    };
+  }
+  if (verdict === "hard_fail") {
+    return {
+      visual_reviewed: true,
+      qa_passed: false,
+      hard_fail: ["sensitive"],
+      total: null,
+      notes: "",
+      blocked: true,
+    };
+  }
+  return {
+    visual_reviewed: false,
+    qa_passed: false,
+    hard_fail: ["not_reviewed"],
+    total: null,
+    notes: "",
+    blocked: false,
+  };
+}
+
+export function shotVerdictLabel(verdict: ShotVerdict, review?: Verdict | null): string {
+  return verdictLabel(review ?? verdictAsLegacy(verdict));
 }
 
 /** 先走 verdictLabel，未评审不会因为 qa_passed 变成通过。 */
