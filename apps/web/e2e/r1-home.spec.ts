@@ -206,13 +206,24 @@ test("390 layout keeps the composer and seven entries on screen", async ({ page 
   await expect(page.getByRole("complementary", { name: "主导航" })).toBeHidden();
   await expect(page.getByRole("button", { name: "生成", exact: true })).toBeVisible();
   await expect(page.getByTestId("credits-pill")).toBeVisible();
+  const widths: number[] = [];
   for (const label of Object.keys(PRESETS)) {
     const tile = page.getByRole("button", { name: label });
     await expect(tile).toBeVisible();
     const box = await tile.boundingBox();
     expect(box?.height ?? 0).toBeGreaterThanOrEqual(44);
+    widths.push(Math.round(box?.width ?? 0));
   }
+  expect(Math.max(...widths) - Math.min(...widths)).toBeLessThanOrEqual(1);
+  const composer = await page.locator("form").boundingBox();
+  const grid = await page.locator("#expert-entry").boundingBox();
+  expect(Math.abs((composer?.x ?? 0) - (grid?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((composer?.width ?? 0) - (grid?.width ?? 0))).toBeLessThanOrEqual(1);
   await noOverflow(page);
+  await page.locator("#expert-entry").screenshot({
+    path: `${SHOTS}/home-390-entries.png`,
+    animations: "disabled",
+  });
   await shoot(page, "home-390");
 });
 
@@ -242,7 +253,21 @@ test("desktop dark and light home screenshots", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "一句话，拍出你的成片" })).toBeVisible();
+  const desktopWidths: number[] = [];
+  for (const label of Object.keys(PRESETS)) {
+    const box = await page.getByRole("button", { name: label }).boundingBox();
+    desktopWidths.push(Math.round(box?.width ?? 0));
+  }
+  expect(Math.max(...desktopWidths) - Math.min(...desktopWidths)).toBeLessThanOrEqual(1);
+  const composer = await page.locator("form").boundingBox();
+  const grid = await page.locator("#expert-entry").boundingBox();
+  expect(Math.abs((composer?.x ?? 0) - (grid?.x ?? 0))).toBeLessThanOrEqual(1);
+  expect(Math.abs((composer?.width ?? 0) - (grid?.width ?? 0))).toBeLessThanOrEqual(1);
   await page.getByRole("button", { name: "房产案场" }).click();
+  await page.locator("#expert-entry").screenshot({
+    path: `${SHOTS}/home-desktop-entries.png`,
+    animations: "disabled",
+  });
   await shoot(page, "home-desktop-dark");
   await page.getByTestId("home-flow").scrollIntoViewIfNeeded();
   await expect(page.locator(".flow-node.is-lit")).toHaveCount(3);

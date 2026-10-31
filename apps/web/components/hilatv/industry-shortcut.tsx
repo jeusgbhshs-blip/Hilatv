@@ -47,16 +47,18 @@ export function IndustryShortcut({
       className={cn(
         "min-h-11 border bg-surface text-left text-small",
         variant === "tile"
-          ? "tile-lift flex flex-col items-center justify-center gap-2 rounded-lg px-2 py-4 text-center"
+          ? "tile-lift flex h-full w-full min-w-0 flex-col items-center justify-center gap-2 rounded-lg border-2 px-2 py-4 text-center"
           : "flex items-center gap-2.5 rounded-md px-3 py-2.5 transition-colors duration-fast md:flex-col md:items-start md:gap-2 md:py-3",
         pressed
-          ? "border-blue bg-blue-soft text-text-1 ring-1 ring-blue"
+          ? variant === "tile"
+            ? "border-blue bg-blue-soft text-text-1"
+            : "border-blue bg-blue-soft text-text-1 ring-1 ring-blue"
           : "border-border text-text-2 hover:border-border-strong hover:text-text-1",
       )}
     >
       <Icon aria-hidden="true" className="size-6 shrink-0" strokeWidth={1.5} />
-      <span className="font-medium text-text-1">{label}</span>
-      {hint ? <span className="text-caption text-text-3">{hint}</span> : null}
+      <span className="w-full font-medium text-text-1">{label}</span>
+      {hint ? <span className="w-full text-caption text-text-3">{hint}</span> : null}
     </button>
   );
 }

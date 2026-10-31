@@ -180,6 +180,18 @@ body {
   min-height: calc(100dvh - 3.75rem);
 }
 
+/* 行业入口：等宽列，不被文案撑开。桌面 7 列，窄屏 2 列。 */
+.entry-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+@media (min-width: 1024px) {
+  .entry-grid {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 767px) {
   .home-stage {
     min-height: calc(100dvh - 3.25rem - 3.5rem);

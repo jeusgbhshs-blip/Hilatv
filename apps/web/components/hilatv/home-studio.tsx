@@ -545,9 +545,9 @@ export function HomeStudio() {
             </p>
           </form>
 
-          <div id="expert-entry" className="mt-10 grid w-full grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          <div id="expert-entry" className="entry-grid mt-10 w-full max-w-195 gap-3">
             {HOME_ENTRIES.map((item, index) => (
-              <div key={item.id} className={cn("rise", RISE[index])}>
+              <div key={item.id} className={cn("rise h-full min-w-0", RISE[index])}>
                 <IndustryShortcut
                   id={item.id}
                   label={item.label}
