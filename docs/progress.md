@@ -8,6 +8,7 @@
 |---|---|---|---|---|---|
 | R2 | 专家画布 P0 后端 | T19 | ✅ | [redesign/r2-canvas-api](https://github.com/jeusgbhshs-blip/Hilatv/pull/69) | 已合并（本机验收：accept-r2 6/6，pytest 全量 638/640，2 项为本机缺 tesseract / ffmpeg 版本差；迁移升/降 SQL 已验证）。head 为 `r02_canvas_0003`。假设见下方 |
 | R3 | 专家画布 P0（整页画布、四类节点、自建连线、时间轴） | R1, R2 | ✅ | [redesign/r3-expert-canvas](https://github.com/jeusgbhshs-blip/Hilatv/pull/68) | 已合并（本机：tsc / eslint / 单测 26 + vitest 22 / build 通过；canvas-demo 1/1；真实项目验证 layout 持久化与单镜再生 200）。已接 R2 真接口（布局/节点/连线/单镜再生/参考图/结构化时间轴）；首页新增「专家画布」入口模块。本机：tsc / eslint / 单测 26 + vitest 22 / build 通过；canvas-demo 1/1。 |
+| R3b | 画布外壳按 LibTV 编排（独立工作台、左侧工具条、双击加节点、浮层检查器） | R3 | ✅ | main（无单独 PR，随 R3 收尾合并） | 已合并（afa5a24）。公开资料与公开截图只用来对齐编排，不复制 LibTV 的素材、文案、代码。真能落库的节点仍是文本/图片；视频/音频/脚本、上传、素材库、工具箱标「建设中」。 |
 | T01 | monorepo + Docker Compose | – | ✅ | [t01-monorepo-compose](https://github.com/jeusgbhshs-blip/Hilatv/pull/21) | 已合并 |
 | T02 | 第 5 章 Pydantic 模型 + 迁移 | T01 | ✅ | [t02-schemas-migrations](https://github.com/jeusgbhshs-blip/Hilatv/pull/22) | 已合并。revision `t02_business_0001` |
 | T03 | 模型网关 + LLM adapter + 路由/缓存/日志 + 费用上限 | T01 | ✅ | [t03-model-gateway](https://github.com/jeusgbhshs-blip/Hilatv/pull/23) | 已合并。`call_logs`/`alerts` 为 `t03_gateway_0002`。假设见下方 |
@@ -91,6 +92,11 @@
 - 合并了哪些：R2 #69（60e239d）、R1 #67（5c80822）已进 main（4590386）。R3 待合。
 - 正在做什么：R3 画布接 R2 真接口，并用真实项目验证：拖动镜头 → `PUT /canvas/layout` 200 且刷新后位置仍在；「再生这一镜」→ `POST /shots/{id}/regenerate` 200。修掉两个真实问题：完成态项目打开画布白屏（老时间轴 clip 没有 in_s/out_s，undefined.toFixed 崩）；没有候选画面的镜头（片尾合成段）保存时间轴 404 → 现在按分镜时长校验成固定段。首页新增「专家画布」入口模块，生成过后直接进该项目画布。
 - 需要提供什么：无。`HILATV_LIVE` 保持关闭，全部走 mock。
+### 2026-10-31 画布外壳按 LibTV 编排
+- 合并了哪些：main `afa5a24`（画布外壳重做）。R1 #67、R2 #69、R3 #68 已在 main（4590386 / 4996772）。
+- 正在做什么：按 song 要求把专家画布改成 LibTV 式编排：独立全屏工作台（进画布不再套应用侧栏）、顶栏只留标志+项目名+重生次数+返回、左侧浮动竖工具条（「＋」打开添加节点面板）、「添加节点」分「添加节点 / 添加资源」两段、双击空白也打开、只铺内容节点（内部管线节点不再显示）、打开自动适配视图、左下独立缩放条、点阵背景、右侧检查器改浮层（选中才出现）、镜头卡加候选缩略图网格、镜头默认间距 180→560。
+- 需要提供什么：无。`HILATV_LIVE` 保持关闭。下一轮要做节点内生成器面板（提示词/模型/比例/数量）、节点右侧「＋」派生下一类节点、图片节点输入「/」的专业功能菜单、打组与工具箱、Agent 入口；视频/音频/脚本节点需要后端补写接口后再开。
+
 
 
 ### 2026-10-30
