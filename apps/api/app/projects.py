@@ -28,7 +28,13 @@ from app.logging import log_event
 from gateway import get_gateway
 from workers.expert.charge import BudgetExhausted, reserve
 from workers.identity.access import Conflict, NotFound, audit_human_release
-from workers.identity.session import Identity, SessionError, bearer_token, verify_session
+from workers.identity.session import (
+    Identity,
+    SessionError,
+    bearer_token,
+    canonical_enterprise,
+    verify_session,
+)
 from workers.nodes.n01_brief.schema import AttachmentRef
 from workers.nodes.n18_revision.concept_gate import classify_concept, read_project_concept
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
@@ -423,6 +429,44 @@ async def create_project(
         status_code=202,
         content={"project_id": project_id, "workflow_id": workflow_id, "status": "running"},
     )
+
+
+@router.get("/v1/projects")
+def list_projects(identity: Identity = Depends(require_identity)) -> dict[str, Any]:
+    """This enterprise's projects, newest first. Each one has its own canvas."""
+
+    owner = canonical_enterprise(identity.enterprise_id)
+    rows: list[dict[str, Any]] = []
+    root = project_root()
+    if root.is_dir():
+        for entry in root.iterdir():
+            if not entry.is_dir() or not valid_project_id(entry.name):
+                continue
+            snapshot = read_snapshot(entry.name)
+            if not snapshot:
+                continue
+            stored = snapshot.get("enterprise_id")
+            if not isinstance(stored, str) or canonical_enterprise(stored) != owner:
+                continue
+            started = snapshot.get("started_at")
+            finished = snapshot.get("finished_at")
+            rows.append(
+                {
+                    "project_id": entry.name,
+                    "sentence": str(snapshot.get("sentence") or "")[:200],
+                    "status": str(snapshot.get("status") or ""),
+                    "phase": str(snapshot.get("phase") or ""),
+                    "message": str(snapshot.get("message") or ""),
+                    "created_at": started if isinstance(started, (int, float)) else 0,
+                    "updated_at": finished
+                    if isinstance(finished, (int, float))
+                    else (started if isinstance(started, (int, float)) else 0),
+                    "shot_count": len(snapshot.get("shots") or []),
+                    "has_film": bool(snapshot.get("deliverable")),
+                }
+            )
+    rows.sort(key=lambda item: item["updated_at"], reverse=True)
+    return {"projects": rows[:50]}
 
 
 @router.get("/v1/projects/{project_id}")

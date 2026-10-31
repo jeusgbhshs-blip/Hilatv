@@ -360,3 +360,27 @@ def test_blank_project_opens_an_empty_canvas(tmp_path, monkeypatch) -> None:
     assert canvas["shots"] == []
     assert canvas["nodes"][-1]["kind"] == "final"
     assert canvas["timeline"]["present"] is False
+
+
+def test_project_list_is_per_enterprise_and_each_has_a_canvas(tmp_path, monkeypatch) -> None:
+    """项目列表跟着登录企业走；每个项目各自一块画布。"""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    mine = open_session()
+    other = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {mine.token}"})
+    first = client.post("/v1/projects/blank", json={"sentence": "第一个画布"}).json()["project_id"]
+    second = client.post("/v1/projects/blank", json={"sentence": "第二个画布"}).json()["project_id"]
+    stranger = TestClient(app, headers={"Authorization": f"Bearer {other.token}"})
+    assert stranger.post("/v1/projects/blank", json={"sentence": "别人的画布"}).status_code == 201
+    listed = client.get("/v1/projects")
+    assert listed.status_code == 200, listed.text
+    ids = [row["project_id"] for row in listed.json()["projects"]]
+    assert set(ids) == {first, second}
+    sentences = {row["sentence"] for row in listed.json()["projects"]}
+    assert sentences == {"第一个画布", "第二个画布"}
+    # 两个项目的画布是分开的
+    assert client.get(f"/v1/projects/{first}/canvas").status_code == 200
+    assert client.get(f"/v1/projects/{second}/canvas").status_code == 200

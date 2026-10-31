@@ -85,16 +85,21 @@ export function CanvasEntry() {
           )}
           <p className="mt-3 text-caption text-text-3">{hint}</p>
           {error ? <p className="mt-2 text-caption text-danger">{error}</p> : null}
-          <button
-            type="button"
-            onClick={() => {
-              window.localStorage.removeItem(LAST_PROJECT_KEY);
-              setProjectId(null);
-            }}
-            className="mt-2 block text-caption text-text-3 hover:text-text-2"
-          >
-            换一块空白画布
-          </button>
+          <div className="mt-3 flex items-center gap-4">
+            <Link href="/projects" className="text-caption text-blue-text hover:underline">
+              项目列表
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                window.localStorage.removeItem(LAST_PROJECT_KEY);
+                setProjectId(null);
+              }}
+              className="text-caption text-text-3 hover:text-text-2"
+            >
+              换一块空白画布
+            </button>
+          </div>
         </div>
 
         <div aria-hidden="true" className="md:w-1/2">
