@@ -17,7 +17,6 @@ import {
   Sparkles,
   SunMoon,
   Users,
-  Waypoints,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -39,18 +38,7 @@ type NavItem = {
 
 const SOON = "即将开放";
 
-function projectId(path: string): string | null {
-  const match = /^\/projects\/([^/]+)/.exec(path);
-  if (!match || match[1] === undefined) return null;
-  return match[1];
-}
-
-function expertHref(path: string): string {
-  const id = projectId(path);
-  return id ? `/projects/${id}/expert` : "/canvas";
-}
-
-function items(path: string): NavItem[] {
+function items(): NavItem[] {
   return [
     { label: "首页", icon: Home, href: "/", match: (value) => value === "/" },
     {
@@ -61,12 +49,6 @@ function items(path: string): NavItem[] {
         value === "/projects" || (value.startsWith("/projects/") && !value.includes("/expert")),
     },
     { label: "素材库", icon: Images, href: "/assets", match: (value) => value.startsWith("/assets") },
-    {
-      label: "专家画布",
-      icon: Waypoints,
-      href: expertHref(path),
-      match: (value) => value.includes("/expert"),
-    },
     { label: "模板", icon: LayoutTemplate, href: "/templates", match: (value) => value.startsWith("/templates") },
     { label: "学院", icon: GraduationCap, href: "/academy", match: (value) => value.startsWith("/academy") },
     { label: "方案", icon: Layers, href: "/concepts", match: (value) => value.startsWith("/concepts") },
@@ -110,7 +92,7 @@ function crumbs(path: string): Crumb[] {
       { label: "当前项目", href: project[3] ? base : undefined },
     ];
     if (project[3] === "film") list.push({ label: "成片" });
-    if (project[3] === "expert") list.push({ label: "专家模式" });
+    if (project[3] === "expert") list.push({ label: "专家画布" });
     return list;
   }
   if (path === "/projects") return [{ label: "项目" }];
@@ -145,7 +127,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   const back = backHref(path);
   const title = trail[trail.length - 1]?.label ?? "";
   const home = path === "/";
-  const nav = items(path);
+  const nav = items();
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
