@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test:unit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --experimental-strip-types --test lib/progress.test.ts lib/selection.test.ts lib/versions.test.ts lib/concept.test.ts lib/storyboard.test.ts lib/expert.test.ts lib/theme.test.ts lib/status-copy.test.ts",
+    "test:vitest": "vitest run",
     "test:e2e": "playwright test"
   },
   "dependencies": {
@@ -31,6 +32,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.5.28",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

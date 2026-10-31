@@ -139,15 +139,13 @@
 
   --shadow-pop: var(--pop-shadow);
 
-  /* 动效（第 7 章） */
+  /* 动效（第 7 章）。ambient 只给循环：流动虚线、示意进度，入场仍用 slow。 */
   --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-:root {
   --duration-fast: 120ms;
   --duration-base: 200ms;
   --duration-slow: 320ms;
   --duration-theme: 400ms;
+  --duration-ambient: 1.6s;
 }
 
 body {
@@ -176,11 +174,220 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- 首页电影感（样稿动效，颜色只走上面的 token） ---------- */
+
+.home-stage {
+  min-height: calc(100dvh - 3.75rem);
+}
+
+@media (max-width: 767px) {
+  .home-stage {
+    min-height: calc(100dvh - 3.25rem - 3.5rem);
+  }
+}
+
+/* 墨色暗角：边缘回到页面底色，不是彩色装饰渐变。 */
+.home-vignette {
+  background: radial-gradient(ellipse at 50% 42%, transparent 26%, var(--bg) 78%);
+}
+
+/* 纸色光斑，透明度不超过 7%。位移循环，不用发光。 */
+.home-lights {
+  background:
+    radial-gradient(ellipse at 32% 40%, color-mix(in srgb, var(--text-1) 7%, transparent), transparent 58%),
+    radial-gradient(ellipse at 68% 58%, color-mix(in srgb, var(--text-1) 5%, transparent), transparent 52%);
+  animation: hilatv-drift 12s var(--ease-out) infinite alternate;
+}
+
+@keyframes hilatv-drift {
+  from { transform: translate3d(-3%, -2%, 0); }
+  to { transform: translate3d(3%, 2%, 0); }
+}
+
+@keyframes hilatv-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: hilatv-rise var(--duration-slow) var(--ease-out) both;
+}
+
+.rise-d1 { animation-delay: 80ms; }
+.rise-d2 { animation-delay: 160ms; }
+.rise-d3 { animation-delay: 240ms; }
+.rise-d4 { animation-delay: 320ms; }
+.rise-d5 { animation-delay: 400ms; }
+.rise-d6 { animation-delay: 480ms; }
+.rise-d7 { animation-delay: 560ms; }
+.rise-d8 { animation-delay: 640ms; }
+.rise-d9 { animation-delay: 720ms; }
+.rise-d10 { animation-delay: 800ms; }
+.rise-d11 { animation-delay: 880ms; }
+
+@keyframes hilatv-blink {
+  50% { opacity: 0; }
+}
+
+.type-caret {
+  display: inline-block;
+  width: 1px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--text-1);
+  vertical-align: -2px;
+  animation: hilatv-blink var(--duration-ambient) steps(1) infinite;
+}
+
+/* 主按钮扫光：纸色实条划过，不用渐变、不用发光。 */
+.btn-sheen {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-sheen::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -45%;
+  width: 28%;
+  background: color-mix(in srgb, var(--text-1) 28%, transparent);
+  transform: skewX(-18deg);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.btn-sheen:hover:not(:disabled)::after {
+  animation: hilatv-sheen var(--duration-slow) var(--ease-out);
+}
+
+@keyframes hilatv-sheen {
+  from { left: -45%; opacity: 1; }
+  to { left: 140%; opacity: 0; }
+}
+
+.tile-lift {
+  transition:
+    transform var(--duration-slow) var(--ease-out),
+    border-color var(--duration-base) var(--ease-out),
+    color var(--duration-base) var(--ease-out);
+}
+
+.tile-lift svg {
+  transition: transform var(--duration-slow) var(--ease-out);
+}
+
+.tile-lift:hover {
+  transform: translateY(-4px);
+}
+
+.tile-lift:hover svg {
+  transform: scale(1.08) rotate(-6deg);
+}
+
+.flow-line {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.flow-run {
+  stroke: var(--blue);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 6;
+}
+
+.flow-steps.is-in .flow-run {
+  animation: hilatv-dash var(--duration-ambient) linear infinite;
+}
+
+@keyframes hilatv-dash {
+  to { stroke-dashoffset: -12; }
+}
+
+.flow-node {
+  position: relative;
+  z-index: 1;
+  background: var(--surface);
+  transition: border-color var(--duration-slow) var(--ease-out);
+}
+
+.flow-node.is-lit {
+  border-color: var(--border-strong);
+}
+
+.step-dot {
+  background: var(--text-3);
+}
+
+.flow-node.is-lit .step-dot {
+  background: var(--blue);
+  animation: hilatv-pulse var(--duration-ambient) var(--ease-out) infinite;
+}
+
+@keyframes hilatv-pulse {
+  50% { opacity: 0.4; }
+}
+
+.film-meter {
+  height: 4px;
+  background: var(--hover);
+  border-radius: var(--radius-full);
+}
+
+.film-meter > i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--blue);
+  border-radius: var(--radius-full);
+}
+
+.flow-steps.is-in .flow-node.is-lit .film-meter > i {
+  animation: hilatv-meter var(--duration-ambient) var(--ease-out) forwards;
+}
+
+@keyframes hilatv-meter {
+  to { width: 100%; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .rise,
+  .btn-sheen::after,
+  .flow-run,
+  .step-dot,
+  .film-meter > i,
+  .home-lights {
+    animation: none !important;
+  }
+
+  .rise,
+  .flow-node {
+    opacity: 1 !important;
+    transform: none !important;
+  }
+
+  .tile-lift:hover,
+  .tile-lift:hover svg {
+    transform: none;
+  }
+
+  .film-meter > i {
+    width: 100%;
   }
 }

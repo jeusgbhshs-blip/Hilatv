@@ -267,8 +267,8 @@ for (const theme of THEMES) {
       await useTheme(page, theme);
       await page.goto("/");
       await expectTheme(page, theme);
-      await expect(page.getByRole("heading", { name: "说一句话，做成一条片" })).toBeVisible();
-      await page.getByRole("button", { name: "制造业" }).click();
+      await expect(page.getByRole("heading", { name: "一句话，拍出你的成片" })).toBeVisible();
+      await page.getByRole("button", { name: "电商带货" }).click();
       await expectNoHorizontalOverflow(page);
       await expectOneBlueButton(page);
       if (width < 768) {
@@ -418,7 +418,7 @@ test.describe("time-based theme", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 
     // Leave the field: the switch happens, with the colour-only transition class.
-    await page.getByRole("heading", { name: "说一句话，做成一条片" }).click();
+    await page.getByRole("heading", { name: "一句话，拍出你的成片" }).click();
     await page.clock.runFor(10);
     await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
     await expect(page.locator("html")).toHaveClass(/theme-transition/);

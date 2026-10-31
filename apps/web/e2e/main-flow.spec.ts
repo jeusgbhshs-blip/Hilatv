@@ -18,9 +18,9 @@ test("one sentence becomes a playable download", async ({ page }) => {
   const link = `${api.replace(/\/$/, "")}/health`;
 
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "说一句话，做成一条片" })).toBeVisible();
-  await page.getByRole("button", { name: "制造业" }).click();
-  await expect(page.getByLabel("一句话")).toHaveValue(/柱塞泵/);
+  await expect(page.getByRole("heading", { name: "一句话，拍出你的成片" })).toBeVisible();
+  await page.getByRole("button", { name: "电商带货" }).click();
+  await expect(page.getByLabel("一句话")).toHaveValue(/带货/);
   await page.getByLabel("一句话").fill(SENTENCE);
   await page.getByLabel("上传素材").setInputFiles({
     name: "product.png",
@@ -43,7 +43,7 @@ test("one sentence becomes a playable download", async ({ page }) => {
     timeout: 240_000,
   });
   await page.getByRole("radio", { name: "直接出片" }).check();
-  await page.getByRole("button", { name: "开始生成" }).click();
+  await page.getByRole("button", { name: "生成", exact: true }).click();
   const request = await created;
   const body = request.postDataJSON() as {
     sentence: string;
