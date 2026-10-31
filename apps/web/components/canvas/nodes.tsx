@@ -233,7 +233,7 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
                 />
               ) : (
                 <span className="flex size-full items-center justify-center text-caption text-text-3">
-                  {item.kind === "video" ? "视频" : "图"}
+                  {item.kind === "video" ? "视频" : item.kind === "audio" ? "音频" : "图"}
                 </span>
               )}
             </span>
@@ -465,7 +465,10 @@ const PRO_FEATURES = [
 export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY }: NodeProps<Node<FlowData, "image" | "video">>) {
   const actions = useCanvasActions();
   const node = actions.doc.nodes.find((item) => item.id === id);
-  const data = node && (node.kind === "image" || node.kind === "video") ? (node.data as ImageData) : null;
+  const data =
+    node && (node.kind === "image" || node.kind === "video" || node.kind === "audio")
+      ? (node.data as ImageData)
+      : null;
   const [prompt, setPrompt] = useState(data?.prompt ?? "");
   const [busy, setBusy] = useState(false);
   const [proOpen, setProOpen] = useState(false);
@@ -474,12 +477,13 @@ export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY
   }, [data?.prompt]);
   if (!node || !data) return null;
   const isVideo = node.kind === "video";
+  const isAudio = node.kind === "audio";
   const candidates = data.candidates ?? [];
   const chosen = candidates.find((item) => item.candidate_id === data.selected_candidate_id) ?? candidates[0];
   return (
     <Shell
       id={id}
-      title={isVideo ? "视频" : "图片"}
+      title={isAudio ? "音频" : isVideo ? "视频" : "图片"}
       x={positionAbsoluteX}
       y={positionAbsoluteY}
       selected={selected}
@@ -496,7 +500,7 @@ export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY
         <div data-testid={`candidates-${id}`} className="grid grid-cols-3 gap-1">
           {candidates.slice(-6).map((item) => (
             <span key={item.candidate_id} className="flex aspect-video items-center justify-center rounded-xs bg-stage text-caption text-text-3">
-              {item.kind === "video" ? "视频" : "图"}
+              {item.kind === "video" ? "视频" : item.kind === "audio" ? "音频" : "图"}
             </span>
           ))}
         </div>
@@ -505,7 +509,13 @@ export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY
         aria-label={isVideo ? "视频提示词" : "图片提示词"}
         value={prompt}
         onChange={(event) => setPrompt(event.target.value)}
-        placeholder={isVideo ? "想要的镜头运动，例如：镜头缓慢推进" : "想要的画面，例如：香水瓶特写，夜色，丝绒质感"}
+        placeholder={
+          isAudio
+            ? "想要的音乐，例如：轻快的电子背景乐，节奏稳"
+            : isVideo
+              ? "想要的镜头运动，例如：镜头缓慢推进"
+              : "想要的画面，例如：香水瓶特写，夜色，丝绒质感"
+        }
         className="nodrag nowheel min-h-16 rounded-sm border border-border bg-raised px-2 py-1 text-caption text-text-1"
       />
       <div className="relative">
@@ -544,13 +554,13 @@ export function ContentNode({ id, selected, positionAbsoluteX, positionAbsoluteY
         onClick={async () => {
           setBusy(true);
           try {
-            await actions.generateNode(id, { prompt, count: isVideo ? 1 : 2 });
+            await actions.generateNode(id, { prompt, count: isVideo || isAudio ? 1 : 2 });
           } finally {
             setBusy(false);
           }
         }}
       >
-        {busy ? "正在生成" : isVideo ? "生成视频" : "生成图片"}
+        {busy ? "正在生成" : isAudio ? "生成音乐" : isVideo ? "生成视频" : "生成图片"}
       </button>
     </Shell>
   );

@@ -51,7 +51,7 @@ export type CanvasViewport = { x: number; y: number; zoom: number };
 
 export type ShotVerdict = "unreviewed" | "pass" | "hard_fail";
 
-export type CandidateKind = "keyframe" | "video" | "image";
+export type CandidateKind = "keyframe" | "video" | "image" | "audio";
 
 export type EdgeRole = "reference" | "text" | "feeds_final" | "pipeline";
 
@@ -218,7 +218,7 @@ export type LayoutWrite = {
 };
 
 export type CreateNodeWrite = {
-  kind: "brief" | "ref_image" | "image" | "video" | "script";
+  kind: "brief" | "ref_image" | "image" | "video" | "script" | "audio";
   position: CanvasPoint;
   data?: BriefData | RefImageData | { prompt?: string };
 };

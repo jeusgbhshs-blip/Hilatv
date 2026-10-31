@@ -3,6 +3,7 @@
 import { createContext, useContext } from "react";
 
 import type { CanvasSnapshot, RegenerateWrite } from "@/lib/canvas-contract";
+import type { ToolboxGroup } from "@/lib/canvas-toolbox";
 
 export type CanvasActions = {
   doc: CanvasSnapshot;
@@ -18,6 +19,9 @@ export type CanvasActions = {
   derive: (nodeId: string, kind: "brief" | "ref_image") => void;
   storyboard: (sentence: string) => Promise<void>;
   generateNode: (nodeId: string, body?: { prompt?: string; count?: number }) => Promise<void>;
+  saveGroup: (name: string) => void;
+  applyGroup: (group: ToolboxGroup) => void;
+  deleteGroup: (id: string) => void;
 };
 
 const CanvasActionsContext = createContext<CanvasActions | null>(null);

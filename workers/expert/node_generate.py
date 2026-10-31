@@ -14,7 +14,7 @@ from workers.expert.desk import CanvasDoc, UserNode, update_document
 from workers.expert.gates import GateError, refuse_label_bypass
 from workers.logging import log_event
 
-_CONTENT = frozenset({"image", "video"})
+_CONTENT = frozenset({"image", "video", "audio"})
 _MAX_COUNT = 4
 _MAX_CANDIDATES = 24
 
@@ -82,6 +82,8 @@ def _generate_one(
     common = {"project_id": project_id, "node": "canvas", "params": {"seed": index}}
     if node.kind == "image":
         result = engine.generate_image(prompt, **common)
+    elif node.kind == "audio":
+        result = engine.music(prompt, **common)
     else:
         duration = node.data.get("duration_s")
         seconds = (
@@ -91,9 +93,10 @@ def _generate_one(
         )
         result = engine.generate_video(prompt, duration_s=seconds, **common)
     uri = result.get("uri")
+    kind = {"image": "image", "video": "video", "audio": "audio"}[node.kind]
     return {
         "candidate_id": str(uuid.uuid4()),
-        "kind": "image" if node.kind == "image" else "video",
+        "kind": kind,
         "uri": uri if isinstance(uri, str) else "",
         "model": str(
             result.get("model") or ("mock-image" if node.kind == "image" else "mock-video")

@@ -21,13 +21,14 @@ const KINDS = [
   { kind: "image", label: "图片", icon: ImageIcon, ready: true },
   { kind: "video", label: "视频", icon: Clapperboard, ready: true },
   { kind: "ref_image", label: "参考图", icon: ImageIcon, ready: true },
-  { kind: "audio", label: "音频", icon: AudioLines, ready: false },
+  { kind: "audio", label: "音频", icon: AudioLines, ready: true },
   { kind: "script", label: "脚本", icon: Sparkles, ready: true },
 ] as const;
 
 export const CANVAS_ADD_EVENT = "hilatv:canvas-add";
+export const CANVAS_TOOLBOX_EVENT = "hilatv:canvas-toolbox";
 
-type Placeable = "brief" | "ref_image" | "image" | "video" | "script";
+type Placeable = "brief" | "ref_image" | "image" | "video" | "script" | "audio";
 
 /**
  * LibTV 式「添加节点」面板：左侧工具栏的「＋」和双击画布都会打开它。
@@ -127,7 +128,7 @@ export function CanvasAddMenu({ onCreate }: { onCreate: (kind: Placeable, positi
 export function CanvasToolRail() {
   const items = [
     { label: "添加节点", icon: Sparkles, primary: true },
-    { label: "工具箱", icon: FileStack, primary: false },
+    { label: "工具箱", icon: FileStack, primary: false, action: "toolbox" as const },
     { label: "我的素材", icon: Library, primary: false },
     { label: "历史素材", icon: History, primary: false },
     { label: "常见问题", icon: HelpCircle, primary: false },
@@ -149,6 +150,17 @@ export function CanvasToolRail() {
             <span aria-hidden="true" className="text-h2 leading-none">
               ＋
             </span>
+          </button>
+        ) : item.label === "工具箱" ? (
+          <button
+            key={item.label}
+            type="button"
+            className="hilatv-canvas-rail-btn"
+            aria-label="工具箱"
+            title="工具箱（本机保存的组合）"
+            onClick={() => window.dispatchEvent(new CustomEvent(CANVAS_TOOLBOX_EVENT))}
+          >
+            <item.icon aria-hidden="true" className="size-4" strokeWidth={1.5} />
           </button>
         ) : (
           <button

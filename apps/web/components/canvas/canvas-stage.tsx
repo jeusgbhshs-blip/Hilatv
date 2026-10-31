@@ -22,7 +22,7 @@ import Link from "next/link";
 import { Clapperboard, Image as ImageIcon, Sparkles, TextCursorInput } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { CanvasAddMenu, CanvasToolRail } from "@/components/canvas/add-menu";
+import { CanvasAddMenu, CanvasToolRail, CANVAS_TOOLBOX_EVENT } from "@/components/canvas/add-menu";
 import { CanvasActionsProvider, type CanvasActions } from "@/components/canvas/canvas-context";
 import { Inspector, type InspectorFocus } from "@/components/canvas/inspector";
 import {
@@ -37,6 +37,12 @@ import {
 } from "@/components/canvas/nodes";
 import { TimelineTrack } from "@/components/canvas/timeline-track";
 import { createCanvasClient, type CanvasClient } from "@/lib/canvas-client";
+import {
+  addGroup,
+  loadGroups,
+  removeGroup,
+  type ToolboxGroup,
+} from "@/lib/canvas-toolbox";
 import {
   AI_LABEL_COPY,
   ROLE_COPY,
@@ -60,17 +66,18 @@ const nodeTypes = {
   shot: ShotNode,
   image: ContentNode,
   video: ContentNode,
+  audio: ContentNode,
   script: ScriptNode,
   final: FinalNode,
   pipeline: PipelineNode,
 };
 
-const FREE = new Set(["brief", "ref_image", "shot", "final", "image", "video", "script"]);
+const FREE = new Set(["brief", "ref_image", "shot", "final", "image", "video", "script", "audio"]);
 
 /** 管线工序是内部节点，LibTV 式画布只铺内容节点。 */
 function visibleFlow(snapshot: CanvasSnapshot): { nodes: CanvasNode[]; edges: CanvasSnapshot["edges"] } {
   const content = snapshot.nodes.filter((node) =>
-    ["brief", "ref_image", "shot", "image", "video"].includes(node.kind),
+    ["brief", "ref_image", "shot", "image", "video", "script", "audio"].includes(node.kind),
   );
   const nodes = snapshot.nodes.filter((node) => FREE.has(node.kind) && (node.kind !== "final" || content.length > 0));
   const ids = new Set(nodes.map((node) => node.id));
@@ -126,6 +133,9 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const [busyShot, setBusyShot] = useState<string | null>(null);
   const [focus, setFocus] = useState<InspectorFocus | null>(null);
   const [scriptOpen, setScriptOpen] = useState(false);
+  const [toolboxOpen, setToolboxOpen] = useState(false);
+  const [groups, setGroups] = useState<ToolboxGroup[]>([]);
+  const [groupName, setGroupName] = useState("");
   const [scriptText, setScriptText] = useState("");
   const [scriptBusy, setScriptBusy] = useState(false);
 
@@ -239,6 +249,15 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       window.clearTimeout(timerRef.current);
     };
   }, [projectId]);
+
+  useEffect(() => {
+    setGroups(loadGroups());
+    function onToolbox() {
+      setToolboxOpen((open) => !open);
+    }
+    window.addEventListener(CANVAS_TOOLBOX_EVENT, onToolbox);
+    return () => window.removeEventListener(CANVAS_TOOLBOX_EVENT, onToolbox);
+  }, []);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<Node<FlowData>>[]) => {
@@ -356,6 +375,95 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const actions = useMemo<CanvasActions>(() => {
     return {
       doc: doc ?? emptyDoc(projectId),
+      saveGroup: (name: string) => {
+        const current = docRef.current;
+        if (!current) return;
+        const picked = new Set(selectedIds);
+        const nodes = current.nodes.filter((node) => picked.has(node.id));
+        if (nodes.length < 2) return;
+        const minX = Math.min(...nodes.map((node) => node.position.x));
+        const minY = Math.min(...nodes.map((node) => node.position.y));
+        const index = new Map(nodes.map((node, position) => [node.id, position]));
+        const edges = current.edges
+          .filter((edge) => index.has(edge.source) && index.has(edge.target))
+          .map((edge) => ({
+            from: index.get(edge.source) as number,
+            to: index.get(edge.target) as number,
+            role: edge.role,
+            fromHandle: edge.source_handle ?? undefined,
+            toHandle: edge.target_handle ?? undefined,
+          }));
+        const group: ToolboxGroup = {
+          id: crypto.randomUUID(),
+          name: name.trim() || `组合 ${groups.length + 1}`,
+          saved_at: Date.now(),
+          edges,
+          nodes: nodes.map((node) => ({
+            kind: node.kind,
+            prompt:
+              typeof (node.data as { prompt?: unknown }).prompt === "string"
+                ? (node.data as { prompt: string }).prompt
+                : undefined,
+            text:
+              typeof (node.data as { text?: unknown }).text === "string"
+                ? (node.data as { text: string }).text
+                : undefined,
+            dx: Math.round(node.position.x - minX),
+            dy: Math.round(node.position.y - minY),
+          })),
+        };
+        setGroups(addGroup(group));
+        setGroupName("");
+        setNotice(`已存入工具箱：${group.name}`);
+      },
+      applyGroup: (group: ToolboxGroup) => {
+        const client = clientRef.current;
+        if (!client) return;
+        const base = nextPosition(nodesRef.current);
+        void enqueue(async () => {
+          const created: string[] = [];
+          const seen = new Set((docRef.current?.nodes ?? []).map((node) => node.id));
+          let latest: CanvasSnapshot | null = null;
+          for (const node of group.nodes) {
+            latest = await client.createNode({
+              kind: node.kind as "brief" | "ref_image" | "image" | "video" | "script" | "audio",
+              position: { x: base.x + node.dx, y: base.y + node.dy },
+              data:
+                node.kind === "brief"
+                  ? { text: node.text ?? "写一句话" }
+                  : node.kind === "ref_image"
+                    ? { upload_id: "", thumbnail_url: null }
+                    : { prompt: node.prompt ?? "" },
+            });
+            const fresh = latest.nodes.find((item) => !seen.has(item.id));
+            if (fresh) {
+              created.push(fresh.id);
+              seen.add(fresh.id);
+            }
+          }
+          for (const edge of group.edges) {
+            const source = created[edge.from];
+            const target = created[edge.to];
+            if (!source || !target) continue;
+            latest = await client.createEdge({
+              source,
+              target,
+              role: edge.role as EdgeRole,
+              source_handle: edge.fromHandle,
+              target_handle: edge.toHandle,
+            });
+          }
+          return latest ?? docRef.current!;
+        }, "adopt")
+          .then(() => {
+            setToolboxOpen(false);
+            setNotice(`已套用组合：${group.name}`);
+          })
+          .catch(() => undefined);
+      },
+      deleteGroup: (id: string) => {
+        setGroups(removeGroup(id));
+      },
       generateNode: async (nodeId: string, body?: { prompt?: string; count?: number }) => {
         const client = clientRef.current;
         if (!client) return;
@@ -449,10 +557,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         });
       },
     };
-  }, [choosingId, doc, enqueue, projectId, run]);
+  }, [choosingId, doc, enqueue, groups.length, projectId, run, selectedIds]);
 
   function create(
-    kind: "brief" | "ref_image" | "image" | "video" | "script",
+    kind: "brief" | "ref_image" | "image" | "video" | "script" | "audio",
     at?: CanvasPoint,
   ) {
     const client = clientRef.current;
@@ -486,7 +594,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   }
 
   const isEmpty = !doc.nodes.some((node) =>
-    ["brief", "ref_image", "shot", "image", "video", "script"].includes(node.kind),
+    ["brief", "ref_image", "shot", "image", "video", "script", "audio"].includes(node.kind),
   );
 
   return (
@@ -672,6 +780,61 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         </div>
         ) : null}
       </div>
+      {selectedIds.length >= 2 ? (
+        <div className="hilatv-canvas-groupbar" role="group" aria-label="打组">
+          <span className="text-caption text-text-2">已选 {selectedIds.length} 个节点</span>
+          <input
+            value={groupName}
+            onChange={(event) => setGroupName(event.target.value)}
+            placeholder="组合名字（可留空）"
+            aria-label="组合名字"
+            className="hilatv-canvas-groupbar-input"
+          />
+          <button
+            type="button"
+            className="hilatv-canvas-groupbar-save"
+            onClick={() => actions.saveGroup(groupName)}
+          >
+            打组存入工具箱
+          </button>
+        </div>
+      ) : null}
+      {toolboxOpen ? (
+        <div className="hilatv-canvas-toolbox" role="dialog" aria-label="工具箱">
+          <p className="px-2 pb-1 text-caption text-text-3">工具箱 · 本机保存的组合</p>
+          {groups.length === 0 ? (
+            <p className="px-2 py-1 text-caption text-text-3">框选两个以上节点，点「打组存入工具箱」。</p>
+          ) : (
+            groups.map((group) => (
+              <div key={group.id} className="flex items-center gap-2 px-2 py-1">
+                <span className="min-w-0 flex-1 truncate text-small text-text-1">{group.name}</span>
+                <span className="text-caption text-text-3">{group.nodes.length} 节点</span>
+                <button
+                  type="button"
+                  className="rounded-sm px-2 py-1 text-caption text-text-1 hover:bg-hover"
+                  onClick={() => actions.applyGroup(group)}
+                >
+                  套用
+                </button>
+                <button
+                  type="button"
+                  className="rounded-sm px-2 py-1 text-caption text-text-3 hover:bg-hover hover:text-danger"
+                  onClick={() => actions.deleteGroup(group.id)}
+                >
+                  删除
+                </button>
+              </div>
+            ))
+          )}
+          <button
+            type="button"
+            className="mt-1 w-full rounded-sm px-2 py-1 text-left text-caption text-text-3 hover:bg-hover"
+            onClick={() => setToolboxOpen(false)}
+          >
+            关闭
+          </button>
+        </div>
+      ) : null}
       <TimelineTrack
         doc={doc}
         busy={busyShot !== null}

@@ -32,14 +32,15 @@ from workers.workflow.store import (
 _MAX_NODES = 40
 _MAX_EDGES = 200
 _MAX_TEXT = 4000
-_USER_KINDS = frozenset({"brief", "ref_image", "image", "video", "script"})
-_CONTENT_KINDS = frozenset({"image", "video"})
+_USER_KINDS = frozenset({"brief", "ref_image", "image", "video", "script", "audio"})
+_CONTENT_KINDS = frozenset({"image", "video", "audio"})
 _LABELS = {
     "brief": "需求文本",
     "ref_image": "参考图",
     "image": "图片",
     "video": "视频",
     "script": "脚本",
+    "audio": "音频",
 }
 _ROLES = frozenset({"reference", "text", "feeds_final", "pipeline"})
 
@@ -284,12 +285,19 @@ def add_node(project_id: str, body: dict[str, Any], *, enterprise_id: str) -> di
             stored = {"prompt": _prompt_text(data.get("prompt")), "candidates": []}
         if kind == "script":
             stored = {"prompt": _prompt_text(data.get("prompt"))}
+        if kind == "audio":
+            stored = {
+                "prompt": _prompt_text(data.get("prompt")),
+                "mode": "music",
+                "candidates": [],
+            }
         prefix = {
             "brief": "brief",
             "ref_image": "ref",
             "image": "img",
             "video": "vid",
             "script": "scr",
+            "audio": "aud",
         }[str(kind)]
         node = UserNode(
             id=_fresh_id(prefix),
