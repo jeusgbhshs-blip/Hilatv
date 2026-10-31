@@ -341,3 +341,22 @@ def test_regenerate_does_not_touch_another_shot(tmp_path, monkeypatch) -> None:
     update_snapshot("solo", status="running")
     busy = client.post("/v1/projects/solo/shots/S01/regenerate", json={})
     assert busy.status_code == 409
+
+
+def test_blank_project_opens_an_empty_canvas(tmp_path, monkeypatch) -> None:
+    """LibTV 式入口：先要一块空白画布，再在画布上生成。"""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    ident = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+    created = client.post("/v1/projects/blank", json={"sentence": "先搭画布"})
+    assert created.status_code == 201, created.text
+    project_id = created.json()["project_id"]
+    snapshot = client.get(f"/v1/projects/{project_id}").json()
+    assert snapshot["status"] == "draft"
+    canvas = client.get(f"/v1/projects/{project_id}/canvas").json()
+    assert canvas["shots"] == []
+    assert canvas["nodes"][-1]["kind"] == "final"
+    assert canvas["timeline"]["present"] is False

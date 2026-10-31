@@ -405,3 +405,54 @@
   border: 0;
   background: transparent;
 }
+
+/* 空白画布：LibTV 式开场，提示双击加节点并给两个真能用的入口。 */
+.hilatv-canvas-empty {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  pointer-events: none;
+}
+
+.hilatv-canvas-empty-hint {
+  font-size: 13px;
+  letter-spacing: 2px;
+  color: var(--text-3);
+}
+
+.hilatv-canvas-empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.hilatv-canvas-empty-card {
+  display: flex;
+  width: 150px;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 18px 12px;
+  font-size: 14px;
+  color: var(--text-1);
+}
+
+.hilatv-canvas-empty-card:hover:not(:disabled) {
+  border-color: var(--border-strong);
+  background: var(--raised);
+}
+
+.hilatv-canvas-empty-card:disabled {
+  cursor: not-allowed;
+  color: var(--text-disabled);
+}

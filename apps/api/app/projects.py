@@ -36,6 +36,7 @@ from workers.workflow.contract import PIPELINE
 from workers.workflow.revise import RevisionError, revise_project
 from workers.workflow.service import release_film, start_film
 from workers.workflow.store import (
+    init_project,
     load_checkpoint,
     locked_project,
     project_path,
@@ -365,6 +366,38 @@ async def upload_asset(
     (folder / ".enterprise").write_text(identity.enterprise_id, encoding="utf-8")
     log_event("upload_stored", service="hilatv-api", kind=kind, size=size)
     return {"upload_id": upload_id, "kind": kind, "filename": filename}
+
+
+class BlankProject(BaseModel):
+    """LibTV 式入口：先开一块空白画布，生成在画布上做。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str = Field(default="", max_length=4000)
+
+
+@router.post("/v1/projects/blank")
+def create_blank_project(
+    body: BlankProject,
+    identity: Identity = Depends(require_identity),
+) -> JSONResponse:
+    project_id = str(uuid.uuid4())
+    init_project(
+        project_id,
+        sentence=body.sentence.strip(),
+        status="draft",
+        phase="画布",
+        message="空白画布：双击加节点",
+        shots=[],
+        events=[],
+        enterprise_id=identity.enterprise_id,
+        work_dir=str(project_path(project_id)),
+    )
+    log_event("blank_project_created", service="hilatv-api", project_id=project_id)
+    return JSONResponse(
+        status_code=201,
+        content={"project_id": project_id, "status": "draft"},
+    )
 
 
 @router.post("/v1/projects")

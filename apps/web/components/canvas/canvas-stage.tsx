@@ -19,6 +19,7 @@ import {
 } from "@xyflow/react";
 import Image from "next/image";
 import Link from "next/link";
+import { Clapperboard, Image as ImageIcon, Sparkles, TextCursorInput } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CanvasAddMenu, CanvasToolRail } from "@/components/canvas/add-menu";
@@ -63,7 +64,8 @@ const FREE = new Set(["brief", "ref_image", "shot", "final"]);
 
 /** 管线工序是内部节点，LibTV 式画布只铺内容节点。 */
 function visibleFlow(snapshot: CanvasSnapshot): { nodes: CanvasNode[]; edges: CanvasSnapshot["edges"] } {
-  const nodes = snapshot.nodes.filter((node) => FREE.has(node.kind));
+  const content = snapshot.nodes.filter((node) => ["brief", "ref_image", "shot"].includes(node.kind));
+  const nodes = snapshot.nodes.filter((node) => FREE.has(node.kind) && (node.kind !== "final" || content.length > 0));
   const ids = new Set(nodes.map((node) => node.id));
   return { nodes, edges: snapshot.edges.filter((edge) => ids.has(edge.source) && ids.has(edge.target)) };
 }
@@ -424,6 +426,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     );
   }
 
+  const isEmpty = !doc.nodes.some((node) =>
+    ["brief", "ref_image", "shot"].includes(node.kind),
+  );
+
   return (
     <div className="hilatv-canvas-workspace" data-theme="dark" data-stage="canvas" data-standalone="true">
       <header className="hilatv-canvas-topbar">
@@ -457,6 +463,33 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       <div className="hilatv-canvas-body">
         <div className="hilatv-canvas-pane" data-testid="expert-flow">
           <CanvasToolRail />
+          {isEmpty ? (
+            <div className="hilatv-canvas-empty" data-testid="canvas-empty">
+              <p className="hilatv-canvas-empty-hint">双击画布，自由生成节点</p>
+              <div className="hilatv-canvas-empty-actions">
+                <button type="button" className="hilatv-canvas-empty-card" onClick={() => create("brief")}>
+                  <TextCursorInput aria-hidden="true" className="size-5" strokeWidth={1.5} />
+                  <span>文本节点</span>
+                  <span className="text-caption text-text-3">写一句话</span>
+                </button>
+                <button type="button" className="hilatv-canvas-empty-card" onClick={() => create("ref_image")}>
+                  <ImageIcon aria-hidden="true" className="size-5" strokeWidth={1.5} />
+                  <span>图片节点</span>
+                  <span className="text-caption text-text-3">产品图 / 参考图</span>
+                </button>
+                <button type="button" className="hilatv-canvas-empty-card" disabled>
+                  <Sparkles aria-hidden="true" className="size-5" strokeWidth={1.5} />
+                  <span>脚本分镜</span>
+                  <span className="text-caption text-text-3">建设中</span>
+                </button>
+                <button type="button" className="hilatv-canvas-empty-card" disabled>
+                  <Clapperboard aria-hidden="true" className="size-5" strokeWidth={1.5} />
+                  <span>视频节点</span>
+                  <span className="text-caption text-text-3">建设中</span>
+                </button>
+              </div>
+            </div>
+          ) : null}
           <CanvasActionsProvider value={actions}>
             <ReactFlow
               className="hilatv-canvas"
@@ -563,7 +596,7 @@ function AutoFitView({ ready }: { ready: boolean }) {
   useEffect(() => {
     if (!ready || done.current) return;
     done.current = true;
-    const timer = window.setTimeout(() => void fitView({ padding: 0.2, duration: 0 }), 240);
+    const timer = window.setTimeout(() => void fitView({ padding: 0.2, duration: 0, maxZoom: 1 }), 240);
     return () => window.clearTimeout(timer);
   }, [fitView, ready]);
   return null;

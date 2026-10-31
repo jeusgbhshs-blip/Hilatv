@@ -2,7 +2,10 @@
 
 import { Clapperboard, Film, Image as ImageIcon, TextCursorInput } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+
+import { apiFetch, errorMessage } from "@/lib/api";
 
 const LAST_PROJECT_KEY = "hilatv.lastProject";
 
@@ -18,15 +21,39 @@ const NODES = [
  * 首页只放一个入口模块，点进去才是整页画布。
  */
 export function CanvasEntry() {
+  const router = useRouter();
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setProjectId(window.localStorage.getItem(LAST_PROJECT_KEY));
   }, []);
 
-  const href = projectId ? `/projects/${projectId}/expert` : "/projects";
-  const label = projectId ? "打开专家画布" : "先去生成一条片子";
-  const hint = projectId ? "接着调这一条片的每一镜" : "生成完成后，这里会直接进画布";
+  // LibTV 式入口：不先生成成片，直接开一块空白画布，在画布上搭节点。
+  async function openBlankCanvas() {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await apiFetch("/v1/projects/blank", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sentence: "" }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const created = (await response.json()) as { project_id?: string };
+      if (!created.project_id) throw new Error("没有拿到项目编号");
+      window.localStorage.setItem(LAST_PROJECT_KEY, created.project_id);
+      router.push(`/projects/${created.project_id}/expert`);
+    } catch (caught) {
+      setBusy(false);
+      setError(caught instanceof Error ? caught.message : "打不开画布");
+    }
+  }
+
+  const href = projectId ? `/projects/${projectId}/expert` : null;
+  const label = projectId ? "打开专家画布" : "直接进画布";
+  const hint = projectId ? "接着调这一条片的每一镜" : "不先生成成片，进画布再搭节点";
 
   return (
     <section aria-labelledby="expert-entry-title" className="border-t border-border px-4 py-16 md:px-6">
@@ -39,13 +66,35 @@ export function CanvasEntry() {
           <p className="mt-3 text-body text-text-2">
             需求、参考图、镜头、成片都是可以拖动和连线的卡片。换候选、重做其中一镜、拖时间轴，都在一张画布上完成。画面上的字和价格仍然由后期叠上去。
           </p>
-          <Link
-            href={href}
-            className="mt-6 inline-flex min-h-11 items-center rounded-full border border-border-strong px-4 text-small text-text-1 transition-colors duration-fast hover:border-text-3"
-          >
-            {label}
-          </Link>
+          {href ? (
+            <Link
+              href={href}
+              className="mt-6 inline-flex min-h-11 items-center rounded-full border border-border-strong px-4 text-small text-text-1 transition-colors duration-fast hover:border-text-3"
+            >
+              {label}
+            </Link>
+          ) : (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => void openBlankCanvas()}
+              className="mt-6 inline-flex min-h-11 items-center rounded-full border border-border-strong px-4 text-small text-text-1 transition-colors duration-fast hover:border-text-3 disabled:cursor-not-allowed disabled:text-text-disabled"
+            >
+              {busy ? "正在开画布" : label}
+            </button>
+          )}
           <p className="mt-3 text-caption text-text-3">{hint}</p>
+          {error ? <p className="mt-2 text-caption text-danger">{error}</p> : null}
+          <button
+            type="button"
+            onClick={() => {
+              window.localStorage.removeItem(LAST_PROJECT_KEY);
+              setProjectId(null);
+            }}
+            className="mt-2 block text-caption text-text-3 hover:text-text-2"
+          >
+            换一块空白画布
+          </button>
         </div>
 
         <div aria-hidden="true" className="md:w-1/2">
