@@ -118,6 +118,9 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const [choosingId, setChoosing] = useState<string | null>(null);
   const [busyShot, setBusyShot] = useState<string | null>(null);
   const [focus, setFocus] = useState<InspectorFocus | null>(null);
+  const [scriptOpen, setScriptOpen] = useState(false);
+  const [scriptText, setScriptText] = useState("");
+  const [scriptBusy, setScriptBusy] = useState(false);
 
   const syncFlow = useCallback((next: CanvasSnapshot) => {
     const positions = new Map(nodesRef.current.map((node) => [node.id, node.position]));
@@ -346,6 +349,18 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const actions = useMemo<CanvasActions>(() => {
     return {
       doc: doc ?? emptyDoc(projectId),
+      storyboard: async (sentence: string) => {
+        const client = clientRef.current;
+        if (!client) return;
+        setScriptBusy(true);
+        try {
+          await enqueue(() => client.buildStoryboard(sentence), "adopt");
+          setScriptOpen(false);
+          setScriptText("");
+        } finally {
+          setScriptBusy(false);
+        }
+      },
       choosingId,
       setChoosing,
       regenerate: (shotId: string, copy?: RegenerateWrite) => {
@@ -504,10 +519,14 @@ export function CanvasStage({ projectId }: { projectId: string }) {
                   <span>图片节点</span>
                   <span className="text-caption text-text-3">产品图 / 参考图</span>
                 </button>
-                <button type="button" className="hilatv-canvas-empty-card" disabled>
+                <button
+                  type="button"
+                  className="hilatv-canvas-empty-card"
+                  onClick={() => setScriptOpen(true)}
+                >
                   <Sparkles aria-hidden="true" className="size-5" strokeWidth={1.5} />
                   <span>脚本分镜</span>
-                  <span className="text-caption text-text-3">建设中</span>
+                  <span className="text-caption text-text-3">一句话出分镜</span>
                 </button>
                 <button type="button" className="hilatv-canvas-empty-card" disabled>
                   <Clapperboard aria-hidden="true" className="size-5" strokeWidth={1.5} />
@@ -515,6 +534,37 @@ export function CanvasStage({ projectId }: { projectId: string }) {
                   <span className="text-caption text-text-3">建设中</span>
                 </button>
               </div>
+              {scriptOpen ? (
+                <div className="hilatv-canvas-empty-compose" role="dialog" aria-label="一句话生成分镜">
+                  <label className="text-caption text-text-3" htmlFor="canvas-script">
+                    写一句话，先生成分镜脚本（不跑成片）
+                  </label>
+                  <textarea
+                    id="canvas-script"
+                    value={scriptText}
+                    onChange={(event) => setScriptText(event.target.value)}
+                    placeholder="例如：给高压球阀做一条 15 秒产品宣传片，面向采购，风格稳重"
+                    className="min-h-24 rounded-sm border border-border bg-raised px-2 py-2 text-small text-text-1"
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex min-h-10 items-center rounded-full border border-blue px-4 text-small text-text-1 hover:bg-blue-soft disabled:cursor-not-allowed disabled:text-text-disabled"
+                      disabled={scriptBusy || !scriptText.trim()}
+                      onClick={() => void actions.storyboard(scriptText)}
+                    >
+                      {scriptBusy ? "正在生成分镜" : "生成分镜"}
+                    </button>
+                    <button
+                      type="button"
+                      className="inline-flex min-h-10 items-center rounded-full px-3 text-small text-text-2 hover:bg-hover hover:text-text-1"
+                      onClick={() => setScriptOpen(false)}
+                    >
+                      取消
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
           ) : null}
           <CanvasActionsProvider value={actions}>

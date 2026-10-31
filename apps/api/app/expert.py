@@ -23,6 +23,7 @@ from workers.expert.desk import (
 )
 from workers.expert.gates import GateError
 from workers.expert.rerun import rerun_span, save_timeline, select_candidate
+from workers.expert.script_flow import build_storyboard
 from workers.expert.shot_action import regenerate_shot, set_reference
 from workers.expert.timeline_edit import save_structured_timeline
 from workers.expert.uploads import resolve_upload
@@ -264,6 +265,26 @@ def project_media(
         raise HTTPException(status_code=404, detail="没有可看的画面")
     media_type = _MEDIA.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media_type, filename=Path(path).name)
+
+
+class ScriptBody(BaseModel):
+    """画布上的脚本入口：一句话长出分镜，不跑完整条片。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str = Field(default="", max_length=4000)
+
+
+@router.post("/v1/projects/{project_id}/canvas/script")
+def project_canvas_script(
+    project_id: str,
+    body: ScriptBody,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    from gateway import get_gateway
+
+    return _call(lambda: build_storyboard(project_id, body.sentence, gateway=get_gateway()))
 
 
 @router.put("/v1/projects/{project_id}/canvas/layout")

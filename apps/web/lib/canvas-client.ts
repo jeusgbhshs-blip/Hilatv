@@ -49,6 +49,7 @@ export type CanvasClient = {
   selectCandidate(body: SelectWrite): Promise<CanvasSnapshot>;
   saveTimeline(body: TimelineWrite): Promise<CanvasSnapshot>;
   uploadImage(file: File): Promise<{ upload_id: string; thumbnail_url: string }>;
+  buildStoryboard(sentence: string): Promise<CanvasSnapshot>;
 };
 
 const OVERLAY_PREFIX = "hilatv.canvas.overlay.v0.";
@@ -421,6 +422,17 @@ export function createCanvasClient(projectId: string, storage?: KeyValueStore): 
       }
       await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/timeline`, buildTimelineBody(current.server_timeline, body.clips)).catch(() => null);
       return remember(markMock(store.saveTimeline(body)));
+    },
+
+    async buildStoryboard(sentence) {
+      const response = await sendJson(canvasPath(projectId, "/canvas/script"), "POST", { sentence });
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      const parsed = (await response.json()) as unknown;
+      const remote = contractWith(parsed);
+      if (remote) return remember(remote);
+      const reloaded = await loadFromApi();
+      if (reloaded) return remember(reloaded);
+      throw new CanvasRequestError(502, "生成分镜之后没有拿到画布");
     },
 
     async uploadImage(file) {

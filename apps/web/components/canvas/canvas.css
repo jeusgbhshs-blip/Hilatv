@@ -456,3 +456,15 @@
   cursor: not-allowed;
   color: var(--text-disabled);
 }
+
+/* 空白画布上的一句话分镜：脚本入口的小面板。 */
+.hilatv-canvas-empty-compose {
+  display: grid;
+  width: min(520px, 90vw);
+  gap: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+  padding: 16px;
+  pointer-events: auto;
+}

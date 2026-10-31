@@ -384,3 +384,27 @@ def test_project_list_is_per_enterprise_and_each_has_a_canvas(tmp_path, monkeypa
     # 两个项目的画布是分开的
     assert client.get(f"/v1/projects/{first}/canvas").status_code == 200
     assert client.get(f"/v1/projects/{second}/canvas").status_code == 200
+
+
+def test_blank_canvas_grows_a_storyboard_from_one_sentence(tmp_path, monkeypatch) -> None:
+    """画布里的一句话：脚本入口跑 N1/N4/N5，长出分镜镜头，不跑视频。"""
+
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    monkeypatch.setenv("HILATV_LIVE", "0")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    ident = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+    project_id = client.post("/v1/projects/blank", json={"sentence": ""}).json()["project_id"]
+    made = client.post(
+        f"/v1/projects/{project_id}/canvas/script",
+        json={"sentence": "给高压球阀做一条 15 秒产品宣传片，面向采购，风格稳重"},
+    )
+    assert made.status_code == 200, made.text
+    canvas = made.json()
+    shots = [node for node in canvas["nodes"] if node["kind"] == "shot"]
+    assert len(shots) >= 1
+    assert all(shot["data"]["candidates"] == [] for shot in shots)
+    assert canvas["timeline"]["present"] is False
+    snapshot = client.get(f"/v1/projects/{project_id}").json()
+    assert snapshot["status"] == "draft"
