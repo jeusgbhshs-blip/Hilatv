@@ -113,14 +113,19 @@ def revise_project(
         }
     directory = project_path(project_id)
     _maybe_fetch_logo(directory, text, parsed.payload.get("directive") or {})
-    outcome = _execute(
-        directory,
-        project_id,
-        held["snapshot"],
-        held["state"],
-        parsed.payload,
-        gateway=gateway,
-    )
+    try:
+        outcome = _execute(
+            directory,
+            project_id,
+            held["snapshot"],
+            held["state"],
+            parsed.payload,
+            gateway=gateway,
+        )
+    except RevisionError:
+        raise
+    except Exception as exc:
+        raise RevisionError(f"改稿未能完成，上一版已保留：{exc}"[:400]) from exc
     with locked_project(project_id) as directory:
         _recover_restore(directory)
         snapshot = _read_snapshot(directory)
@@ -255,7 +260,10 @@ def _execute(
             continue
         video_shots.append(shot_id)
     patches = _patches(directory)
-    width, height = _canvas()
+    from workers.workflow.activities import production_clock
+
+    clock = production_clock({"request": snapshot, "state": state})
+    width, height = _canvas(brief)
     executed: list[str] = []
     voiceovers = list(state.get("voiceovers") or [])
     keyframes = list(state.get("keyframes") or [])
@@ -278,7 +286,7 @@ def _execute(
             brand,
             brief if "n10_video" in nodes else None,
             gateway,
-            keep_duration="n10_video" not in nodes,
+            keep_duration=bool(clock) or "n10_video" not in nodes,
             enterprise_id=enterprise_id,
         )
         executed.append("n06_voiceover")
@@ -335,6 +343,7 @@ def _execute(
             height,
             brand_logo=change.get("logo") != "remove",
             enterprise_id=enterprise_id,
+            **({"clock": clock} if clock else {}),
         )
         executed.append("n14_packaging")
         ran_picture = True
@@ -354,6 +363,7 @@ def _execute(
             outro_s,
             width,
             height,
+            **({"clock": clock} if clock else {}),
         )
         executed.append("n15_compose")
         deliverable = master_path or deliverable
@@ -616,6 +626,7 @@ def _package(
     *,
     brand_logo: bool,
     enterprise_id: str | None = None,
+    clock: dict[str, float] | None = None,
 ):
     from workers.nodes.n14_packaging.node import run
 
@@ -624,6 +635,7 @@ def _package(
             "project_id": project_id,
             "payload": {
                 "script": script.model_dump(mode="json"),
+                **(clock or {}),
                 "brand_kit": brand,
                 "brief": brief,
                 "width": width,
@@ -657,6 +669,8 @@ def _compose(
     outro_s,
     width,
     height,
+    *,
+    clock: dict[str, float] | None = None,
 ):
     from workers.nodes.n15_compose.node import run
 
@@ -665,6 +679,7 @@ def _compose(
             "project_id": project_id,
             "payload": {
                 "script": script.model_dump(mode="json"),
+                **({"target_duration_s": clock["target_duration_s"]} if clock else {}),
                 "voiceovers": voiceovers,
                 "cues": cues,
                 "elements": elements,
@@ -910,7 +925,11 @@ def _work(directory: Path, name: str) -> Path:
     return path
 
 
-def _canvas() -> tuple[int, int]:
+def _canvas(brief: dict[str, Any] | None = None) -> tuple[int, int]:
+    if isinstance(brief, dict) and brief.get("aspect_ratios"):
+        from workers.media.packaging import canvas_size
+
+        return canvas_size(brief["aspect_ratios"][0])
     try:
         width = int(os.getenv("HILATV_RENDER_WIDTH") or "192")
         height = int(os.getenv("HILATV_RENDER_HEIGHT") or "108")

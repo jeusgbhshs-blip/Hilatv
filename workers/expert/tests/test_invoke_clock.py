@@ -45,8 +45,11 @@ def context(tmp_path, monkeypatch):
     return SimpleNamespace(
         state=state,
         snapshot={"sentence": "十五秒产品宣传", "generation_settings": dict(SETTINGS)},
-        gateway=object(), clock_calls=clock_calls, story_calls=story_calls,
-        font_calls=font_calls, root=tmp_path,
+        gateway=object(),
+        clock_calls=clock_calls,
+        story_calls=story_calls,
+        font_calls=font_calls,
+        root=tmp_path,
     )
 
 
@@ -56,7 +59,8 @@ def fake_node(monkeypatch, name: str, context, payload: dict[str, Any]):
     def run(raw, **kwargs):
         calls.append(raw)
         assert kwargs == {
-            "timeout_s": invoke.node_timeout(name), "max_attempts": 1,
+            "timeout_s": invoke.node_timeout(name),
+            "max_attempts": 1,
             "gateway": context.gateway,
         }
         return SimpleNamespace(payload=payload)
@@ -68,8 +72,12 @@ def fake_node(monkeypatch, name: str, context, payload: dict[str, Any]):
 
 def run_node(context, name: str, *, shot_id: str | None = None):
     return invoke.invoke_node(
-        name, project_id="clock-project", state=context.state,
-        snapshot=context.snapshot, shot_id=shot_id, gateway=context.gateway,
+        name,
+        project_id="clock-project",
+        state=context.state,
+        snapshot=context.snapshot,
+        shot_id=shot_id,
+        gateway=context.gateway,
         enterprise_id="enterprise-a",
     )
 
@@ -89,9 +97,12 @@ def test_story_runners_forward_body_budget_and_n04_saves_clock(context, monkeypa
     patch = run_node(context, node)
     assert calls[0]["payload"]["story_duration_s"] == 14.0
     assert "target_duration_s" not in calls[0]["payload"]
-    assert context.story_calls == [{
-        "request": {"generation_settings": SETTINGS}, "state": context.state,
-    }]
+    assert context.story_calls == [
+        {
+            "request": {"generation_settings": SETTINGS},
+            "state": context.state,
+        }
+    ]
     assert context.story_calls[0]["state"] is context.state
     if node == "n04_script":
         assert patch["production_clock"] == CLOCK
@@ -102,26 +113,38 @@ def test_story_runners_forward_body_budget_and_n04_saves_clock(context, monkeypa
 @pytest.mark.parametrize("node", ["n06_voiceover", "n12_music", "n14_packaging"])
 def test_whole_film_runners_forward_the_complete_production_clock(context, monkeypatch, node):
     payload = {
-        "script": context.state["script"], "voiceovers": [],
-        "audio_track": {"path": "server-owned-mix.wav"}, "licensing_summary": {},
+        "script": context.state["script"],
+        "voiceovers": [],
+        "audio_track": {"path": "server-owned-mix.wav"},
+        "licensing_summary": {},
         "aligned_script": context.state["script"],
         "elements": [{"kind": "ai_label", "text": "AI生成"}],
-        "intro_s": 0.0, "outro_s": 1.0,
+        "intro_s": 0.0,
+        "outro_s": 1.0,
     }
     calls = fake_node(monkeypatch, node, context, payload)
     run_node(context, node)
     assert {key: calls[0]["payload"][key] for key in CLOCK} == CLOCK
-    assert context.clock_calls == [{
-        "request": {"generation_settings": SETTINGS}, "state": context.state,
-    }]
+    assert context.clock_calls == [
+        {
+            "request": {"generation_settings": SETTINGS},
+            "state": context.state,
+        }
+    ]
     if node == "n14_packaging":
         assert context.font_calls == [True]
 
 
 def test_single_shot_voice_rerun_never_receives_the_whole_film_clock(context, monkeypatch):
-    calls = fake_node(monkeypatch, "n06_voiceover", context, {
-        "script": context.state["script"], "voiceovers": [],
-    })
+    calls = fake_node(
+        monkeypatch,
+        "n06_voiceover",
+        context,
+        {
+            "script": context.state["script"],
+            "voiceovers": [],
+        },
+    )
     run_node(context, "n06_voiceover", shot_id="S01")
     assert calls[0]["shot_id"] == "S01"
     assert calls[0]["payload"]["script"]["shots"][0]["duration_s"] == 3.0
@@ -146,13 +169,21 @@ def compose_node(context, monkeypatch, *, label=True):
         work.mkdir(parents=True)
         (work / "master.mp4").write_bytes(b"new attempt only")
         calls.append(raw)
-        return SimpleNamespace(payload={
-            "exports": {"master": str(work / "master.mp4"),
-                        "clean_picture": str(work / "clean-picture.mp4")},
-            "timeline": {"width": 720, "height": 1280, "duration_s": 15.0,
-                         "overlays": [{"kind": "ai_label", "text": "AI生成"}] if label else []},
-            "timeline_path": str(work / "timeline.json"),
-        })
+        return SimpleNamespace(
+            payload={
+                "exports": {
+                    "master": str(work / "master.mp4"),
+                    "clean_picture": str(work / "clean-picture.mp4"),
+                },
+                "timeline": {
+                    "width": 720,
+                    "height": 1280,
+                    "duration_s": 15.0,
+                    "overlays": [{"kind": "ai_label", "text": "AI生成"}] if label else [],
+                },
+                "timeline_path": str(work / "timeline.json"),
+            }
+        )
 
     monkeypatch.setattr("workers.nodes.n15_compose.node.run", run)
     return calls
@@ -176,8 +207,12 @@ def test_compose_uses_actual_packaging_and_immutable_attempts_with_clean_picture
         assert Path(payload["work_dir"]).parent == previous.parent / "renders"
         assert len(Path(payload["work_dir"]).name) == 32
         assert patch["clean_picture_path"] == patch["exports"]["clean_picture"]
-        assert patch["timeline"] == {"width": 720, "height": 1280, "duration_s": 15.0,
-                                     "overlays": [{"kind": "ai_label", "text": "AI生成"}]}
+        assert patch["timeline"] == {
+            "width": 720,
+            "height": 1280,
+            "duration_s": 15.0,
+            "overlays": [{"kind": "ai_label", "text": "AI生成"}],
+        }
     assert first["deliverable"] != second["deliverable"]
     assert previous.read_bytes() == b"previous approved bytes"
     assert context.font_calls == [True, True]

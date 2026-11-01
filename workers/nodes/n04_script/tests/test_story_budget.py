@@ -17,12 +17,12 @@ from workers.qa.copycheck import count_units, target_units, within_target
 FIXTURES = Path(__file__).resolve().parents[3] / "schemas" / "tests" / "fixtures"
 
 
-@pytest.mark.parametrize("whole", [15, 30, 60])
+@pytest.mark.parametrize("whole", [5, 6, 15, 30, 60])
 def test_planning_reserves_packaging_without_relabeling_the_requested_total(gateway, whole):
     brief = json.loads((FIXTURES / "brief.json").read_text())
     brief.update(duration_s=whole, languages=["zh"])
     brand = json.loads((FIXTURES / "brand_kit.json").read_text())
-    body = whole - 2.4
+    body = whole - min(2.4, max(0, whole - 4))
     scripted = write_script(
         {
             "project_id": "budget-plan",
