@@ -56,6 +56,18 @@ test("aspect, language, and duration each load that cut", async ({ page }) => {
   expect(await download.failure()).toBeNull();
   await page.getByLabel("文件", { exact: true }).selectOption("master");
   await expect(player).toHaveAttribute("data-aspect", "master");
+  for (const label of ["比例", "语种", "时长"]) {
+    const filter = page.getByLabel(label, { exact: true });
+    await expect(filter).toBeDisabled();
+    await expect(filter).toHaveValue("master");
+    await expect(filter.getByRole("option", { name: "当前母版", exact: true })).toHaveJSProperty("selected", true);
+  }
+  await expect(page.getByTestId("actual-media")).toContainText("720 × 1280 · 18.4 秒");
+  await page.getByLabel("文件", { exact: true }).selectOption("export");
+  await expect(page.getByLabel("导出结果", { exact: true })).toHaveValue("short");
+  await expect(player).toHaveAttribute("data-version-id", "short");
+  await expect(page.getByLabel("时长", { exact: true })).toHaveValue("5");
+  await page.getByLabel("文件", { exact: true }).selectOption("master");
   await expect(page.getByRole("button", { name: "保存预览", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "下载成片", exact: true })).toHaveCount(0);
   await expect(page.getByLabel("导出画幅", { exact: true })).toHaveValue("9:16");

@@ -497,25 +497,25 @@ export function FilmStage({ projectId }: { projectId: string }) {
               <VersionSelect
                 id="aspect"
                 label="比例"
-                value={choice.aspect}
+                value={fileKind === "export" ? choice.aspect : "master"}
                 disabled={fileKind !== "export" || aspects.length === 0}
-                options={aspects.map((item) => ({ value: item, label: aspectLabel(item) }))}
+                options={fileKind === "export" ? aspects.map((item) => ({ value: item, label: aspectLabel(item) })) : [{ value: "master", label: "当前母版" }]}
                 onChange={(value) => choose({ aspect: value })}
               />
               <VersionSelect
                 id="language"
                 label="语种"
-                value={choice.language}
+                value={fileKind === "export" ? choice.language : "master"}
                 disabled={fileKind !== "export" || languages.length === 0}
-                options={languages.map((item) => ({ value: item, label: languageLabel(item) }))}
+                options={fileKind === "export" ? languages.map((item) => ({ value: item, label: languageLabel(item) })) : [{ value: "master", label: "当前母版" }]}
                 onChange={(value) => choose({ language: value })}
               />
               <VersionSelect
                 id="duration"
                 label="时长"
-                value={choice.duration === null ? "" : String(choice.duration)}
+                value={fileKind === "export" ? choice.duration === null ? "" : String(choice.duration) : "master"}
                 disabled={fileKind !== "export" || durations.length === 0}
-                options={durations.map((item) => ({ value: String(item), label: durationLabel(item) }))}
+                options={fileKind === "export" ? durations.map((item) => ({ value: String(item), label: durationLabel(item) })) : [{ value: "master", label: "当前母版" }]}
                 onChange={(value) => choose({ duration: Number(value) })}
               />
               <VersionSelect id="export-aspect" label="导出画幅" value={exportRatio} disabled={exporting}
