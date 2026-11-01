@@ -75,6 +75,7 @@ export async function errorMessage(response: Response): Promise<string> {
   try {
     const body = (await response.json()) as { detail?: unknown };
     if (typeof body.detail === "string" && body.detail.trim()) return body.detail;
+    if (body.detail && typeof body.detail === "object" && "message" in body.detail && typeof body.detail.message === "string") return body.detail.message;
   } catch {
     // Not JSON. Fall through to the status text below.
   }

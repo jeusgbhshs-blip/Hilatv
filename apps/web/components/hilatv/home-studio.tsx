@@ -12,7 +12,6 @@ import {
   Waypoints,
   type LucideIcon,
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { type FormEvent, useEffect, useRef, useState } from "react";
 
@@ -24,6 +23,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useProjectDraft } from "@/lib/use-project-draft";
+import { isCompositionEnter, type DraftFile, type DraftLink } from "@/lib/project-draft";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { HOME_ENTRIES, TYPEWRITER_LINES, sentenceFor, type HomeEntry } from "@/lib/home-entries";
 import { cn } from "@/lib/utils";
@@ -49,8 +50,8 @@ const RISE = ["rise-d5", "rise-d6", "rise-d7", "rise-d8", "rise-d9", "rise-d10",
  */
 const FROZEN_OPTIONS = ["比例", "时长", "语言", "品牌资料"] as const;
 
-type PickedFile = { id: string; file: File; preview: string | null };
-type LinkItem = { id: string; uri: string };
+type PickedFile = DraftFile;
+type LinkItem = DraftLink;
 
 function useTypewriter(paused: boolean) {
   const [line, setLine] = useState<string>(TYPEWRITER_LINES[0]);
@@ -106,15 +107,19 @@ export function HomeStudio() {
   const router = useRouter();
   const filesRef = useRef<PickedFile[]>([]);
   const uploadRef = useRef<HTMLInputElement>(null);
-  const [sentence, setSentence] = useState("");
+  const drafts = useProjectDraft();
+  const { sentence, files, links, skip_storyboard: skipStoryboard } = drafts.draft;
+  const setSentence = (value: string) => drafts.field("sentence", value);
+  const setFiles = (value: React.SetStateAction<PickedFile[]>) => drafts.field("files", value);
+  const setLinks = (value: React.SetStateAction<LinkItem[]>) => drafts.field("links", value);
+  const setSkipStoryboard = (value: boolean) => drafts.field("skip_storyboard", value);
+  const submitting = useRef(false);
+  const composing = useRef(false);
   const [entryId, setEntryId] = useState<string | null>(null);
-  const [files, setFiles] = useState<PickedFile[]>([]);
   const [linkDraft, setLinkDraft] = useState("");
-  const [links, setLinks] = useState<LinkItem[]>([]);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [skipStoryboard, setSkipStoryboard] = useState(false);
   const typed = sentence.trim().length > 0;
   const placeholder = useTypewriter(typed);
   filesRef.current = files;
@@ -128,6 +133,7 @@ export function HomeStudio() {
   }, []);
 
   function addFiles(list: File[]) {
+    if (submitting.current) return;
     const picked: PickedFile[] = [];
     let rejected = false;
     for (const file of list) {
@@ -149,6 +155,7 @@ export function HomeStudio() {
   }
 
   function removeFile(id: string) {
+    if (submitting.current) return;
     setFiles((current) => {
       const target = current.find((item) => item.id === id);
       if (target?.preview) URL.revokeObjectURL(target.preview);
@@ -157,6 +164,7 @@ export function HomeStudio() {
   }
 
   function addLink(uri = linkDraft.trim()) {
+    if (submitting.current) return;
     if (!uri) return;
     if (!/^https?:\/\//i.test(uri)) {
       setError("链接需要以 http:// 或 https:// 开头");
@@ -170,6 +178,7 @@ export function HomeStudio() {
   }
 
   function applyEntry(entry: HomeEntry) {
+    if (submitting.current) return;
     setEntryId(entry.id);
     setError(null);
     if (entry.destination === "compose") {
@@ -181,51 +190,46 @@ export function HomeStudio() {
     void createProject(text, "expert");
   }
 
-  async function createProject(text: string, destination: "progress" | "expert") {
+  async function createProject(text: string, destination: "progress" | "expert" | "concept") {
+    if (submitting.current || !drafts.ready) return;
+    if (!text.trim()) { setError("先写一句话"); return; }
+    submitting.current = true;
     setBusy(true);
     setError(null);
     try {
-      const uploaded: { kind: string; upload_id: string; filename: string }[] = [];
-      for (const item of files) {
-        const body = new FormData();
-        body.append("file", item.file, item.file.name);
-        const response = await apiFetch("/v1/uploads", { method: "POST", body });
-        if (!response.ok) throw new Error(await errorMessage(response));
-        const stored = (await response.json()) as { kind?: string; upload_id?: string; filename?: string };
-        if (!stored.upload_id || !stored.kind) throw new Error("上传没有成功");
-        uploaded.push({
-          kind: stored.kind,
-          upload_id: stored.upload_id,
-          filename: stored.filename || item.file.name,
-        });
+      drafts.update({ sentence: text });
+      const saved = await drafts.flush();
+      if (!saved.project_id) throw new Error("草稿尚未确认保存，请重试");
+      if (destination === "concept") {
+        router.push(`/concepts?project=${encodeURIComponent(saved.project_id)}`);
+        return;
       }
-      const response = await apiFetch("/v1/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sentence: text,
-          attachments: [...uploaded, ...links.map((item) => ({ kind: "url", uri: item.uri }))],
-          skip_storyboard: skipStoryboard,
-        }),
+      const operation = saved.start_operation_id || crypto.randomUUID();
+      drafts.update({ start_operation_id: operation });
+      await drafts.persist({ ...saved, start_operation_id: operation });
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(saved.project_id)}/film/start`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation_id: operation, draft_revision: saved.draft_revision }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
-      const created = (await response.json()) as { project_id?: string };
-      if (!created.project_id) throw new Error("没有拿到项目编号");
-      // 首页的「专家画布」模块靠这个编号直接进画布。
-      window.localStorage.setItem("hilatv.lastProject", created.project_id);
-      const path =
-        destination === "expert"
-          ? `/projects/${created.project_id}/expert`
-          : `/projects/${created.project_id}`;
-      router.push(path);
+      const result = await response.json() as { submission_state?: string };
+      if (result.submission_state !== "submitted") throw new Error("这次提交还在确认中，输入已保留。稍后重试会查询同一次提交。");
+      const next = { ...saved, start_operation_id: operation, started: true };
+      drafts.update(next);
+      await drafts.persist(next);
+      window.localStorage.setItem("hilatv.lastProject", saved.project_id);
+      router.push(`/projects/${encodeURIComponent(saved.project_id)}${destination === "expert" ? "/expert" : ""}`);
     } catch (caught) {
-      setBusy(false);
       setError(caught instanceof Error ? caught.message : "提交没有成功");
+    } finally {
+      submitting.current = false;
+      setBusy(false);
     }
   }
 
   function onSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (composing.current) return;
     const text = sentence.trim();
     if (!text) {
       setError("先写一句话");
@@ -275,6 +279,9 @@ export function HomeStudio() {
                   maxLength={4000}
                   value={sentence}
                   placeholder=""
+                  disabled={!drafts.ready || busy}
+                  onCompositionStart={() => { composing.current = true; }}
+                  onCompositionEnd={() => { composing.current = false; }}
                   onChange={(event) => setSentence(event.target.value)}
                   onPaste={(event) => {
                     const pasted = Array.from(event.clipboardData.files);
@@ -290,6 +297,7 @@ export function HomeStudio() {
                     }
                   }}
                   onKeyDown={(event) => {
+                    if (composing.current || isCompositionEnter(event.nativeEvent)) return;
                     if (event.key === "Enter" && !event.shiftKey) {
                       event.preventDefault();
                       event.currentTarget.form?.requestSubmit();
@@ -356,7 +364,7 @@ export function HomeStudio() {
                   type="submit"
                   size="lg"
                   className="btn-sheen w-full rounded-full px-6 sm:w-auto"
-                  disabled={busy}
+                  disabled={busy || !drafts.ready}
                   loading={busy}
                 >
                   {busy ? "正在提交" : "生成"}
@@ -471,6 +479,10 @@ export function HomeStudio() {
                 {error}
               </p>
             ) : null}
+            <p role="status" className="mt-3 text-center text-caption text-text-3">
+              {!drafts.ready ? "正在恢复草稿" : drafts.saving ? "正在保存草稿" : drafts.dirty ? "草稿未同步，输入已保留" : drafts.draft.project_id ? "草稿已保存" : "输入后自动保存"}
+            </p>
+            {drafts.error ? <p role="alert" className="mt-2 text-center text-caption text-danger">{drafts.error}<button type="button" className="ml-2 min-h-11 underline" onClick={() => void drafts.flush().catch(() => undefined)}>重新保存</button></p> : null}
             <p className="rise rise-d5 mt-3 text-center text-caption text-text-3">
               按 Enter 生成 · 支持拖入图片和链接
             </p>
@@ -478,12 +490,9 @@ export function HomeStudio() {
               画面上的字、Logo、价格和电话由后期叠上去，不会画进画面里。
             </p>
             <p className="mt-2 text-center text-small">
-              <Link
-                className="text-blue-text hover:underline"
-                href={sentence.trim() ? `/concepts?sentence=${encodeURIComponent(sentence.trim())}` : "/concepts"}
-              >
+              <button type="button" disabled={busy || !drafts.ready} className="min-h-11 text-blue-text hover:underline disabled:text-text-disabled" onClick={() => void createProject(sentence, "concept")}>
                 先看三个方案
-              </Link>
+              </button>
             </p>
           </form>
 

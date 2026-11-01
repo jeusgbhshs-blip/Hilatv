@@ -8,7 +8,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from app.identity import require_identity
+from app.identity import owned_project, require_identity
 from workers.brand_kit.store import export_record, load_record, read_asset
 from workers.identity.session import Identity, canonical_enterprise
 from workers.nodes.n01_brief.node import run as run_brief
@@ -18,6 +18,7 @@ from workers.nodes.n02_brand_kit.schema import PersonIntake, ProductIntake
 from workers.nodes.n03_concept.node import run as run_concept
 from workers.nodes.n03_concept.qa import QAError as ConceptQAError
 from workers.schemas.brand import Industry
+from workers.workflow.store import locked_project, save_node, update_snapshot
 
 _MAX_B64_CHARS = 8_000_000
 
@@ -95,6 +96,8 @@ class ConceptBody(BaseModel):
 
     sentence: str = Field(min_length=1, max_length=4000)
     selection: str | None = Field(default=None, max_length=80)
+    project_id: str | None = Field(default=None, min_length=1, max_length=80)
+    draft_revision: int | None = Field(default=None, ge=0)
 
 
 def _same_enterprise(path_id: str, identity: Identity) -> None:
@@ -215,22 +218,39 @@ def create_concepts(
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
     enterprise_id = identity.enterprise_id
-    brand = None
-    if enterprise_id:
+    snapshot: dict[str, Any] = {}
+    if body.project_id:
+        owned_project(body.project_id, identity)
+        with locked_project(body.project_id):
+            snapshot = owned_project(body.project_id, identity)
+            if snapshot.get("status") != "draft" or body.draft_revision != snapshot.get(
+                "draft_revision", 0
+            ):
+                raise HTTPException(
+                    status_code=409, detail="草稿已变化，请保存最新输入后再生成方案"
+                )
+            if body.sentence.strip() != str(snapshot.get("sentence") or "").strip():
+                raise HTTPException(status_code=409, detail="请先保存这次输入")
+    brand = snapshot.get("brand_kit")
+    if enterprise_id and not isinstance(brand, dict):
         record = load_record(enterprise_id)
         brand = export_record(record)["brand_kit"] if record else None
     try:
         brief = run_brief(
             {
-                "project_id": "concept-preview",
-                "payload": {"raw_input": body.sentence, "brand_kit": brand},
+                "project_id": body.project_id or "concept-preview",
+                "payload": {
+                    "raw_input": body.sentence,
+                    "brand_kit": brand,
+                    "attachments": snapshot.get("attachments") or [],
+                },
             },
             timeout_s=30,
             max_attempts=1,
         )
         result = run_concept(
             {
-                "project_id": "concept-preview",
+                "project_id": body.project_id or "concept-preview",
                 "payload": {
                     "brief": brief.payload["brief"],
                     "brand_kit": brand,
@@ -243,6 +263,22 @@ def create_concepts(
     except (ConceptQAError, BrandQAError, ValidationError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     concept = result.payload["concept"]
+    if body.project_id:
+        with locked_project(body.project_id):
+            latest = owned_project(body.project_id, identity)
+            if (
+                latest.get("status") != "draft"
+                or latest.get("draft_revision", 0) != body.draft_revision
+            ):
+                raise HTTPException(
+                    status_code=409, detail="生成期间草稿已变化，保留原方案，请基于最新内容重试"
+                )
+            save_node(body.project_id, "n03_concept", {"concept": concept})
+            update_snapshot(
+                body.project_id,
+                concept_preview=concept,
+                concept_preview_sentence=body.sentence.strip(),
+            )
     return {
         "concept": concept,
         "brand_applied": brand is not None,

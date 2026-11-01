@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
 import { apiFetch, apiUrl, ensureSession, errorMessage, withSession } from "@/lib/api";
+import { draftScope } from "@/lib/project-draft";
 import { cardMedia, type StoryboardCard } from "@/lib/storyboard";
 
 export function StoryboardStrip({
@@ -20,6 +21,50 @@ export function StoryboardStrip({
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [token, setToken] = useState("");
+  const [localReady, setLocalReady] = useState(false);
+  const active = useRef(false);
+  const cardsRef = useRef(cards);
+  cardsRef.current = cards;
+  const localKey = useRef("");
+  const pending = useRef<Record<string, { value: string; base: string }>>({});
+  const conflicts = useRef(new Set<string>());
+  const acknowledged = useRef<Record<string, { base: string; value: string }>>({});
+
+  function persistPending() {
+    if (!localKey.current) return;
+    try {
+      if (Object.keys(pending.current).length) window.localStorage.setItem(localKey.current, JSON.stringify(pending.current));
+      else window.localStorage.removeItem(localKey.current);
+    } catch { setError("本地草稿未能保存，请先保存旁白再离开"); }
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const scope = await draftScope();
+        const key = `hilatv.storyboard-drafts.v1.${scope}.${projectId}`;
+        const saved = JSON.parse(window.localStorage.getItem(key) || "{}");
+        if (cancelled) return;
+        localKey.current = key;
+        const restored: Record<string, string> = {};
+        const changed: Record<string, boolean> = {};
+        for (const card of cardsRef.current) {
+          const item = saved?.[card.shot_id];
+          if (!item || typeof item.value !== "string" || typeof item.base !== "string" || item.value === card.voiceover) continue;
+          pending.current[card.shot_id] = item;
+          restored[card.shot_id] = item.value;
+          changed[card.shot_id] = true;
+          if (item.base !== card.voiceover) conflicts.current.add(card.shot_id);
+        }
+        setDrafts((current) => ({ ...current, ...restored }));
+        setDirty((current) => ({ ...current, ...changed }));
+        if (conflicts.current.size) setError("分镜已有新的修改。你的草稿已恢复，请逐镜核对并保存后再继续。");
+      } catch { if (!cancelled) setError("本地草稿未能恢复，请先确认并保存旁白再离开"); }
+      finally { if (!cancelled) setLocalReady(true); }
+    })();
+    return () => { cancelled = true; };
+  }, [projectId]);
 
   useEffect(() => {
     void ensureSession()
@@ -31,53 +76,56 @@ export function StoryboardStrip({
     setDrafts((current) => {
       const next = { ...current };
       for (const card of cards) {
-        if (!dirty[card.shot_id]) next[card.shot_id] = card.voiceover;
+        if (!dirty[card.shot_id]) {
+          const ack = acknowledged.current[card.shot_id];
+          next[card.shot_id] = ack && card.voiceover === ack.base ? ack.value : card.voiceover;
+          if (ack && card.voiceover !== ack.base) delete acknowledged.current[card.shot_id];
+        }
       }
       return next;
     });
   }, [cards, dirty]);
 
+  async function saveOne(shotId: string, voiceover: string) {
+    if (!voiceover.trim()) throw new Error("旁白不能是空的");
+    const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/storyboard/${encodeURIComponent(shotId)}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ voiceover: voiceover.trim() }),
+    });
+    if (!response.ok) throw new Error(await errorMessage(response));
+    acknowledged.current[shotId] = { base: pending.current[shotId]?.base ?? cardsRef.current.find((card) => card.shot_id === shotId)?.voiceover ?? "", value: voiceover.trim() };
+    if (pending.current[shotId]?.value === voiceover) delete pending.current[shotId];
+    conflicts.current.delete(shotId);
+    persistPending();
+    setDirty((current) => ({ ...current, [shotId]: Boolean(pending.current[shotId]) }));
+  }
+
   async function save(shotId: string) {
-    const voiceover = (drafts[shotId] || "").trim();
-    if (!voiceover) {
-      setError("旁白不能是空的");
-      return;
-    }
+    if (active.current) return;
+    active.current = true;
     setBusy(shotId);
     setError(null);
     try {
-      const response = await apiFetch(
-        `/v1/projects/${encodeURIComponent(projectId)}/storyboard/${encodeURIComponent(shotId)}`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ voiceover }),
-        },
-      );
-      if (!response.ok) throw new Error(await errorMessage(response));
-      setDirty((current) => ({ ...current, [shotId]: false }));
+      await saveOne(shotId, pending.current[shotId]?.value ?? drafts[shotId] ?? "");
       onSaved();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "旁白没有保存");
-    } finally {
-      setBusy(null);
-    }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "旁白没有保存"); }
+    finally { active.current = false; setBusy(null); }
   }
 
   async function continueFilm() {
+    if (active.current) return;
+    if (conflicts.current.size) { setError("请先核对并保存有冲突的旁白，再继续生成"); return; }
+    active.current = true;
     setBusy("continue");
     setError(null);
     try {
-      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/storyboard/continue`, {
-        method: "POST",
-      });
+      // All dirty shots must acknowledge before the workflow can resume.
+      for (const [shotId, edit] of Object.entries(pending.current)) await saveOne(shotId, edit.value);
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/storyboard/continue`, { method: "POST" });
       if (!response.ok) throw new Error(await errorMessage(response));
       onSaved();
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "没有继续");
-    } finally {
-      setBusy(null);
-    }
+    } catch (caught) { setError(caught instanceof Error ? caught.message : "没有继续，修改已保留"); }
+    finally { active.current = false; setBusy(null); }
   }
 
   return (
@@ -135,8 +183,11 @@ export function StoryboardStrip({
                   className="min-h-24 w-full rounded-sm border border-border-strong bg-raised px-2 py-1.5 text-body text-text-1"
                   maxLength={400}
                   value={value}
+                  disabled={busy !== null || !localReady}
                   onChange={(event) => {
                     const next = event.target.value;
+                    pending.current[card.shot_id] = { value: next, base: pending.current[card.shot_id]?.base ?? acknowledged.current[card.shot_id]?.value ?? card.voiceover };
+                    persistPending();
                     setDrafts((current) => ({ ...current, [card.shot_id]: next }));
                     setDirty((current) => ({ ...current, [card.shot_id]: true }));
                   }}
@@ -146,7 +197,7 @@ export function StoryboardStrip({
                 type="button"
                 variant="secondary"
                 className="mt-3 w-full"
-                disabled={busy !== null || !(dirty[card.shot_id] && value.trim())}
+                disabled={busy !== null || !localReady || !(dirty[card.shot_id] && value.trim())}
                 loading={busy === card.shot_id}
                 onClick={() => void save(card.shot_id)}
               >
@@ -156,6 +207,7 @@ export function StoryboardStrip({
           );
         })}
       </div>
+      <p role="status" className="mt-3 text-caption text-text-3">{!localReady ? "正在恢复旁白草稿" : Object.values(dirty).some(Boolean) ? "有未保存旁白，继续生成前会先保存全部修改" : "旁白已同步"}</p>
       {error ? (
         <p role="alert" className="mt-3 text-caption text-danger">
           {error}
@@ -164,7 +216,7 @@ export function StoryboardStrip({
       <Button
         type="button"
         className="mt-4"
-        disabled={busy !== null}
+        disabled={busy !== null || !localReady}
         loading={busy === "continue"}
         onClick={() => void continueFilm()}
       >

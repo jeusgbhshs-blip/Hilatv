@@ -134,3 +134,10 @@ accept-hp01:
 	cd $(ROOT)/apps/web && npm run test:unit
 	cd $(ROOT)/apps/web && npm run lint
 	cd $(ROOT)/apps/web && npx tsc --noEmit
+
+.PHONY: accept-hp02
+accept-hp02:
+	$(PYTHON) -m pytest apps/api/tests workers/expert/tests workers/workflow/tests
+	cd $(ROOT)/apps/web && npm run test:unit
+	cd $(ROOT)/apps/web && npm run lint
+	cd $(ROOT)/apps/web && npx tsc --noEmit

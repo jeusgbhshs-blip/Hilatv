@@ -55,6 +55,7 @@ import {
   type CanvasViewport,
   type EdgeRole,
   type RegenerateWrite,
+  type NodeDataPatch,
 } from "@/lib/canvas-contract";
 import { CanvasRequestError } from "@/lib/canvas-mock";
 
@@ -121,6 +122,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const busyRef = useRef<string | null>(null);
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const timerRef = useRef<number>(0);
+  const nodeDraftTimer = useRef<number>(0);
   const pendingSelect = useRef<string | null>(null);
   const lastPersist = useRef("");
   const [doc, setDoc] = useState<CanvasSnapshot | null>(null);
@@ -205,6 +207,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     };
     const key = JSON.stringify({ positions, viewport });
     if (key === lastPersist.current) return;
+    if (current.origin === "api") client.stageLayout({ layout_version: versionRef.current, positions, viewport });
     void enqueue(
       () =>
         client.saveLayout({
@@ -218,8 +221,14 @@ export function CanvasStage({ projectId }: { projectId: string }) {
 
   const scheduleLayout = useCallback(() => {
     window.clearTimeout(timerRef.current);
-    timerRef.current = window.setTimeout(() => persistLayout(), 160);
+    persistLayout();
   }, [persistLayout]);
+
+  const clearWorkspaceTimers = useCallback(() => {
+    window.clearTimeout(timerRef.current);
+    window.clearTimeout(nodeDraftTimer.current);
+    window.clearInterval(pollRef.current);
+  }, []);
 
   useEffect(() => {
     const client = createCanvasClient(projectId, undefined, { demo: projectId === "demo-canvas" });
@@ -246,15 +255,16 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         viewport: snapshot.viewport,
       });
       setReady(true);
+      if (snapshot.pending_edits) void enqueue(() => client.flushNodeData(), "adopt").catch(() => undefined);
     }).catch((error: unknown) => {
       if (!cancel) setLoadError(error instanceof Error ? error.message : "读取失败，请重试");
     });
     return () => {
       cancel = true;
-      window.clearTimeout(timerRef.current);
-      window.clearInterval(pollRef.current);
+      clearWorkspaceTimers();
+      if (docRef.current?.pending_edits) void client.flushNodeData().catch(() => undefined);
     };
-  }, [projectId, loadAttempt]);
+  }, [projectId, loadAttempt, enqueue, clearWorkspaceTimers]);
 
   useEffect(() => {
     setGroups(loadGroups());
@@ -264,6 +274,24 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     window.addEventListener(CANVAS_TOOLBOX_EVENT, onToolbox);
     return () => window.removeEventListener(CANVAS_TOOLBOX_EVENT, onToolbox);
   }, []);
+
+  const stageNodeEdit = useCallback((nodeId: string, patch: NodeDataPatch) => {
+    const client = clientRef.current;
+    if (!client) return;
+    try {
+      const next = client.stageNodeData(nodeId, patch);
+      docRef.current = next;
+      setDoc(next);
+      syncFlow(next);
+      window.clearTimeout(nodeDraftTimer.current);
+      nodeDraftTimer.current = window.setTimeout(() => {
+        void enqueue(() => client.flushNodeData(), "adopt").catch(() => undefined);
+      }, 350);
+    } catch (error) {
+      setNoticeTone("danger");
+      setNotice(error instanceof Error ? error.message : "修改未保存，请重试");
+    }
+  }, [enqueue, syncFlow]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<Node<FlowData>>[]) => {
@@ -675,6 +703,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           <span className="max-w-sm truncate text-small text-text-2">{doc.sentence || "未命名项目"}</span>
         </Link>
         {doc.origin === "mock" ? <p title="修改仅保存在此浏览器" className="shrink-0 whitespace-nowrap text-caption text-warning">本地演示<span className="sr-only"> · 修改仅保存在此浏览器</span></p> : null}
+        {doc.pending_edits ? <button type="button" className="hilatv-canvas-back" onClick={() => { const client = clientRef.current; if (client) void enqueue(() => client.flushNodeData(), "adopt").catch(() => undefined); }}>修改未同步 · 重新保存</button> : null}
         {filmRunning ? <p className="hilatv-canvas-running">AI 正在出片…</p> : null}
         {doc.status === "needs_human_review" ? (
           <button type="button" className="hilatv-canvas-release" onClick={() => void actions.releaseFilm()}>
@@ -882,12 +911,12 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           onNarration={(shotId, narration) => {
             const node = doc.nodes.find((item) => asShot(item)?.shot_id === shotId);
             if (!node) return;
-            run((client) => client.updateNodeData(node.id, { kind: "shot", narration }));
+            stageNodeEdit(node.id, { kind: "shot", narration });
           }}
           onPrompt={(shotId, suffix) => {
             const node = doc.nodes.find((item) => asShot(item)?.shot_id === shotId);
             if (!node) return;
-            run((client) => client.updateNodeData(node.id, { kind: "shot", prompt_suffix: suffix }));
+            stageNodeEdit(node.id, { kind: "shot", prompt_suffix: suffix });
           }}
           onBrief={(nodeId, text) => actions.changeBrief(nodeId, text)}
         />

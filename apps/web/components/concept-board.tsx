@@ -2,7 +2,7 @@
 
 import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useRef, useState } from "react";
 
 import { useShellStage } from "@/components/hilatv/shell-stage";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { useProjectDraft } from "@/lib/use-project-draft";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { chooseCard, type DirectionCard } from "@/lib/selection";
 import { cn } from "@/lib/utils";
@@ -25,72 +26,86 @@ type ConceptResponse = {
   };
 };
 
-export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
+export function ConceptBoard({ initialSentence, initialProjectId }: { initialSentence: string; initialProjectId?: string }) {
   const router = useRouter();
-  const [sentence, setSentence] = useState(initialSentence);
-  const [cards, setCards] = useState<DirectionCard[]>([]);
-  const [duration, setDuration] = useState<number | null>(null);
-  const [aspect, setAspect] = useState("");
-  const [picked, setPicked] = useState<string | null>(null);
-  const [brandApplied, setBrandApplied] = useState(false);
+  const drafts = useProjectDraft(initialSentence, initialProjectId);
+  const { sentence, skip_storyboard: skipStoryboard } = drafts.draft;
+  const cards = drafts.draft.cards_sentence === sentence.trim() ? drafts.draft.cards || [] : [];
+  const duration = cards[0]?.duration_s ?? null;
+  const aspect = cards[0]?.aspect_ratio ?? "";
+  const picked = drafts.draft.concept_selection;
+  const brandApplied = drafts.draft.brand_applied === true;
+  const setSentence = (value: string) => drafts.field("sentence", value);
+  const setPicked = (value: string) => drafts.field("concept_selection", value);
+  const setSkipStoryboard = (value: boolean) => drafts.field("skip_storyboard", value);
+  const submitting = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [skipStoryboard, setSkipStoryboard] = useState(false);
 
   const choice = cards.length ? chooseCard(cards, picked) : null;
   useShellStage("选方案");
 
   async function onGenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (submitting.current || !drafts.ready) return;
     const text = sentence.trim();
     if (!text) {
       setError("先写一句话");
       return;
     }
+    submitting.current = true;
     setBusy(true);
     setError(null);
     try {
+      const saved = await drafts.flush();
       const response = await apiFetch("/v1/concepts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sentence: text }),
+        body: JSON.stringify({ sentence: text, project_id: saved.project_id, draft_revision: saved.draft_revision }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const body = (await response.json()) as ConceptResponse;
-      setCards(body.concept.directions);
-      setDuration(body.concept.duration_s);
-      setAspect(body.concept.aspect_ratio);
-      setBrandApplied(body.brand_applied === true);
-      setPicked("你帮我选");
+      if (!Array.isArray(body.concept?.directions) || body.concept.directions.length === 0) throw new Error("没有拿到有效方案，请重试");
+      drafts.update({
+        cards: body.concept.directions.map((card) => ({ ...card, duration_s: card.duration_s ?? body.concept.duration_s, aspect_ratio: card.aspect_ratio ?? body.concept.aspect_ratio })),
+        cards_sentence: text, brand_applied: body.brand_applied === true, concept_selection: "你帮我选",
+      });
     } catch (caught) {
-      setCards([]);
       setError(caught instanceof Error ? caught.message : "方案没有生成");
     } finally {
+      submitting.current = false;
       setBusy(false);
     }
   }
 
   async function startFilm() {
-    if (!choice) return;
+    if (!choice || submitting.current || !drafts.ready) return;
+    submitting.current = true;
     setBusy(true);
     setError(null);
     try {
-      const response = await apiFetch("/v1/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          sentence: sentence.trim(),
-          concept_selection: choice.id,
-          skip_storyboard: skipStoryboard,
-        }),
+      drafts.update({ concept_selection: choice.id });
+      const saved = await drafts.flush();
+      if (!saved.project_id) throw new Error("草稿尚未确认保存，请重试");
+      const operation = saved.start_operation_id || crypto.randomUUID();
+      drafts.update({ start_operation_id: operation });
+      await drafts.persist({ ...saved, start_operation_id: operation });
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(saved.project_id)}/film/start`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation_id: operation, draft_revision: saved.draft_revision }),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
-      const created = (await response.json()) as { project_id?: string };
-      if (!created.project_id) throw new Error("没有拿到项目编号");
-      router.push(`/projects/${created.project_id}`);
+      const result = await response.json() as { submission_state?: string };
+      if (result.submission_state !== "submitted") throw new Error("这次提交还在确认中，输入已保留。稍后重试会查询同一次提交。");
+      const next = { ...saved, started: true, start_operation_id: operation };
+      drafts.update(next);
+      await drafts.persist(next);
+      router.push(`/projects/${encodeURIComponent(saved.project_id)}`);
     } catch (caught) {
-      setBusy(false);
       setError(caught instanceof Error ? caught.message : "提交没有成功");
+    } finally {
+      submitting.current = false;
+      setBusy(false);
     }
   }
 
@@ -115,13 +130,14 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
           value={sentence}
           maxLength={4000}
           className="min-h-24"
+          disabled={busy || !drafts.ready}
           onChange={(event) => setSentence(event.target.value)}
         />
         <div>
           <Button
             type="submit"
             variant={cards.length > 0 ? "secondary" : "primary"}
-            disabled={busy}
+            disabled={busy || !drafts.ready}
             loading={busy && cards.length === 0}
           >
             {busy ? "正在生成方案" : cards.length > 0 ? "重新出方案" : "生成三个方案"}
@@ -129,6 +145,8 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
         </div>
       </form>
 
+      <p role="status" className="mt-3 text-caption text-text-3">{!drafts.ready ? "正在恢复草稿" : drafts.saving ? "正在保存草稿" : drafts.dirty ? "草稿未同步，输入已保留" : drafts.draft.project_id ? "草稿已保存" : "输入后自动保存"}</p>
+      {drafts.error ? <p role="alert" className="mt-2 text-caption text-danger">{drafts.error}<button type="button" className="ml-2 min-h-11 underline" onClick={() => void drafts.flush().catch(() => undefined)}>重新保存</button></p> : null}
       {error ? (
         <p role="alert" className="mt-4 text-caption text-danger">
           {error}
@@ -178,6 +196,7 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
                   <Button
                     type="button"
                     variant="secondary"
+                    disabled={busy || !drafts.ready}
                     aria-pressed={selected}
                     className={cn("mt-3 w-full", selected && "border-blue text-blue-text")}
                     onClick={() => setPicked(card.direction_id)}
@@ -193,13 +212,14 @@ export function ConceptBoard({ initialSentence }: { initialSentence: string }) {
             <Button
               type="button"
               variant="secondary"
+              disabled={busy || !drafts.ready}
               aria-pressed={Boolean(choice?.auto)}
               className={cn(choice?.auto && "border-blue text-blue-text")}
               onClick={() => setPicked("你帮我选")}
             >
               你帮我选
             </Button>
-            <fieldset className="flex items-center gap-1 rounded-sm bg-hover p-0.75">
+            <fieldset disabled={busy || !drafts.ready} className="flex items-center gap-1 rounded-sm bg-hover p-0.75">
               <legend className="sr-only">分镜</legend>
               <label
                 className={cn(

@@ -10,9 +10,9 @@ export const metadata: Metadata = {
 export default async function ConceptsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ sentence?: string }>;
+  searchParams: Promise<{ sentence?: string; project?: string }>;
 }) {
   const params = await searchParams;
   const sentence = typeof params.sentence === "string" ? params.sentence : "";
-  return <ConceptBoard initialSentence={sentence} />;
+  return <ConceptBoard initialSentence={sentence} initialProjectId={typeof params.project === "string" ? params.project : undefined} />;
 }

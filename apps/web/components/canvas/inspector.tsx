@@ -252,9 +252,8 @@ function ShotInspector({
           aria-label="这一镜的话"
           value={narration}
           rows={3}
-          onChange={(event) => setNarration(event.target.value)}
-          onBlur={() => onNarration(shot.shot_id, narration)}
-          className="w-full rounded-sm border border-border-strong bg-raised px-3 py-2 text-small"
+          onChange={(event) => { setNarration(event.target.value); onNarration(shot.shot_id, event.target.value); }}
+                    className="w-full rounded-sm border border-border-strong bg-raised px-3 py-2 text-small"
         />
       </label>
       <label className="grid gap-2 text-small">
@@ -266,9 +265,8 @@ function ShotInspector({
           value={suffix}
           rows={2}
           placeholder="没有补充提示词"
-          onChange={(event) => setSuffix(event.target.value)}
-          onBlur={() => onPrompt(shot.shot_id, suffix)}
-          className="w-full rounded-sm border border-border-strong bg-raised px-3 py-2 font-mono text-small"
+          onChange={(event) => { setSuffix(event.target.value); onPrompt(shot.shot_id, event.target.value); }}
+                    className="w-full rounded-sm border border-border-strong bg-raised px-3 py-2 font-mono text-small"
         />
       </label>
       {suffix.trim() === "" ? <p className="text-caption text-text-3">没有补充提示词</p> : null}
