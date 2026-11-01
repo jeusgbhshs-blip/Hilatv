@@ -537,6 +537,7 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
         "deliverable": exports["master"],
         "exports": exports,
         "clean_picture_path": exports.get("clean_picture"),
+        "rendered_script": result.payload.get("script"),
         "timeline": timeline,
         "timeline_path": result.payload.get("timeline_path"),
     }

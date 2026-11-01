@@ -349,6 +349,7 @@ def _execute(
         ran_picture = True
     deliverable = snapshot.get("deliverable")
     master_path = ""
+    render_result: dict[str, Any] = {}
     if ran_picture or ("n15_compose" in nodes and executed):
         master_path = _compose(
             directory,
@@ -364,6 +365,7 @@ def _execute(
             width,
             height,
             **({"clock": clock} if clock else {}),
+            render_result=render_result,
         )
         executed.append("n15_compose")
         deliverable = master_path or deliverable
@@ -380,6 +382,17 @@ def _execute(
         outro_s=outro_s,
         deliverable=deliverable,
     )
+    if render_result:
+        exports = render_result.get("exports") or {}
+        patches.setdefault("n15_compose", {}).update(
+            {
+                "exports": exports,
+                "clean_picture_path": exports.get("clean_picture"),
+                "timeline": render_result.get("timeline"),
+                "timeline_path": render_result.get("timeline_path"),
+                "rendered_script": render_result.get("script"),
+            }
+        )
     ordered = [
         name
         for name in (
@@ -671,6 +684,7 @@ def _compose(
     height,
     *,
     clock: dict[str, float] | None = None,
+    render_result: dict[str, Any] | None = None,
 ):
     from workers.nodes.n15_compose.node import run
 
@@ -695,6 +709,8 @@ def _compose(
         timeout_s=180,
         max_attempts=1,
     )
+    if render_result is not None:
+        render_result.update(result.payload)
     return str(Path(result.payload["exports"]["master"]).resolve())
 
 

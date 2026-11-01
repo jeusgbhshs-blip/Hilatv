@@ -126,6 +126,7 @@ def create_delivery(
     update_snapshot(project_id, versions=record.get("versions") or [], rights=record.get("rights"))
     return {
         "project_id": project_id,
+        "exported_version_ids": [item["version_id"] for item in versions],
         "versions": [
             _version_public(project_id, item, snapshot) for item in record.get("versions") or []
         ],
@@ -301,7 +302,13 @@ def _share_ttl() -> float:
 
 def _payload(project_id: str, snapshot: dict[str, Any], body: DeliverBody) -> dict[str, Any]:
     saved = _checkpoint(project_id)
-    script = body.script or snapshot.get("script") or saved.get("script")
+    script = (
+        body.script
+        or saved.get("rendered_script")
+        or saved.get("aligned_script")
+        or snapshot.get("script")
+        or saved.get("script")
+    )
     brief = body.brief or snapshot.get("brief") or saved.get("brief")
     tracks = body.subject_tracks
     if tracks is None:
@@ -333,9 +340,9 @@ def _payload(project_id: str, snapshot: dict[str, Any], body: DeliverBody) -> di
         "picture_path": saved.get("clean_picture_path")
         or (saved.get("exports") or {}).get("clean_picture"),
         "source_timeline": saved.get("timeline"),
-        "target_duration_s": (saved.get("timeline") or {}).get("duration_s")
-        if isinstance(snapshot.get("generation_settings"), dict)
-        else None,
+        "target_duration_s": (saved.get("timeline") or {}).get("target_duration_s")
+        or (saved.get("production_clock") or {}).get("target_duration_s")
+        or (snapshot.get("generation_settings") or {}).get("duration_s"),
         "intro_s": saved.get("intro_s") or 0,
         "outro_s": saved.get("outro_s"),
         "subject_tracks": tracks or [],
@@ -384,6 +391,8 @@ def _public(project_id: str, version: dict[str, Any]) -> dict[str, Any]:
         "modes": version["modes"],
         "subject_box_source": version.get("subject_box_source") or "default",
         "qa_status": version.get("qa_status") or "needs_review",
+        "source_key": version.get("source_key"),
+        "source_media_hash": version.get("source_media_hash"),
         "download_path": f"/v1/projects/{project_id}/versions/{version_id}/download",
         "preview_path": f"/v1/projects/{project_id}/versions/{version_id}/preview",
         "share_path": None,

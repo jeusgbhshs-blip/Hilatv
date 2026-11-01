@@ -734,6 +734,7 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
         "deliverable": deliverable,
         "exports": exports,
         "clean_picture_path": exports.get("clean_picture"),
+        "rendered_script": result.payload.get("script"),
         "timeline_path": result.payload.get("timeline_path"),
         "elapsed_s": elapsed,
         "timeline": result.payload.get("timeline"),

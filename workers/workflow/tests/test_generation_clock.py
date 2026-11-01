@@ -92,11 +92,21 @@ def test_revision_compose_keeps_the_whole_film_clock(monkeypatch, tmp_path):
 
     def run(raw, **kwargs):
         captured.update(raw["payload"])
-        return SimpleNamespace(payload={"exports": {"master": str(tmp_path / "new.mp4")}})
+        return SimpleNamespace(
+            payload={
+                "exports": {
+                    "master": str(tmp_path / "new.mp4"),
+                    "clean_picture": str(tmp_path / "new-clean.mp4"),
+                },
+                "timeline": {"duration_s": 15},
+                "script": {"shots": [{"shot_id": "rendered"}]},
+            }
+        )
 
     monkeypatch.setattr(node, "run", run)
     script = SimpleNamespace(model_dump=lambda **kwargs: {"shots": []})
     clock = {"target_duration_s": 15, "intro_s": 0, "outro_s": 2.4}
+    rendered = {}
     result = revise._compose(
         tmp_path,
         "revision-clock",
@@ -111,8 +121,12 @@ def test_revision_compose_keeps_the_whole_film_clock(monkeypatch, tmp_path):
         320,
         240,
         clock=clock,
+        render_result=rendered,
     )
     assert result == str(tmp_path / "new.mp4")
     assert captured["target_duration_s"] == 15
     assert (captured["width"], captured["height"]) == (320, 240)
     assert captured["outro_s"] == 2.4
+    assert rendered["exports"]["clean_picture"] == str(tmp_path / "new-clean.mp4")
+    assert rendered["timeline"]["duration_s"] == 15
+    assert rendered["script"]["shots"][0]["shot_id"] == "rendered"
