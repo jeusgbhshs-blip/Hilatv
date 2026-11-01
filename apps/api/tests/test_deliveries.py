@@ -9,10 +9,11 @@ from fastapi.testclient import TestClient
 from app.deliveries import _public, _replace_json, _write
 from app.main import app
 from workers.identity.session import open_session
+from workers.nodes.n15_compose.schema import Timeline, VideoClip
 from workers.nodes.n17_deliver.node import run as deliver
 from workers.nodes.n17_deliver.sample import acceptance_request, storyboard
 from workers.nodes.n17_deliver.support import build_gateway
-from workers.workflow.store import init_project, project_path
+from workers.workflow.store import init_project, project_path, save_node
 
 
 def _session():
@@ -50,6 +51,40 @@ def test_versions_preview_keeps_formal_download_and_share_gated(tmp_path, monkey
         master_plate=payload["master_path"],
         subject_tracks=payload["subject_tracks"],
         enterprise_id=ident.enterprise_id,
+    )
+    # The sample's red boxes are visual tracking marks, without burned text,
+    # branding or subtitles. Declare that explicit clean source and its actual
+    # two-shot timeline; a rendered master is never an implicit clean fallback.
+    clean_picture = str(payload["picture_path"])
+    cursor = 0.0
+    clips = []
+    for shot in payload["script"]["shots"]:
+        duration = float(shot["duration_s"])
+        clips.append(
+            VideoClip(
+                clip_id=shot["shot_id"],
+                path=clean_picture,
+                start_s=cursor,
+                duration_s=duration,
+                placeholder=True,
+            )
+        )
+        cursor += duration
+    source_timeline = Timeline(
+        width=320,
+        height=180,
+        lut_path="",
+        duration_s=cursor,
+        clips=clips,
+        audio=[],
+        overlays=[],
+        work_dir=str(project_path(project_id)),
+        audio_provenance="mock",
+    )
+    save_node(
+        project_id,
+        "n15_compose",
+        {"clean_picture_path": clean_picture, "timeline": source_timeline.model_dump(mode="json")},
     )
     with TestClient(app, headers=headers) as client:
         created = client.post(
