@@ -829,6 +829,10 @@ def test_live_and_settled_claims_cannot_override_actual_gateway_receipts(prepare
         "foreign_origin",
         "different_output",
         "nonzero_cache_cost",
+        "cache_claims_live_call",
+        "origin_not_live",
+        "different_origin_model",
+        "different_origin_task",
     ],
 )
 def test_cached_live_outputs_need_a_matching_settled_origin(prepared, fault):
@@ -842,6 +846,7 @@ def test_cached_live_outputs_need_a_matching_settled_origin(prepared, fault):
         **original,
         "id": cache_id,
         "status": "cache_hit",
+        "live": False,
         "cache_hit": True,
         "cost_cny": "0.0000",
         "params": json.loads(original["params"]),
@@ -866,10 +871,84 @@ def test_cached_live_outputs_need_a_matching_settled_origin(prepared, fault):
         )
     elif fault == "nonzero_cache_cost":
         ledger.conn.execute("UPDATE call_logs SET cost_cny='0.01' WHERE id=?", (cache_id,))
+    elif fault == "cache_claims_live_call":
+        ledger.conn.execute("UPDATE call_logs SET live=1 WHERE id=?", (cache_id,))
+    elif fault == "origin_not_live":
+        ledger.conn.execute("UPDATE call_logs SET live=0 WHERE id=?", (origin_id,))
+    elif fault == "different_origin_model":
+        ledger.conn.execute("UPDATE call_logs SET model='another-model' WHERE id=?", (origin_id,))
+    elif fault == "different_origin_task":
+        ledger.conn.execute("UPDATE call_logs SET task='image' WHERE id=?", (origin_id,))
     ledger.conn.commit()
     attest(prepared)
     result = gates.readiness(snapshot, state, path)
     assert result["quality_pass"] is (fault is None)
+
+
+@pytest.mark.parametrize("revoke_origin", [False, True])
+def test_real_gateway_cache_journal_is_checked_against_its_current_settlement(
+    prepared, tmp_path, revoke_origin
+):
+    from decimal import Decimal
+
+    from gateway.tests.conftest import build_gateway
+    from gateway.tests.test_budget import ROUTES, FlatPricing, Priced
+
+    snapshot, state, path, _review, proofs = prepared
+    folder = tmp_path / "scripted-gateway"
+    folder.mkdir()
+    adapter = Priced("0.02")
+    gateway = build_gateway(
+        folder,
+        routes=ROUTES,
+        registry={"priced": adapter},
+        pricing=FlatPricing("0.02"),
+        limits=(True, Decimal("1"), Decimal("1")),
+    )
+    try:
+        kwargs = {"project_id": snapshot["project_id"], "node": "n01_brief", "seed": 17}
+        assert gateway.generate_text("original local scripted output", **kwargs) == (
+            gateway.generate_text("original local scripted output", **kwargs)
+        )
+        assert adapter.calls == 1
+        origin, cached = gateway.store.list_logs()
+        assert origin["status"] == "ok" and origin["live"] == 1
+        assert cached["status"] == "cache_hit" and cached["live"] == 0
+        ledger = gates._source_store()
+        for row in (origin, cached):
+            row = dict(row)
+            for key in ("params", "output"):
+                if isinstance(row[key], str):
+                    row[key] = json.loads(row[key])
+            ledger.insert_log(row)
+        reservation = gateway.store.fetchall(
+            "SELECT * FROM budget_reservations WHERE id=%s", (origin["id"],)
+        )[0]
+        ledger.conn.execute(
+            "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?, ?)",
+            tuple(
+                reservation[key]
+                for key in ("id", "created_at", "day", "amount_cny", "state", "context")
+            ),
+        )
+        if revoke_origin:
+            ledger.conn.execute(
+                "UPDATE budget_reservations SET state='uncertain' WHERE id=?", (origin["id"],)
+            )
+        ledger.conn.commit()
+        proofs["source_evidence"]["records"].append(
+            {
+                "gateway_log_id": cached["id"],
+                "origin_log_id": origin["id"],
+                "execution_mode": "live",
+                "billing_status": "not_billable",
+                "evidence_ref": f"gateway:{cached['id']}",
+            }
+        )
+        attest(prepared)
+        assert gates.readiness(snapshot, state, path)["quality_pass"] is (not revoke_origin)
+    finally:
+        gateway.store.close()
 
 
 def test_actual_cost_revocation_survives_version_restore(prepared):

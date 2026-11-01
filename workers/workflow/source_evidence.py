@@ -171,7 +171,8 @@ def _receipt(store: Any, project_id: str, log_id: Any) -> dict[str, Any] | None:
     output = json.loads(output) if isinstance(output, str) else output
     cost = _cost(row.get("cost_cny"))
     if (
-        row.get("live") != 1
+        row.get("status") == "ok"
+        and row.get("live") != 1
         or str(row.get("provider", "")).startswith("mock")
         or str(row.get("model", "")).startswith("mock")
         or row.get("status") not in {"ok", "cache_hit"}
@@ -185,7 +186,9 @@ def _receipt(store: Any, project_id: str, log_id: Any) -> dict[str, Any] | None:
         or row.get("fallback_reason") == "billing_unknown"
     ):
         return None
-    if row.get("status") == "cache_hit" and row.get("cache_hit") != 1:
+    if row.get("status") == "cache_hit" and (
+        row.get("live") != 0 or row.get("cache_hit") != 1 or cost != 0
+    ):
         return None
     if row.get("status") == "ok":
         reservations = store.fetchall(
