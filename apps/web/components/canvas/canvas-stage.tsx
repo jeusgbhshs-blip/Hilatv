@@ -206,15 +206,16 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       zoom: viewportRef.current.zoom,
     };
     const key = JSON.stringify({ positions, viewport });
-    if (key === lastPersist.current) return;
-    if (current.origin === "api") client.stageLayout({ layout_version: versionRef.current, positions, viewport });
+    if (key === lastPersist.current && !current.pending_edits) return;
+    const layout = { layout_version: versionRef.current, positions, viewport };
+    const staged = current.origin === "api" ? client.stageLayout(layout) : layout;
+    if (current.origin === "api") {
+      docRef.current = { ...current, pending_edits: true };
+      setDoc(docRef.current);
+    }
     void enqueue(
       () =>
-        client.saveLayout({
-          layout_version: versionRef.current,
-          positions,
-          viewport,
-        }),
+        client.saveLayout({ ...staged, layout_version: versionRef.current }),
       "remember",
     ).then(() => { lastPersist.current = key; }).catch(() => undefined);
   }, [enqueue]);
@@ -285,7 +286,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       syncFlow(next);
       window.clearTimeout(nodeDraftTimer.current);
       nodeDraftTimer.current = window.setTimeout(() => {
-        void enqueue(() => client.flushNodeData(), "adopt").catch(() => undefined);
+        void enqueue(() => client.flushNodeData({ includeLayout: false }), "adopt").catch(() => undefined);
       }, 350);
     } catch (error) {
       setNoticeTone("danger");

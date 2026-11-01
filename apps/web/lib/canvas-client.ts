@@ -36,14 +36,14 @@ import { asShot, connectionRole, explainConnection, shotById, type CanvasEdge, t
 export type CanvasClient = {
   load(): Promise<CanvasSnapshot>;
   saveLayout(body: LayoutWrite): Promise<CanvasSnapshot>;
-  stageLayout(body: LayoutWrite): void;
+  stageLayout(body: LayoutWrite): LayoutWrite;
   createNode(body: CreateNodeWrite): Promise<CanvasSnapshot>;
   deleteNode(nodeId: string): Promise<CanvasSnapshot>;
   createEdge(body: CreateEdgeWrite): Promise<CanvasSnapshot>;
   deleteEdge(edgeId: string): Promise<CanvasSnapshot>;
   updateNodeData(nodeId: string, patch: NodeDataPatch): Promise<CanvasSnapshot>;
   stageNodeData(nodeId: string, patch: NodeDataPatch): CanvasSnapshot;
-  flushNodeData(): Promise<CanvasSnapshot>;
+  flushNodeData(options?: { includeLayout?: boolean }): Promise<CanvasSnapshot>;
   regenerate(shotId: string, body?: RegenerateWrite): Promise<CanvasSnapshot>;
   replaceReference(shotId: string, body: ReferenceWrite): Promise<CanvasSnapshot>;
   selectCandidate(body: SelectWrite): Promise<CanvasSnapshot>;
@@ -88,7 +88,7 @@ export function createCanvasClient(
   const layoutKey = `${draftKey}.layout`;
   try {
     const saved = JSON.parse(memory.getItem(layoutKey) || "null");
-    if (saved && typeof saved.layout_version === "number" && saved.positions && saved.viewport) pendingLayout = saved;
+    if (saved && typeof saved.layout_version === "number" && saved.positions && saved.viewport) pendingLayout = { ...saved, local_edit_id: saved.local_edit_id || crypto.randomUUID() };
   } catch { /* Invalid local layout is not an acknowledged server revision. */ }
   let flushing: Promise<CanvasSnapshot> | null = null;
 
@@ -159,14 +159,16 @@ export function createCanvasClient(
     },
 
     stageLayout(body) {
-      pendingLayout = body;
-      memory.setItem(layoutKey, JSON.stringify(body));
+      const staged = { ...body, local_edit_id: crypto.randomUUID() };
+      pendingLayout = staged;
+      memory.setItem(layoutKey, JSON.stringify(staged));
+      return staged;
     },
 
     async saveLayout(body) {
       const current = last ?? (await this.load());
       if (current.origin === "api") {
-        this.stageLayout(body);
+        if (!body.local_edit_id) body = this.stageLayout(body);
         const write = {
           layout_version: body.layout_version,
           positions: body.positions,
@@ -175,7 +177,7 @@ export function createCanvasClient(
         const response = await sendJson(canvasPath(projectId, "/canvas/layout"), "PUT", write);
         if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
         const saved = (await response.json()) as { layout_version?: number };
-        if (JSON.stringify(pendingLayout) === JSON.stringify(body)) {
+        if (pendingLayout?.local_edit_id === body.local_edit_id) {
           pendingLayout = null;
           memory.removeItem(layoutKey);
         }
@@ -225,6 +227,8 @@ export function createCanvasClient(
 
       if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
       await response.json().catch(() => null);
+      delete pending[nodeId];
+      savePending();
       resetOverlay();
       const remote = await loadFromApi();
       if (remote) return remember(remote);
@@ -289,12 +293,12 @@ export function createCanvasClient(
       return remember(withPending(last));
     },
 
-    flushNodeData() {
+    flushNodeData(options = {}) {
       if (flushing) return flushing;
       const run = (async () => {
         const current = last ?? (await this.load());
         if (current.origin !== "api") return current;
-        if (pendingLayout) await this.saveLayout(pendingLayout);
+        if (options.includeLayout !== false && pendingLayout) await this.saveLayout(pendingLayout);
         while (Object.keys(pending).length) {
           const [nodeId, patch] = Object.entries(pending)[0];
           const data = patch.kind === "brief" ? { text: patch.text }
@@ -317,11 +321,11 @@ export function createCanvasClient(
 
     async updateNodeData(nodeId, patch) {
       this.stageNodeData(nodeId, patch);
-      return this.flushNodeData();
+      return this.flushNodeData({ includeLayout: false });
     },
 
     async regenerate(shotId, body) {
-      await this.flushNodeData();
+      await this.flushNodeData({ includeLayout: false });
       const current = last ?? (await this.load());
       const shot = shotById(current, shotId);
       const data = shot ? asShot(shot) : null;
@@ -442,7 +446,7 @@ export function createCanvasClient(
     },
 
     async generateNode(nodeId, body) {
-      await this.flushNodeData();
+      await this.flushNodeData({ includeLayout: false });
       if (options.demo) throw new CanvasRequestError(422, "演示画布不会启动生成，请新建项目");
       const response = await sendJson(
         canvasPath(projectId, `/canvas/nodes/${encodeURIComponent(nodeId)}/generate`),
@@ -459,7 +463,7 @@ export function createCanvasClient(
     },
 
     async startFilm(sentence) {
-      await this.flushNodeData();
+      await this.flushNodeData({ includeLayout: false });
       if (options.demo) throw new CanvasRequestError(422, "演示画布不会启动生成，请新建项目");
       const response = await sendJson(`/v1/projects/${encodeURIComponent(projectId)}/film/start`, "POST", {
         sentence,

@@ -125,4 +125,57 @@ describe("project transport must not replace a failed project with a demo", () =
     expect(JSON.parse(String(write[1]?.body)).layout_version).toBe(layout.layout_version);
   });
 
+  it("does not let an older queued layout overwrite a newer staged backup", async () => {
+    const storage = memory();
+    request.mockResolvedValueOnce(Response.json(seedCanvas("real-project")));
+    const client = createCanvasClient("real-project", storage);
+    const doc = await client.load();
+    const first = client.stageLayout({ layout_version: doc.layout_version, positions: { "shot-1": { x: 100, y: 50 } }, viewport: doc.viewport });
+    client.stageLayout({ layout_version: doc.layout_version, positions: { "shot-1": { x: 900, y: 50 } }, viewport: doc.viewport });
+    request.mockResolvedValueOnce(new Response("", { status: 500 }));
+    await expect(client.saveLayout(first)).rejects.toMatchObject({ status: 500 });
+    request.mockResolvedValueOnce(Response.json(seedCanvas("real-project")));
+    const restored = await createCanvasClient("real-project", storage).load();
+    expect(restored.nodes.find((node) => node.id === "shot-1")?.position.x).toBe(900);
+    expect(restored.pending_edits).toBe(true);
+  });
+
+  it("clears the matching newer layout backup after its own acknowledged save", async () => {
+    const storage = memory();
+    request.mockResolvedValueOnce(Response.json(seedCanvas("real-project")));
+    const client = createCanvasClient("real-project", storage);
+    const doc = await client.load();
+    const first = client.stageLayout({ layout_version: doc.layout_version, positions: { "shot-1": { x: 100, y: 50 } }, viewport: doc.viewport });
+    const latest = client.stageLayout({ layout_version: doc.layout_version, positions: { "shot-1": { x: 900, y: 50 } }, viewport: doc.viewport });
+    request.mockResolvedValueOnce(Response.json({ layout_version: doc.layout_version + 1 }));
+    request.mockResolvedValueOnce(Response.json({ ...seedCanvas("real-project"), layout_version: doc.layout_version + 1 }));
+    expect((await client.saveLayout(first)).pending_edits).toBe(true);
+    request.mockResolvedValueOnce(Response.json({ layout_version: doc.layout_version + 2 }));
+    const remote = seedCanvas("real-project");
+    remote.layout_version = doc.layout_version + 2;
+    remote.nodes.find((node) => node.id === "shot-1")!.position.x = 900;
+    request.mockResolvedValueOnce(Response.json(remote));
+    expect((await client.saveLayout({ ...latest, layout_version: doc.layout_version + 1 })).pending_edits).toBe(false);
+    const writes = request.mock.calls.filter(([, init]) => init?.method === "PUT");
+    expect(JSON.parse(String(writes[0][1]?.body))).not.toHaveProperty("local_edit_id");
+  });
+
+  it("does not keep trying to save a node after its deletion was acknowledged", async () => {
+    const storage = memory();
+    const initial = seedCanvas("real-project");
+    initial.nodes.push({ id: "scratch", kind: "brief", position: { x: 0, y: 0 }, user_created: true, data: { text: "old" } });
+    request.mockResolvedValueOnce(Response.json(initial));
+    const client = createCanvasClient("real-project", storage);
+    await client.load();
+    client.stageNodeData("scratch", { kind: "brief", text: "not yet synchronized" });
+    request.mockResolvedValueOnce(Response.json({ deleted: "scratch" }));
+    request.mockResolvedValueOnce(Response.json(seedCanvas("real-project")));
+    expect((await client.deleteNode("scratch")).pending_edits).toBe(false);
+    request.mockResolvedValueOnce(Response.json(seedCanvas("real-project")));
+    request.mockResolvedValueOnce(Response.json({ canvas: seedCanvas("real-project") }));
+    await client.generateNode("image-1", { prompt: "a new image" });
+    expect(request.mock.calls.some(([path]) => path.endsWith("/image-1/generate"))).toBe(true);
+    expect(request.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
+  });
+
 });

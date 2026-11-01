@@ -216,6 +216,8 @@ export type CanvasOverlay = {
 };
 
 export type LayoutWrite = {
+  /** Browser-only identity: older queued saves must not replace a newer draft. */
+  local_edit_id?: string;
   layout_version: number;
   positions: Record<string, CanvasPoint>;
   viewport: CanvasViewport;
