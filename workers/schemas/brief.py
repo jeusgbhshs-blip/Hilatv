@@ -12,6 +12,7 @@ from workers.schemas.base import (
     JsonInt,
     SchemaModel,
 )
+from workers.schemas.generation import GenerationSettings
 
 
 class ClarifyingQuestion(SchemaModel):
@@ -35,6 +36,7 @@ class Brief(SchemaModel):
     must_include: list[str]
     style: str = Field(min_length=1)
     assumptions: list[str]
+    generation_settings: GenerationSettings = Field(default_factory=GenerationSettings)
     open_questions: list[ClarifyingQuestion] = Field(default_factory=list)
 
     @field_validator("platform", "must_include", "assumptions")

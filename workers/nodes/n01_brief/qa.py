@@ -25,7 +25,13 @@ def check(result: NodeResult) -> Brief:
         raise QAError(f"brief failed validation: {exc}") from exc
     if not 5 <= brief.duration_s <= 180:
         raise QAError(f"duration_s {brief.duration_s} is outside 5–180")
-    if not aspects_match(brief.platform, brief.aspect_ratios):
+    settings = brief.generation_settings
+    if settings.duration_s is not None and brief.duration_s != settings.duration_s:
+        raise QAError("duration_s does not match the explicit user setting")
+    if settings.aspect_ratio is not None:
+        if brief.aspect_ratios != [settings.aspect_ratio]:
+            raise QAError("aspect_ratios do not match the explicit primary format")
+    elif not aspects_match(brief.platform, brief.aspect_ratios):
         raise QAError("platform and aspect_ratios do not match")
     if len(brief.open_questions) > 2:
         raise QAError("more than 2 open questions")

@@ -107,6 +107,17 @@ def _execute(
 ) -> NodeResult:
     deadline = Deadline(timeout_s)
     brief = payload.brief
+    settings = brief.generation_settings
+    brief = brief.model_copy(
+        update={
+            "duration_s": settings.duration_s
+            if settings.duration_s is not None
+            else brief.duration_s,
+            "aspect_ratios": [settings.aspect_ratio]
+            if settings.aspect_ratio is not None
+            else brief.aspect_ratios,
+        }
+    )
     brand = _trusted_brand(payload.brand_kit)
     banned = _banned(brand)
     industry_id = brand.industry.value if brand is not None else _industry(brief.raw_input)
@@ -127,6 +138,9 @@ def _execute(
         brief=brief.raw_input,
         tone=brand.tone if brand is not None else brief.style,
         banned="、".join(banned),
+        duration_s=brief.duration_s,
+        aspect_ratio=brief.aspect_ratios[0],
+        generation_settings=brief.generation_settings,
         feedback=feedback,
     )
     deadline.check()
@@ -154,6 +168,7 @@ def _execute(
             attempt=attempt,
             index=index,
             phone=brand.cta.phone if brand is not None else "",
+            aspect_ratio=brief.aspect_ratios[0],
         )
         item = dict(card)
         item.update(cover)
@@ -308,6 +323,7 @@ def _cover(
     attempt: int,
     index: int,
     phone: str,
+    aspect_ratio: str,
 ) -> dict[str, str]:
     beats = card.get("beats") or []
     lead = str(beats[0]) if beats else str(card.get("title") or "")
@@ -330,6 +346,7 @@ def _cover(
             node=NODE,
             shot_id=str(card.get("direction_id") or index),
             attempt=attempt,
+            params={"ratio": aspect_ratio},
         )
         uri = str(result.get("uri") or "")
         data = ready_image_bytes(gateway, uri)
@@ -370,6 +387,7 @@ def _select(cards: list[dict[str, Any]], selection: str | None, brief: Any) -> d
         "chosen_id": chosen_id,
         "directions": cards,
         "note": "系统自动选定" if auto else "用户选定方案卡",
+        "generation_settings": brief.generation_settings.model_dump(mode="json"),
     }
 
 

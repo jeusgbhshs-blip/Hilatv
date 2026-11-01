@@ -6,7 +6,7 @@ company site prefer 16:9 and also accept a vertical cut.
 
 from __future__ import annotations
 
-COMMON_ASPECTS = ("16:9", "9:16", "1:1", "3:4", "4:5")
+COMMON_ASPECTS = ("16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "4:5", "21:9")
 
 # preferred is what we add when the user named the platform but not the frame.
 # allowed is what quality check treats as a match.

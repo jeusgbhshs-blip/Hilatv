@@ -11,5 +11,6 @@
   "must_include": ["30MPa", "工厂实拍感"],
   "style": "工业质感、冷色调、稳重",
   "assumptions": ["未提供工厂视频，使用 AI 生成工厂场景"],
+  "generation_settings": {"aspect_ratio": null, "duration_s": null},
   "open_questions": []
 }

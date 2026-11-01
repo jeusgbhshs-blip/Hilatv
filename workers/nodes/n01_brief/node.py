@@ -114,6 +114,7 @@ def _execute(
             attachments=parsed_attachments,
             brand=payload.brand_kit,
             extracted=extracted,
+            generation_settings=payload.generation_settings,
         )
     except ValidationError as exc:
         raise QAError(f"brief failed validation: {exc}") from exc

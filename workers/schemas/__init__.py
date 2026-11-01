@@ -14,6 +14,7 @@ from workers.schemas.brand import (
 from workers.schemas.brief import Brief, ClarifyingQuestion
 from workers.schemas.director import DecisionAction, DirectorDecision, RevisionDirective
 from workers.schemas.export import export_json_schemas
+from workers.schemas.generation import GenerationSettings
 from workers.schemas.script import GenerationMode, Script, Shot, ShotStatus
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "DecisionAction",
     "DirectorDecision",
     "GenerationMode",
+    "GenerationSettings",
     "Industry",
     "QAReport",
     "QAScores",

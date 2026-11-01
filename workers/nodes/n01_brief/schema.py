@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from workers.schemas.brand import BrandKit
+from workers.schemas.generation import GenerationSettings
 
 
 class NodeRequest(BaseModel):
@@ -38,6 +39,7 @@ class N1Input(BaseModel):
     raw_input: str = Field(min_length=1)
     attachments: list[AttachmentRef] = Field(default_factory=list)
     brand_kit: BrandKit | None = None
+    generation_settings: GenerationSettings = Field(default_factory=GenerationSettings)
 
 
 class ExtractedBrief(BaseModel):

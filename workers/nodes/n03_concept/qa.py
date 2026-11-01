@@ -6,6 +6,7 @@ from workers.nodes.n03_concept.compose import card_text
 from workers.nodes.n03_concept.schema import NodeResult
 from workers.nodes.n03_concept.similarity import cosine
 from workers.schemas.brand import default_banned_words, find_banned_words
+from workers.schemas.generation import generation_settings
 
 
 class QAError(Exception):
@@ -105,6 +106,15 @@ def _distinct(texts: list[str]) -> None:
 
 def _selection(concept: dict) -> None:
     directions = concept["directions"]
+    try:
+        settings = generation_settings(concept.get("generation_settings"))
+    except ValueError as exc:
+        raise QAError("invalid generation settings", retryable=False) from exc
+    for item in [concept, *directions]:
+        if settings.duration_s is not None and item.get("duration_s") != settings.duration_s:
+            raise QAError("concept duration differs from the explicit setting", retryable=False)
+        if settings.aspect_ratio is not None and item.get("aspect_ratio") != settings.aspect_ratio:
+            raise QAError("concept format differs from the explicit setting", retryable=False)
     selection = str(concept.get("selection") or "")
     ids = [str(item["direction_id"]) for item in directions]
     if concept.get("auto") is True:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import uuid
 
@@ -16,6 +17,7 @@ from workers.nodes.n01_brief.industries import (
 )
 from workers.nodes.n01_brief.platforms import (
     aspects_for_platforms,
+    aspects_match,
     canonical_platform,
     repair_aspects,
 )
@@ -32,6 +34,7 @@ from workers.nodes.n01_brief.signals import (
 from workers.schemas.base import ASPECT_RATIO_PATTERN, LANGUAGE_PATTERN
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief, ClarifyingQuestion
+from workers.schemas.generation import GenerationSettings
 
 FACTORY_NOTE = "未提供工厂视频，使用 AI 生成工厂场景"
 _LANG_LABELS = {
@@ -65,7 +68,9 @@ def assemble(
     attachments: list[ParsedAttachment],
     brand: BrandKit | None,
     extracted: ExtractedBrief,
+    generation_settings: GenerationSettings | None = None,
 ) -> Brief:
+    settings = generation_settings or GenerationSettings()
     facts = merge_facts([item.facts() for item in attachments])
     attachment_text = "\n".join(item.text for item in attachments if item.text)
     evidence = f"{raw_input}\n{attachment_text}"
@@ -108,7 +113,11 @@ def assemble(
         goal = template.video(video_type).goal
         _add(assumptions, f"未说明投放目标，按{template.label}模板使用「{goal}」。")
 
-    duration, duration_source = _duration(parsed, extracted)
+    duration, duration_source = (
+        (settings.duration_s, "explicit")
+        if settings.duration_s is not None
+        else _duration(parsed, extracted)
+    )
     if duration_source == "default":
         duration = template.duration_s
         _add(assumptions, f"未说明时长，按{template.label}模板使用 {duration} 秒。")
@@ -124,16 +133,28 @@ def assemble(
         shown = "、".join(platforms)
         _add(assumptions, f"未说明投放平台，按{template.label}模板使用{shown}。")
 
-    aspects, aspect_note, ask_aspect = _aspects(
-        parsed,
-        extracted,
-        platforms,
-        platform_source,
-        template.aspect_ratios,
-        template.label,
-    )
-    if aspect_note:
-        _add(assumptions, aspect_note)
+    if settings.aspect_ratio is not None:
+        # The user's saved primary format outranks text, platform and model.
+        # A platform recommendation is advisory, never a second master frame.
+        aspects = [settings.aspect_ratio]
+        ask_aspect = False
+        if not aspects_match(platforms, aspects):
+            _add(
+                assumptions,
+                f"已保留你选择的主画幅 {settings.aspect_ratio}；投放平台推荐其他比例，"
+                "发布前可另行适配，主画幅不会自动修改。",
+            )
+    else:
+        aspects, aspect_note, ask_aspect = _aspects(
+            parsed,
+            extracted,
+            platforms,
+            platform_source,
+            template.aspect_ratios,
+            template.label,
+        )
+        if aspect_note:
+            _add(assumptions, aspect_note)
 
     languages = parsed.languages or _clean_languages(extracted.languages)
     if not languages:
@@ -188,7 +209,7 @@ def assemble(
     questions = questions[:2]
 
     return Brief(
-        brief_id=_brief_id(project_id, raw_input),
+        brief_id=_brief_id(project_id, raw_input, settings),
         raw_input=raw_input,
         goal=goal,
         platform=platforms,
@@ -200,6 +221,7 @@ def assemble(
         must_include=must_include,
         style=style,
         assumptions=assumptions,
+        generation_settings=settings,
         open_questions=questions,
     )
 
@@ -352,8 +374,11 @@ def _has_factory_video(attachments: list[ParsedAttachment]) -> bool:
     return False
 
 
-def _brief_id(project_id: str, raw_input: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"hilatv:{project_id}:{raw_input}"))
+def _brief_id(project_id: str, raw_input: str, settings: GenerationSettings) -> str:
+    key = f"hilatv:{project_id}:{raw_input}"
+    if settings != GenerationSettings():
+        key += ":" + json.dumps(settings.model_dump(), sort_keys=True)
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
 
 def _add(items: list[str], text: str) -> None:

@@ -18,6 +18,7 @@ from workers.nodes.n02_brand_kit.schema import PersonIntake, ProductIntake
 from workers.nodes.n03_concept.node import run as run_concept
 from workers.nodes.n03_concept.qa import QAError as ConceptQAError
 from workers.schemas.brand import Industry
+from workers.schemas.generation import generation_settings
 from workers.workflow.store import locked_project, save_node, update_snapshot
 
 _MAX_B64_CHARS = 8_000_000
@@ -94,7 +95,7 @@ class PreferenceBody(BaseModel):
 class ConceptBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sentence: str = Field(min_length=1, max_length=4000)
+    sentence: str = Field(default="", max_length=4000)
     selection: str | None = Field(default=None, max_length=80)
     project_id: str | None = Field(default=None, min_length=1, max_length=80)
     draft_revision: int | None = Field(default=None, ge=0)
@@ -229,8 +230,17 @@ def create_concepts(
                 raise HTTPException(
                     status_code=409, detail="草稿已变化，请保存最新输入后再生成方案"
                 )
-            if body.sentence.strip() != str(snapshot.get("sentence") or "").strip():
+            if (
+                body.sentence.strip()
+                and body.sentence.strip() != str(snapshot.get("sentence") or "").strip()
+            ):
                 raise HTTPException(status_code=409, detail="请先保存这次输入")
+    sentence = (
+        str(snapshot.get("sentence") or "").strip() if body.project_id else body.sentence.strip()
+    )
+    if not sentence:
+        raise HTTPException(status_code=422, detail="先写一句话")
+    settings = generation_settings(snapshot.get("generation_settings")).model_dump(mode="json")
     brand = snapshot.get("brand_kit")
     if enterprise_id and not isinstance(brand, dict):
         record = load_record(enterprise_id)
@@ -240,9 +250,10 @@ def create_concepts(
             {
                 "project_id": body.project_id or "concept-preview",
                 "payload": {
-                    "raw_input": body.sentence,
+                    "raw_input": sentence,
                     "brand_kit": brand,
                     "attachments": snapshot.get("attachments") or [],
+                    "generation_settings": settings,
                 },
             },
             timeout_s=30,
@@ -277,10 +288,13 @@ def create_concepts(
             update_snapshot(
                 body.project_id,
                 concept_preview=concept,
-                concept_preview_sentence=body.sentence.strip(),
+                concept_preview_sentence=sentence,
+                concept_preview_generation_settings=settings,
+                concept_preview_invalidated=False,
             )
     return {
         "concept": concept,
+        "generation_settings": settings,
         "brand_applied": brand is not None,
         "enterprise_id": enterprise_id,
     }

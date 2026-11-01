@@ -14,6 +14,7 @@ import uuid
 from typing import Any
 
 from workers.identity.session import canonical_enterprise
+from workers.schemas.generation import generation_settings
 from workers.workflow.store import (
     init_project,
     locked_project,
@@ -60,6 +61,12 @@ def create_draft(
     member_id: str,
     fields: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
+    fields = {
+        **fields,
+        "generation_settings": generation_settings(fields.get("generation_settings")).model_dump(
+            mode="json"
+        ),
+    }
     project_id = draft_id(enterprise_id, operation_id)
     fingerprint = _fields_hash(fields)
     with locked_project(project_id):
@@ -67,10 +74,15 @@ def create_draft(
         if current is not None:
             current = owned_draft(project_id, enterprise_id)
             initial = current.get("_draft_create") or {}
-            if (
-                initial.get("operation_id") != operation_id
-                or initial.get("fingerprint") != fingerprint
-            ):
+            legacy_fingerprint = _fields_hash(
+                {key: value for key, value in fields.items() if key != "generation_settings"}
+            )
+            fingerprint_matches = initial.get("fingerprint") == fingerprint or (
+                "generation_settings" not in current
+                and generation_settings(fields["generation_settings"]) == generation_settings()
+                and initial.get("fingerprint") == legacy_fingerprint
+            )
+            if initial.get("operation_id") != operation_id or not fingerprint_matches:
                 raise DraftError("operation_conflict", "同一创建操作不能改写为另一份草稿", current)
             return current, False
         now = time.time()
@@ -101,6 +113,12 @@ def save_draft(
     revision: int,
     fields: dict[str, Any],
 ) -> dict[str, Any]:
+    fields = {
+        **fields,
+        "generation_settings": generation_settings(fields.get("generation_settings")).model_dump(
+            mode="json"
+        ),
+    }
     if not valid_project_id(project_id):
         raise DraftError("not_found", "项目不存在")
     with locked_project(project_id):
@@ -115,16 +133,35 @@ def save_draft(
                 and receipt.get("base_revision") == revision
                 and receipt.get("new_revision") == current_revision
                 and receipt.get("fields_hash") == fields_hash
-                and _fields_hash({key: current.get(key) for key in fields}) == fields_hash
+                and _fields_hash({key: current.get(key) for key in fields})
+                == receipt.get("applied_fields_hash", fields_hash)
             ):
                 # The first write committed but its ACK was lost. This is the
                 # same full normalized payload, not permission to overwrite a
                 # different edit or jump across a subsequent revision.
                 return current
             raise DraftError("draft_conflict", "草稿已在其他页面修改，请先核对已保存内容", current)
+        applied_fields = dict(fields)
+        invalidation: dict[str, Any] = {}
+        settings_changed = generation_settings(
+            current.get("generation_settings")
+        ) != generation_settings(fields["generation_settings"])
+        if settings_changed or current.get("concept_preview_invalidated") is True:
+            applied_fields["concept_selection"] = None
+        if settings_changed:
+            invalidation = {
+                "concept_preview": None,
+                "concept_preview_sentence": None,
+                "concept_preview_generation_settings": None,
+                "concept_preview_invalidated": True,
+                "concept_ok": None,
+                "concept_degraded": False,
+                "concept_text_source": "",
+            }
         updated = {
             **current,
-            **fields,
+            **applied_fields,
+            **invalidation,
             "draft_revision": revision + 1,
             "updated_at": time.time(),
             "message": "草稿已保存",
@@ -132,6 +169,7 @@ def save_draft(
                 "base_revision": revision,
                 "new_revision": revision + 1,
                 "fields_hash": fields_hash,
+                "applied_fields_hash": _fields_hash(applied_fields),
             },
         }
         update_snapshot(

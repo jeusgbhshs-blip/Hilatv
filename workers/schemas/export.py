@@ -10,6 +10,7 @@ from workers.schemas.asset import Asset, Candidate, QAReport
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
 from workers.schemas.director import DirectorDecision, RevisionDirective
+from workers.schemas.generation import GenerationSettings
 from workers.schemas.script import Script, Shot
 
 JSON_SCHEMA_DIR = Path(__file__).resolve().parent / "json_schema"
@@ -17,6 +18,7 @@ JSON_SCHEMA_DIR = Path(__file__).resolve().parent / "json_schema"
 EXPORT_MODELS: tuple[tuple[str, type], ...] = (
     ("BrandKit", BrandKit),
     ("Brief", Brief),
+    ("GenerationSettings", GenerationSettings),
     ("Script", Script),
     ("Shot", Shot),
     ("Asset", Asset),

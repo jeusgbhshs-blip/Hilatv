@@ -8,6 +8,10 @@
 {{ structures }}
 
 需求：{{ brief }}
+最终整片时长：{{ duration_s }} 秒（包含片头片尾）。主画幅：{{ aspect_ratio }}。
+{% if generation_settings.duration_s is not none or generation_settings.aspect_ratio is not none %}
+以上明确设置优先于需求文字、平台建议和模板，不得修改或追加另一个主画幅。
+{% endif %}
 品牌调性：{{ tone }}
 禁用词：{{ banned }}
 {% if feedback %}

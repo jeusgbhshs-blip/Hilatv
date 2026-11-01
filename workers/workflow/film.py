@@ -36,6 +36,7 @@ _PUBLIC = (
     "fail_nodes",
     "enterprise_id",
     "concept_selection",
+    "generation_settings",
     "human_release",
     "skip_storyboard",
 )

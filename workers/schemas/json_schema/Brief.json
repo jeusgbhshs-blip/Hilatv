@@ -28,6 +28,51 @@
       ],
       "title": "ClarifyingQuestion",
       "type": "object"
+    },
+    "GenerationSettings": {
+      "additionalProperties": false,
+      "description": "Duration is the whole film, including any intro and outro packaging.",
+      "properties": {
+        "aspect_ratio": {
+          "anyOf": [
+            {
+              "enum": [
+                "16:9",
+                "9:16",
+                "1:1",
+                "4:3",
+                "3:4",
+                "3:2",
+                "2:3",
+                "4:5",
+                "21:9"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Aspect Ratio"
+        },
+        "duration_s": {
+          "anyOf": [
+            {
+              "ge": 5,
+              "le": 180,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration S"
+        }
+      },
+      "title": "GenerationSettings",
+      "type": "object"
     }
   },
   "additionalProperties": false,
@@ -105,6 +150,9 @@
       },
       "title": "Assumptions",
       "type": "array"
+    },
+    "generation_settings": {
+      "$ref": "#/$defs/GenerationSettings"
     },
     "open_questions": {
       "items": {

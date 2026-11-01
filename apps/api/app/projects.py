@@ -39,6 +39,7 @@ from workers.identity.session import (
 )
 from workers.nodes.n01_brief.schema import AttachmentRef
 from workers.nodes.n18_revision.concept_gate import classify_concept, read_project_concept
+from workers.schemas.generation import GenerationSettings, generation_settings
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
 from workers.workflow.contract import PIPELINE
 from workers.workflow.drafts import (
@@ -96,6 +97,7 @@ class CreateProject(BaseModel):
     brand_kit: dict[str, Any] | None = None
     brand_id: str | None = None
     concept_selection: str | None = Field(default=None, max_length=80)
+    generation_settings: GenerationSettings = Field(default_factory=GenerationSettings)
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     # Omitted means 直接出片, so unattended clients still finish. The page sends false to wait.
     skip_storyboard: bool = True
@@ -108,6 +110,7 @@ class DraftFields(BaseModel):
     brand_kit: dict[str, Any] | None = None
     brand_id: str | None = None
     concept_selection: str | None = Field(default=None, max_length=80)
+    generation_settings: GenerationSettings = Field(default_factory=GenerationSettings)
     attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
     skip_storyboard: bool = False
 
@@ -329,7 +332,7 @@ def _concept_public(project_id: str, snapshot: dict[str, Any]) -> dict[str, Any]
     """Surface a degraded concept. A 200 from /v1/concepts can still be a fallback."""
 
     file_view = classify_concept(None)
-    if valid_project_id(project_id):
+    if valid_project_id(project_id) and not snapshot.get("concept_preview_invalidated"):
         file_view = classify_concept(read_project_concept(project_root() / project_id))
     text_source = file_view.text_source or str(snapshot.get("concept_text_source") or "")
     degraded = (
@@ -348,6 +351,13 @@ def _concept_public(project_id: str, snapshot: dict[str, Any]) -> dict[str, Any]
 
 def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     body = {key: value for key, value in snapshot.items() if not key.startswith("_")}
+    body["generation_settings"] = generation_settings(
+        snapshot.get("generation_settings")
+    ).model_dump(mode="json")
+    if body.get("concept_preview") is not None:
+        body["concept_preview_generation_settings"] = generation_settings(
+            snapshot.get("concept_preview_generation_settings")
+        ).model_dump(mode="json")
     if body.get("status") == "running" and body.get("started_at"):
         body["elapsed_s"] = round(time.time() - float(body["started_at"]), 3)
     if "attachments" in body:
@@ -457,6 +467,7 @@ def create_blank_project(
         draft_revision=1,
         attachments=[],
         concept_selection=None,
+        generation_settings=GenerationSettings().model_dump(mode="json"),
         skip_storyboard=True,
         enterprise_id=identity.enterprise_id,
         owner_member_id=identity.member_id,
@@ -488,6 +499,7 @@ def _draft_fields(body: DraftFields, project_id: str, identity: Identity) -> dic
         "brand_id": body.brand_id,
         "attachments": attachments,
         "concept_selection": body.concept_selection,
+        "generation_settings": body.generation_settings.model_dump(mode="json"),
         "skip_storyboard": body.skip_storyboard,
     }
 
@@ -567,6 +579,7 @@ async def create_project(
         enterprise_id=identity.enterprise_id,
         owner_member_id=identity.member_id,
         concept_selection=body.concept_selection,
+        generation_settings=body.generation_settings,
         attachments=attachments,
         skip_storyboard=body.skip_storyboard,
     )
@@ -722,6 +735,7 @@ async def start_film_on_project(
             owner_member_id=claimed.get("owner_member_id"),
             attachments=claimed.get("attachments") or [],
             concept_selection=claimed.get("concept_selection"),
+            generation_settings=claimed.get("generation_settings"),
             skip_storyboard=claimed.get("skip_storyboard") is not False,
             workflow_id=claimed["workflow_id"],
             preserve_project=True,
@@ -782,6 +796,7 @@ async def rerun_project(
         brand_id=snapshot.get("brand_id"),
         enterprise_id=snapshot.get("enterprise_id"),
         concept_selection=snapshot.get("concept_selection"),
+        generation_settings=snapshot.get("generation_settings"),
         attachments=snapshot.get("attachments") or [],
         keyframe_candidates=snapshot.get("keyframe_candidates"),
         video_candidates=snapshot.get("video_candidates"),
@@ -865,6 +880,7 @@ async def release_human_review(
         brand_id=snapshot.get("brand_id"),
         enterprise_id=snapshot.get("enterprise_id"),
         concept_selection=snapshot.get("concept_selection"),
+        generation_settings=snapshot.get("generation_settings"),
         attachments=snapshot.get("attachments") or [],
         keyframe_candidates=snapshot.get("keyframe_candidates"),
         video_candidates=snapshot.get("video_candidates"),

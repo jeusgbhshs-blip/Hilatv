@@ -9,6 +9,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from workers.logging import log_event
+from workers.schemas.generation import GenerationSettings
+from workers.schemas.generation import generation_settings as normalize_generation_settings
 from workers.workflow.runtime import (
     build_worker,
     get_runtime,
@@ -66,7 +68,9 @@ def make_request(
     human_release: bool = False,
     skip_storyboard: bool | None = None,
     storyboard_wait_s: int | None = None,
+    generation_settings: dict[str, Any] | GenerationSettings | None = None,
 ) -> dict[str, Any]:
+    settings = normalize_generation_settings(generation_settings).model_dump(mode="json")
     return {
         "project_id": project_id,
         "sentence": sentence,
@@ -90,6 +94,7 @@ def make_request(
         "pause_after": pause_after,
         "enterprise_id": enterprise_id,
         "concept_selection": concept_selection,
+        "generation_settings": settings,
         "human_release": human_release is True,
         # Omitted means 直接出片. The product page sends false when it wants the cards.
         "skip_storyboard": True if skip_storyboard is None else bool(skip_storyboard),
@@ -117,7 +122,10 @@ def prepare(
     workflow_id: str | None = None,
     owner_member_id: str | None = None,
     preserve_project: bool = False,
+    generation_settings: dict[str, Any] | GenerationSettings | None = None,
 ) -> tuple[dict[str, Any], str]:
+    if start_from and generation_settings is None:
+        generation_settings = (read_snapshot(project_id) or {}).get("generation_settings")
     request = make_request(
         project_id=project_id,
         sentence=sentence,
@@ -134,6 +142,7 @@ def prepare(
         concept_selection=concept_selection,
         human_release=human_release,
         skip_storyboard=skip_storyboard,
+        generation_settings=generation_settings,
     )
     if workflow_id is None:
         if start_from:
@@ -146,6 +155,10 @@ def prepare(
         snapshot = read_snapshot(project_id)
         if snapshot is None or snapshot.get("workflow_id") != workflow_id:
             raise ValueError("project submission is not claimed")
+        # A queued draft always uses the settings from the claimed revision.
+        request["generation_settings"] = normalize_generation_settings(
+            snapshot.get("generation_settings")
+        ).model_dump(mode="json")
     elif start_from:
         previous = read_snapshot(project_id) or {}
         kept = contained_file(
@@ -179,6 +192,7 @@ def prepare(
             enterprise_id=enterprise_id,
             owner_member_id=owner_member_id,
             concept_selection=concept_selection,
+            generation_settings=request["generation_settings"],
             skip_storyboard=request["skip_storyboard"],
         )
     log_event(
