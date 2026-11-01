@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+from pathlib import Path
 from typing import Any
 
 from workers.expert.gates import (
@@ -13,7 +15,7 @@ from workers.expert.gates import (
 )
 from workers.qa.service import review_shot
 from workers.schemas.asset import Candidate
-from workers.workflow.activities import node_timeout
+from workers.workflow.activities import node_timeout, production_clock, story_clock
 from workers.workflow.store import project_path
 
 _REVIEW_NODE = {"n08_keyframe": "n09_keyframe", "n10_video": "n11_video"}
@@ -86,6 +88,13 @@ def _require(state: dict[str, Any], key: str) -> dict[str, Any]:
     return value
 
 
+def _clock_payload(kwargs: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "request": {"generation_settings": kwargs["snapshot"].get("generation_settings")},
+        "state": kwargs["state"],
+    }
+
+
 def _review(
     rows: list[dict[str, Any]],
     *,
@@ -126,6 +135,7 @@ def _n01(**kwargs: Any) -> dict[str, Any]:
             "project_id": kwargs["project_id"],
             "payload": {
                 "raw_input": sentence,
+                "generation_settings": snapshot.get("generation_settings") or {},
                 "attachments": snapshot.get("attachments") or [],
                 "brand_kit": kwargs["state"].get("brand_kit"),
             },
@@ -188,7 +198,11 @@ def _n04(**kwargs: Any) -> dict[str, Any]:
         run,
         {
             "project_id": kwargs["project_id"],
-            "payload": {"brief": _require(state, "brief"), "brand_kit": state.get("brand_kit")},
+            "payload": {
+                "brief": _require(state, "brief"),
+                "brand_kit": state.get("brand_kit"),
+                **story_clock(_clock_payload(kwargs)),
+            },
             "attempt": 1,
         },
         kwargs["gateway"],
@@ -197,6 +211,7 @@ def _n04(**kwargs: Any) -> dict[str, Any]:
         "script": result.payload["script"],
         "brief": result.payload.get("brief") or state.get("brief"),
         "brand_kit": result.payload.get("brand_kit", state.get("brand_kit")),
+        "production_clock": production_clock(_clock_payload(kwargs)),
     }
 
 
@@ -213,6 +228,7 @@ def _n05(**kwargs: Any) -> dict[str, Any]:
                 "brief": _require(state, "brief"),
                 "script": _require(state, "script"),
                 "brand_kit": state.get("brand_kit"),
+                **story_clock(_clock_payload(kwargs)),
             },
             "attempt": 1,
         },
@@ -244,6 +260,7 @@ def _n06(**kwargs: Any) -> dict[str, Any]:
                 "script": _require(state, "script"),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
+                **(production_clock(_clock_payload(kwargs)) if not kwargs["shot_id"] else {}),
             },
             "shot_id": kwargs["shot_id"],
             "attempt": 1,
@@ -361,6 +378,7 @@ def _n12(**kwargs: Any) -> dict[str, Any]:
                 "brief": state.get("brief"),
                 "mood": str(brief.get("style") or ""),
                 "work_dir": _work(kwargs["project_id"], "n12"),
+                **production_clock(_clock_payload(kwargs)),
             },
             "attempt": 1,
         },
@@ -409,6 +427,7 @@ def _n14(**kwargs: Any) -> dict[str, Any]:
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
                 "work_dir": _work(kwargs["project_id"], "n14"),
+                **production_clock(_clock_payload(kwargs)),
             },
             "shot_id": kwargs["shot_id"],
             "attempt": 1,
@@ -479,6 +498,11 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
     state = kwargs["state"]
     if needs_human_review(state, {}):
         raise GateError("有镜头未经视觉评审，成片暂停，需要人工放行", status=409)
+    clock = production_clock(_clock_payload(kwargs))
+    if clock and any(
+        abs(float(state.get(key) or 0) - clock[key]) > 1 / 30 for key in ("intro_s", "outro_s")
+    ):
+        raise GateError("片头片尾与已确认的总时长预算不一致，请重新生成包装", status=409)
     result = _run(
         "n15_compose",
         run,
@@ -486,6 +510,7 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
             "project_id": kwargs["project_id"],
             "payload": {
                 "script": _require(state, "script"),
+                **({"target_duration_s": clock["target_duration_s"]} if clock else {}),
                 "voiceovers": state.get("voiceovers") or [],
                 "cues": state.get("cues") or [],
                 "elements": state.get("elements") or [],
@@ -495,7 +520,9 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
                 "brand_kit": state.get("brand_kit"),
                 "intro_s": float(state.get("intro_s") or 0),
                 "outro_s": float(state.get("outro_s") or 0),
-                "work_dir": _work(kwargs["project_id"], "n15"),
+                "work_dir": str(
+                    Path(_work(kwargs["project_id"], "n15")) / "renders" / uuid.uuid4().hex
+                ),
                 **timeline_fields(state),
             },
             "attempt": 1,
@@ -509,6 +536,7 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
     return {
         "deliverable": exports["master"],
         "exports": exports,
+        "clean_picture_path": exports.get("clean_picture"),
         "timeline": timeline,
         "timeline_path": result.payload.get("timeline_path"),
     }
