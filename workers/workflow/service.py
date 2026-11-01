@@ -16,7 +16,7 @@ from workers.workflow.runtime import (
     task_queue,
     temporal_mode,
 )
-from workers.workflow.store import init_project, project_path, update_snapshot
+from workers.workflow.store import init_project, project_path, read_snapshot, update_snapshot
 
 
 def _storyboard_wait(value: int | None) -> int:
@@ -109,6 +109,8 @@ def prepare(
     human_release: bool = False,
     skip_storyboard: bool | None = None,
     workflow_id: str | None = None,
+    owner_member_id: str | None = None,
+    preserve_project: bool = False,
 ) -> tuple[dict[str, Any], str]:
     request = make_request(
         project_id=project_id,
@@ -132,7 +134,13 @@ def prepare(
             workflow_id = f"{project_id}__{start_from}__{uuid.uuid4().hex[:8]}"
         else:
             workflow_id = project_id
-    if start_from:
+    if preserve_project:
+        # The draft submit transaction already durably claimed this exact run.
+        # Reinitializing here would erase its owner, CAS revision and outbox.
+        snapshot = read_snapshot(project_id)
+        if snapshot is None or snapshot.get("workflow_id") != workflow_id:
+            raise ValueError("project submission is not claimed")
+    elif start_from:
         update_snapshot(
             project_id,
             status="running",
@@ -155,6 +163,7 @@ def prepare(
             work_dir=request["work_dir"],
             workflow_id=workflow_id,
             enterprise_id=enterprise_id,
+            owner_member_id=owner_member_id,
             concept_selection=concept_selection,
             skip_storyboard=request["skip_storyboard"],
         )
@@ -190,11 +199,12 @@ def _stamp(project_id: str, started: float, result: dict[str, Any]) -> dict[str,
     return result
 
 
-async def start_film(**kwargs: Any) -> str:
+async def start_film(*, runtime: Any | None = None, **kwargs: Any) -> str:
     """Queue a run on the shared worker. Returns the workflow id."""
 
+    # Connection failures happen before changing any project files.
+    runtime = runtime or await get_runtime()
     request, workflow_id = prepare(**kwargs)
-    runtime = await get_runtime()
     from workers.workflow.film import ProduceFilm
 
     await runtime.client.start_workflow(

@@ -512,12 +512,19 @@ def test_agent_entry_runs_the_whole_film_on_an_existing_canvas(tmp_path, monkeyp
     async def fake_start(**kwargs) -> str:
         assert kwargs["project_id"] == project_id
         assert kwargs["sentence"] == "给高压球阀做一条 15 秒产品宣传片，面向采购"
-        return "wf-test"
+        assert kwargs["owner_member_id"] == ident.member_id
+        assert kwargs["preserve_project"] is True
+        return kwargs["workflow_id"]
+
+    async def fake_runtime():
+        return object()
 
     monkeypatch.setattr("app.projects.start_film", fake_start)
+    monkeypatch.setattr("app.projects.get_runtime", fake_runtime)
     started = client.post(
         f"/v1/projects/{project_id}/film/start",
         json={"sentence": "给高压球阀做一条 15 秒产品宣传片，面向采购"},
     )
     assert started.status_code == 202, started.text
-    assert started.json()["workflow_id"] == "wf-test"
+    assert started.json()["workflow_id"].startswith(f"{project_id}__film__")
+    assert started.json()["submission_state"] == "submitted"

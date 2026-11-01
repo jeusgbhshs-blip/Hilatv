@@ -39,7 +39,18 @@ from workers.nodes.n01_brief.schema import AttachmentRef
 from workers.nodes.n18_revision.concept_gate import classify_concept, read_project_concept
 from workers.workflow.brand import BrandReadError, resolve_brand_kit
 from workers.workflow.contract import PIPELINE
+from workers.workflow.drafts import (
+    DraftError,
+    claim_submission,
+    confirm_submission,
+    create_draft,
+    draft_id,
+    existing_submission,
+    save_draft,
+    submission_response,
+)
 from workers.workflow.revise import RevisionError, revise_project
+from workers.workflow.runtime import get_runtime
 from workers.workflow.service import release_film, start_film
 from workers.workflow.store import (
     init_project,
@@ -87,6 +98,25 @@ class CreateProject(BaseModel):
     skip_storyboard: bool = True
 
 
+class DraftFields(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    sentence: str = Field(default="", max_length=4000)
+    brand_kit: dict[str, Any] | None = None
+    brand_id: str | None = None
+    concept_selection: str | None = Field(default=None, max_length=80)
+    attachments: list[dict[str, Any]] = Field(default_factory=list, max_length=30)
+    skip_storyboard: bool = False
+
+
+class CreateDraft(DraftFields):
+    operation_id: uuid.UUID
+
+
+class SaveDraft(DraftFields):
+    draft_revision: int = Field(ge=1, strict=True)
+
+
 class StoryboardEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -107,7 +137,7 @@ class ReviseProject(BaseModel):
 
 
 def brand_for_request(
-    body: CreateProject,
+    body: CreateProject | DraftFields,
     *,
     project_id: str,
     enterprise_id: str,
@@ -130,7 +160,7 @@ def brand_for_request(
         raise HTTPException(status_code=422, detail="品牌资料无效") from exc
 
 
-def _checked(body: CreateProject, *, enterprise_id: str) -> list[dict[str, Any]]:
+def _checked(body: CreateProject | DraftFields, *, enterprise_id: str) -> list[dict[str, Any]]:
     return [_bind_attachment(item, enterprise_id=enterprise_id) for item in body.attachments]
 
 
@@ -310,7 +340,7 @@ def _concept_public(project_id: str, snapshot: dict[str, Any]) -> dict[str, Any]
 
 
 def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
-    body = dict(snapshot)
+    body = {key: value for key, value in snapshot.items() if not key.startswith("_")}
     if body.get("status") == "running" and body.get("started_at"):
         body["elapsed_s"] = round(time.time() - float(body["started_at"]), 3)
     if "attachments" in body:
@@ -396,6 +426,10 @@ def create_blank_project(
         message="空白画布：双击加节点",
         shots=[],
         events=[],
+        draft_revision=1,
+        attachments=[],
+        concept_selection=None,
+        skip_storyboard=True,
         enterprise_id=identity.enterprise_id,
         owner_member_id=identity.member_id,
         work_dir=str(project_path(project_id)),
@@ -405,6 +439,87 @@ def create_blank_project(
         status_code=201,
         content={"project_id": project_id, "status": "draft"},
     )
+
+
+def _draft_error(exc: DraftError) -> HTTPException:
+    detail: dict[str, Any] = {"code": exc.code, "message": str(exc)}
+    if exc.snapshot:
+        detail.update(
+            draft_revision=int(exc.snapshot.get("draft_revision") or 1),
+            snapshot=_public_snapshot(exc.snapshot),
+        )
+    return HTTPException(status_code=exc.status, detail=detail)
+
+
+def _draft_fields(body: DraftFields, project_id: str, identity: Identity) -> dict[str, Any]:
+    attachments = _checked(body, enterprise_id=identity.enterprise_id)
+    loaded = brand_for_request(body, project_id=project_id, enterprise_id=identity.enterprise_id)
+    return {
+        "sentence": body.sentence.strip(),
+        "brand_kit": loaded if body.brand_kit is not None else None,
+        "brand_id": body.brand_id,
+        "attachments": attachments,
+        "concept_selection": body.concept_selection,
+        "skip_storyboard": body.skip_storyboard,
+    }
+
+
+def _draft_response(snapshot: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "project_id": snapshot["project_id"],
+        "draft_id": snapshot["project_id"],
+        "draft_revision": int(snapshot.get("draft_revision") or 1),
+        "status": snapshot["status"],
+        "snapshot": _public_snapshot(snapshot),
+    }
+
+
+def _refuse_unconfirmed_submission(snapshot: dict[str, Any]) -> None:
+    if snapshot.get("submission_state") in {"pending", "unknown_external_result"}:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "submission_pending", "message": "原任务提交结果待确认，请勿重复生成"},
+        )
+
+
+@router.post("/v1/projects/drafts")
+def create_project_draft(
+    body: CreateDraft,
+    identity: Identity = Depends(require_identity),
+) -> JSONResponse:
+    operation_id = str(body.operation_id)
+    project_id = draft_id(identity.enterprise_id, operation_id)
+    fields = _draft_fields(body, project_id, identity)
+    try:
+        snapshot, created = create_draft(
+            operation_id=operation_id,
+            enterprise_id=identity.enterprise_id,
+            member_id=identity.member_id,
+            fields=fields,
+        )
+    except DraftError as exc:
+        raise _draft_error(exc) from exc
+    return JSONResponse(status_code=201 if created else 200, content=_draft_response(snapshot))
+
+
+@router.put("/v1/projects/{project_id}/draft")
+def save_project_draft(
+    project_id: str,
+    body: SaveDraft,
+    identity: Identity = Depends(require_identity),
+) -> dict[str, Any]:
+    _snapshot_or_404(project_id, identity)
+    fields = _draft_fields(body, project_id, identity)
+    try:
+        snapshot = save_draft(
+            project_id,
+            enterprise_id=identity.enterprise_id,
+            revision=body.draft_revision,
+            fields=fields,
+        )
+    except DraftError as exc:
+        raise _draft_error(exc) from exc
+    return _draft_response(snapshot)
 
 
 @router.post("/v1/projects")
@@ -422,6 +537,7 @@ async def create_project(
         brand_kit=kit,
         brand_id=body.brand_id,
         enterprise_id=identity.enterprise_id,
+        owner_member_id=identity.member_id,
         concept_selection=body.concept_selection,
         attachments=attachments,
         skip_storyboard=body.skip_storyboard,
@@ -449,8 +565,9 @@ def list_projects(identity: Identity = Depends(require_identity)) -> dict[str, A
             stored = snapshot.get("enterprise_id")
             if not isinstance(stored, str) or canonical_enterprise(stored) != owner:
                 continue
-            started = snapshot.get("started_at")
+            started = snapshot.get("created_at") or snapshot.get("started_at")
             finished = snapshot.get("finished_at")
+            updated = snapshot.get("updated_at") or finished
             rows.append(
                 {
                     "project_id": entry.name,
@@ -459,8 +576,8 @@ def list_projects(identity: Identity = Depends(require_identity)) -> dict[str, A
                     "phase": str(snapshot.get("phase") or ""),
                     "message": str(snapshot.get("message") or ""),
                     "created_at": started if isinstance(started, (int, float)) else 0,
-                    "updated_at": finished
-                    if isinstance(finished, (int, float))
+                    "updated_at": updated
+                    if isinstance(updated, (int, float))
                     else (started if isinstance(started, (int, float)) else 0),
                     "shot_count": len(snapshot.get("shots") or []),
                     "has_film": bool(snapshot.get("deliverable")),
@@ -476,6 +593,22 @@ class FilmStart(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     sentence: str = Field(default="", max_length=4000)
+    operation_id: uuid.UUID | None = None
+    draft_revision: int | None = Field(default=None, ge=1, strict=True)
+
+
+async def _read_submission(snapshot: dict[str, Any]) -> dict[str, Any]:
+    """Resolve an unknown acknowledgement with a read; never resend a start."""
+    submission = snapshot.get("_submission") or {}
+    if submission.get("state") not in {"pending", "unknown_external_result"}:
+        return snapshot
+    try:
+        runtime = await get_runtime()
+        handle = runtime.client.get_workflow_handle(str(submission["workflow_id"]))
+        await handle.describe()
+    except Exception:
+        return snapshot
+    return confirm_submission(snapshot["project_id"], submission["operation_id"], confirmed=True)
 
 
 @router.post("/v1/projects/{project_id}/film/start")
@@ -485,24 +618,93 @@ async def start_film_on_project(
     identity: Identity = Depends(require_identity),
 ) -> JSONResponse:
     snapshot = _snapshot_or_404(project_id, identity)
-    if snapshot.get("status") == "running":
-        raise HTTPException(status_code=409, detail="项目仍在运行")
-    sentence = body.sentence.strip() or str(snapshot.get("sentence") or "").strip()
-    if not sentence:
+    modern = body.operation_id is not None or body.draft_revision is not None
+    if modern:
+        if body.operation_id is None or body.draft_revision is None or body.sentence.strip():
+            raise HTTPException(status_code=422, detail="提交需要操作编号和已保存草稿版本")
+        operation_id, revision = str(body.operation_id), body.draft_revision
+        legacy_sentence = None
+    else:
+        if snapshot.get("_draft_create"):
+            raise HTTPException(
+                status_code=422, detail="请先保存草稿，并提供提交操作编号和草稿版本"
+            )
+        revision = int(snapshot.get("draft_revision") or 1)
+        operation_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"hilatv:{project_id}:{revision}"))
+        legacy_sentence = body.sentence.strip() or str(snapshot.get("sentence") or "").strip()
+    try:
+        previous = existing_submission(snapshot, operation_id, revision)
+    except DraftError as exc:
+        raise _draft_error(exc) from exc
+    if previous is not None:
+        return JSONResponse(
+            status_code=202, content=submission_response(await _read_submission(snapshot))
+        )
+    if snapshot.get("status") != "draft":
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "project_not_editable", "message": "项目已开始，请查看原任务"},
+        )
+    if revision != int(snapshot.get("draft_revision") or 1):
+        raise _draft_error(DraftError("draft_conflict", "草稿版本已变化，请先保存再提交", snapshot))
+    sentence = legacy_sentence if legacy_sentence is not None else snapshot.get("sentence")
+    if not isinstance(sentence, str) or not sentence.strip():
         raise HTTPException(status_code=422, detail="先写一句话")
-    workflow_id = await start_film(
-        project_id=project_id,
-        sentence=sentence,
-        brand_kit=snapshot.get("brand_kit"),
-        brand_id=snapshot.get("brand_id"),
-        enterprise_id=identity.enterprise_id,
-        attachments=snapshot.get("attachments") or [],
-        skip_storyboard=True,
+    # Revalidate the saved tenant-bound uploads and brand, never take a second
+    # unsaved payload at submit time. This is read-only and cannot invoke models.
+    _draft_fields(
+        DraftFields.model_validate(
+            {key: snapshot.get(key) for key in DraftFields.model_fields if key in snapshot}
+        ),
+        project_id,
+        identity,
     )
-    return JSONResponse(
-        status_code=202,
-        content={"project_id": project_id, "workflow_id": workflow_id, "status": "running"},
-    )
+    try:
+        runtime = await get_runtime()
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "submission_unavailable",
+                "message": "生成服务暂不可用，草稿完整保留，请稍后重试",
+            },
+        ) from exc
+    try:
+        claimed, fresh = claim_submission(
+            project_id,
+            enterprise_id=identity.enterprise_id,
+            operation_id=operation_id,
+            revision=revision,
+            legacy_sentence=legacy_sentence,
+        )
+    except DraftError as exc:
+        raise _draft_error(exc) from exc
+    if not fresh:
+        return JSONResponse(status_code=202, content=submission_response(claimed))
+    confirmed = False
+    try:
+        await start_film(
+            project_id=project_id,
+            sentence=str(claimed["sentence"]),
+            brand_kit=claimed.get("brand_kit"),
+            brand_id=claimed.get("brand_id"),
+            enterprise_id=str(claimed["enterprise_id"]),
+            owner_member_id=claimed.get("owner_member_id"),
+            attachments=claimed.get("attachments") or [],
+            concept_selection=claimed.get("concept_selection"),
+            skip_storyboard=claimed.get("skip_storyboard") is not False,
+            workflow_id=claimed["workflow_id"],
+            preserve_project=True,
+            runtime=runtime,
+        )
+        confirmed = True
+    except Exception as exc:
+        from temporalio.exceptions import WorkflowAlreadyStartedError
+
+        confirmed = isinstance(exc, WorkflowAlreadyStartedError)
+        log_event("film_submission_uncertain", service="hilatv-api", project_id=project_id)
+    final = confirm_submission(project_id, operation_id, confirmed=confirmed)
+    return JSONResponse(status_code=202, content=submission_response(final))
 
 
 @router.get("/v1/projects/{project_id}")
@@ -523,6 +725,7 @@ async def rerun_project(
         raise HTTPException(status_code=400, detail="未知节点")
     with locked_project(project_id):
         snapshot = _snapshot_or_404(project_id, identity)
+        _refuse_unconfirmed_submission(snapshot)
         if snapshot.get("status") == "running":
             raise HTTPException(status_code=409, detail="项目仍在运行")
         checkpoint = None
@@ -593,7 +796,7 @@ def project_revision(
     body: ReviseProject,
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
-    _snapshot_or_404(project_id, identity)
+    _refuse_unconfirmed_submission(_snapshot_or_404(project_id, identity))
     try:
         return revise_project(
             project_id,

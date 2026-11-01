@@ -328,6 +328,7 @@ def n06_voiceover(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n06_voiceover")
     project_id = _project(payload)
     state = _state(payload)
+    from workers.expert.shot_draft import apply_saved_narration
     from workers.nodes.n06_voiceover.node import run
 
     result = _call(
@@ -335,7 +336,7 @@ def n06_voiceover(payload: dict[str, Any]) -> dict[str, Any]:
         {
             "project_id": project_id,
             "payload": {
-                "script": _require_dict(state, "script"),
+                "script": apply_saved_narration(project_id, _require_dict(state, "script")),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
                 "enterprise_id": _request(payload).get("enterprise_id"),

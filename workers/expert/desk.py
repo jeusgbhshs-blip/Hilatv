@@ -325,6 +325,13 @@ def patch_node(
 ) -> dict[str, Any]:
     refuse_label_bypass(body)
     data = body.get("data") if isinstance(body.get("data"), dict) else None
+    shot_data = None
+    if node_id.startswith("shot:"):
+        if "data" in body and not isinstance(body["data"], dict):
+            raise GateError("镜头正文无效")
+        shot_data = _checked_shot_data(data or {})
+        if not shot_data and "position" not in body:
+            raise GateError("请提供需要保存的镜头内容")
     position = None
     if "position" in body:
         try:
@@ -334,6 +341,31 @@ def patch_node(
 
     def mutate(doc: CanvasDoc, state: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
         _owner_matches(snapshot, enterprise_id)
+        if shot_data is not None:
+            shot_id = node_id.split(":", 1)[1]
+            row = next(
+                (item for item in _script_rows(state) if item.get("shot_id") == shot_id), None
+            )
+            if row is None:
+                raise GateError("镜头不存在", status=404)
+            desk = doc.shots.get(shot_id) or ShotDesk()
+            for key, value in shot_data.items():
+                setattr(desk, key, value)
+            doc.shots[shot_id] = desk
+            if position is not None:
+                doc.positions[node_id] = position
+            doc.layout_version += 1
+            public = _shot_node(
+                project_id,
+                doc,
+                {"shot_id": shot_id},
+                row,
+                int(row.get("order") or 1),
+                doc.positions,
+            )
+            public["layout_version"] = doc.layout_version
+            public["data"]["edit_status"] = "saved_for_next_generation"
+            return public
         node = _require_user(doc, state, node_id)
         if data is not None:
             if node.kind == "brief":
@@ -358,6 +390,18 @@ def patch_node(
         return public
 
     return update_document(project_id, mutate)
+
+
+def _checked_shot_data(data: dict[str, Any]) -> dict[str, str]:
+    if set(data) - {"narration", "prompt_suffix"}:
+        raise GateError("镜头正文只能保存旁白与补充提示词")
+    checked: dict[str, str] = {}
+    for key, value in data.items():
+        maximum = 400 if key == "narration" else 500
+        if not isinstance(value, str) or len(value) > maximum or "\x00" in value:
+            raise GateError("旁白或补充提示词无效")
+        checked[key] = value.strip()
+    return checked
 
 
 def delete_node(project_id: str, node_id: str) -> dict[str, Any]:
