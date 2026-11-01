@@ -19,6 +19,9 @@ import {
   aspectLabel,
   ASPECT_RATIOS,
   defaultChoice,
+  choiceAfterExport,
+  choiceForVersion,
+  exportResultLabel,
   currentExportLanguage,
   defaultExportAspect,
   deliveryRequest,
@@ -63,6 +66,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const [downloading, setDownloading] = useState(false);
   const downloadingRef = useRef(false);
   const mountedRef = useRef(false);
+  const versionsEpoch = useRef(0);
+  const masterHashRef = useRef<string | null | undefined>(null);
+  masterHashRef.current = snapshot?.media_hash;
   useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const [versionNote, setVersionNote] = useState<string | null>(null);
   const [edits, setEdits] = useState<EditVersion[]>([]);
@@ -112,14 +118,15 @@ export function FilmStage({ projectId }: { projectId: string }) {
 
   const ready = snapshot?.preview_available === true;
   const selected = fileKind === "export" ? pickVersion(versions, choice) : null;
-  const delivery = selected ?? snapshot;
+  const exportMissing = fileKind === "export" && !selected;
+  const delivery = fileKind === "export" ? selected : snapshot;
   const formalReady = !readError && delivery?.delivery_status === "ready" && delivery.quality_pass === true && delivery.media_provenance === "live";
   useShellStage(missing ? null : ready ? "成片" : snapshot?.phase || null, formalReady);
-  const mediaPath = selected
-    ? selected.preview_available ? selected.preview_path : null
+  const mediaPath = fileKind === "export"
+    ? selected?.preview_available ? selected.preview_path : null
     : ready ? snapshot?.preview_path : null;
   const downloadPath = formalReady ? delivery?.download_path : mediaPath;
-  const mediaHash = selected?.media_hash ?? snapshot?.media_hash;
+  const mediaHash = fileKind === "export" ? selected?.media_hash : snapshot?.media_hash;
   const exportRatio = exportAspect || defaultExportAspect(snapshot);
   const exportLanguage = currentExportLanguage(snapshot, selected?.language);
 
@@ -133,18 +140,18 @@ export function FilmStage({ projectId }: { projectId: string }) {
     async function pullVersions() {
       if (inFlight || closed) return;
       inFlight = true;
+      const epoch = versionsEpoch.current;
       try {
         const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/versions`, {
           signal: controller.signal,
         });
         if (!response.ok) throw new Error(await errorMessage(response));
         const found = readVersions(await response.json());
-        if (closed) return;
+        if (closed || epoch !== versionsEpoch.current) return;
         setVersions(found);
-        if (!found.length) setFileKind("master");
         setChoice((current) => current.aspect ? reconcile(found, current) : defaultChoice(found));
       } catch (caught) {
-        if (closed || (caught instanceof DOMException && caught.name === "AbortError")) return;
+        if (closed || epoch !== versionsEpoch.current || (caught instanceof DOMException && caught.name === "AbortError")) return;
         setVersions((current) => current.map((item) => ({ ...item, delivery_status: "needs_verification", quality_pass: false })));
         setVersionNote("版本状态未能更新，请重新读取后再交付。");
       } finally {
@@ -239,6 +246,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
   }
 
   async function exportVersions() {
+    const previousIds = new Set(versions.map((item) => item.version_id));
+    const sourceHash = snapshot?.media_hash;
     setExporting(true);
     setVersionNote(null);
     try {
@@ -248,10 +257,18 @@ export function FilmStage({ projectId }: { projectId: string }) {
         body: JSON.stringify(deliveryRequest(exportRatio, exportLanguage)),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
-      const found = readVersions(await response.json());
+      const body = await response.json() as { exported_version_ids?: unknown };
+      if (!mountedRef.current) return;
+      const found = readVersions(body);
+      versionsEpoch.current += 1;
       setVersions(found);
-      setVersionNote("版本已导出，可在文件中选择导出文件预览。");
-      if (found.length > 0) setChoice(reconcile(found, { aspect: exportRatio, language: exportLanguage, duration: null }));
+      const next = choiceAfterExport(found, previousIds, { aspect: exportRatio, language: exportLanguage, source_media_hash: sourceHash }, body.exported_version_ids);
+      if (!next) { setVersionNote("没有收到所选画幅的有效导出文件，请重新读取版本列表。"); return; }
+      setChoice(next);
+      if (masterHashRef.current === sourceHash) {
+        setFileKind("export");
+        setVersionNote("导出已完成，当前播放导出文件。");
+      } else setVersionNote("导出文件已保留。母版已更新，当前显示新母版。");
     } catch (caught) {
       setVersionNote(caught instanceof Error ? caught.message : "导出没有成功");
     } finally {
@@ -260,7 +277,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
   }
 
   function choose(next: Partial<VersionChoice>) {
-    setChoice((current) => reconcile(versions, { ...current, ...next }));
+    setChoice((current) => reconcile(versions, { ...current, ...next, version_id: undefined }));
+    setVersionNote(null);
   }
 
   async function chooseEdit(versionId: string) {
@@ -336,12 +354,12 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const aspects = uniqueAspects(versions);
   const languages = uniqueLanguages(versions, choice.aspect);
   const durations = uniqueDurations(versions, choice.aspect, choice.language);
-  const probed = mediaMetadata(selected ?? snapshot);
-  const decoded = decodedMedia?.src === src ? decodedMedia.value : mediaMetadata();
+  const probed = mediaMetadata(delivery);
+  const decoded = mediaPath && decodedMedia?.src === src ? decodedMedia.value : mediaMetadata();
   const actual = { width: probed.width ?? decoded.width, height: probed.height ?? decoded.height, duration_s: probed.duration_s ?? decoded.duration_s };
   const orientation = mediaOrientation(actual);
   const notice = conceptNotice(snapshot);
-  const conclusion = filmConclusion(
+  const conclusion = exportMissing ? { title: "请选择导出文件", detail: "此前选择的文件暂不可用，请在导出结果中重新选择。" } : filmConclusion(
     readError ? { ...snapshot, delivery_status: "needs_verification", quality_pass: undefined } : snapshot,
     selected && readError ? { ...selected, delivery_status: "needs_verification", quality_pass: undefined } : selected,
   );
@@ -349,9 +367,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const currentEdit = current?.version_id ?? "";
   const focused = shots.find((shot) => shot.shot_id && shot.shot_id === shotId);
   const corner = [
-    !selected && current ? `第 ${current.index} 版` : null,
-    selected ? "导出文件" : null,
-    selected ? aspectLabel(selected.aspect_ratio) : "母版",
+    fileKind === "master" && current ? `第 ${current.index} 版` : null,
+    fileKind === "export" ? "导出文件" : null,
+    selected ? aspectLabel(selected.aspect_ratio) : fileKind === "master" ? "母版" : null,
     selected ? `${Math.min(selected.width, selected.height)}p` : null,
   ]
     .filter(Boolean)
@@ -391,7 +409,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
           <div className="relative overflow-hidden rounded-md bg-stage">
             <video
               data-testid="film-player"
-              data-aspect={selected?.aspect_ratio ?? "master"}
+              data-aspect={selected?.aspect_ratio ?? (fileKind === "master" ? "master" : "")}
+              data-version-id={selected?.version_id ?? (fileKind === "master" ? "master" : "")}
               data-orientation={orientation}
               className={
                 orientation === "portrait"
@@ -415,9 +434,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
           </div>
           {!src && !mediaError ? <p className="mt-2 text-small text-text-2">{mediaPath ? PROJECT_COPY.loadingFilm : "此版本暂时没有可播放的预览"}</p> : null}
           <p data-testid="actual-media" className="mt-2 text-caption text-text-2">
-            当前{selected ? "导出文件" : "母版"}：{actual.width !== null && actual.height !== null ? `${actual.width} × ${actual.height}` : "正在读取实际画面尺寸"}{actual.duration_s !== null ? ` · ${durationLabel(actual.duration_s)}` : ""}
+            当前{fileKind === "export" ? "导出文件" : "母版"}：{actual.width !== null && actual.height !== null ? `${actual.width} × ${actual.height}` : "正在读取实际画面尺寸"}{actual.duration_s !== null ? ` · ${durationLabel(actual.duration_s)}` : ""}
           </p>
-          {!selected && shots.length > 0 ? (
+          {fileKind === "master" && shots.length > 0 ? (
             <div className="mt-4">
               <h2 className="text-small text-text-2">时间轴</h2>
               <ul className="mt-2 flex gap-2 overflow-x-auto pb-1">
@@ -467,8 +486,14 @@ export function FilmStage({ projectId }: { projectId: string }) {
             <fieldset className="grid gap-3">
               <legend className="mb-3 text-h3 font-medium">版本</legend>
               <VersionSelect id="film-file" label="文件" value={fileKind} disabled={false}
-                options={[{ value: "master", label: "当前母版" }, ...(versions.length ? [{ value: "export", label: "导出文件" }] : [])]}
+                options={[{ value: "master", label: "当前母版" }, ...(versions.length || fileKind === "export" ? [{ value: "export", label: "导出文件" }] : [])]}
                 onChange={setFileKind} />
+              {fileKind === "export" ? <VersionSelect id="export-result" label="导出结果" value={selected?.version_id ?? ""} disabled={!versions.length}
+                options={[{ value: "", label: "请选择一份导出" }, ...versions.map((item, index) => ({ value: item.version_id, label: exportResultLabel(item, index) }))]}
+                onChange={(value) => {
+                  const found = versions.find((item) => item.version_id === value);
+                  if (found) { setChoice(choiceForVersion(found)); setVersionNote(null); }
+                }} /> : null}
               <VersionSelect
                 id="aspect"
                 label="比例"
@@ -510,7 +535,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
                 {versionNote ??
                   (selected?.qa_status === "needs_review"
                     ? "没有真实主体框，画面按整幅适配，需要再看一眼。"
-                    : selected
+                    : fileKind === "export"
                       ? "当前播放导出文件；它可能来自较早的母版。切回当前母版后可继续改稿。"
                       : "当前播放的是母版。选择导出文件后可以切换比例、语种和时长。")}
               </p>
@@ -522,7 +547,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
             <Select
               id="edit-version"
               value={currentEdit}
-              disabled={busy || Boolean(selected) || edits.length === 0}
+              disabled={busy || fileKind === "export" || edits.length === 0}
               onChange={(event) => void chooseEdit(event.target.value)}
             >
               {edits.length === 0 ? <option value="">正在读取改稿</option> : null}
@@ -545,7 +570,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
             <Textarea
               id="revision"
               value={instruction}
-              disabled={busy || Boolean(selected)}
+              disabled={busy || fileKind === "export"}
               className="min-h-24"
               placeholder={
                 focused
@@ -557,7 +582,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
             <Button
               type="button"
               variant="secondary"
-              disabled={busy || Boolean(selected) || instruction.trim().length === 0}
+              disabled={busy || fileKind === "export" || instruction.trim().length === 0}
               loading={busy && instruction.trim().length > 0}
               onClick={() => void sendEdit()}
             >

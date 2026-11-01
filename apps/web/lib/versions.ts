@@ -1,4 +1,4 @@
-/** Choose one exported film from aspect, language, and duration. */
+/** Choose an exact export; its specifications remain useful filters. */
 
 export const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "4:5", "21:9"] as const;
 export type MediaMetadata = { width: number | null; height: number | null; duration_s: number | null };
@@ -65,12 +65,15 @@ export type FilmVersion = {
   media_provenance?: string;
   qa_status?: string;
   subject_box_source?: string;
+  source_key?: string | null;
+  source_media_hash?: string | null;
 };
 
 export type VersionChoice = {
   aspect: string;
   language: string;
   duration: number | null;
+  version_id?: string;
 };
 
 const ASPECT_LABELS: Record<string, string> = {
@@ -131,6 +134,8 @@ export function readVersions(body: unknown): FilmVersion[] {
       qa_status: typeof record.qa_status === "string" ? record.qa_status : undefined,
       subject_box_source:
         typeof record.subject_box_source === "string" ? record.subject_box_source : undefined,
+      source_key: typeof record.source_key === "string" && /^[a-f0-9]{64}$/.test(record.source_key) ? record.source_key : null,
+      source_media_hash: typeof record.source_media_hash === "string" && /^[a-f0-9]{64}$/.test(record.source_media_hash) ? record.source_media_hash : null,
     });
   }
   return versions;
@@ -163,10 +168,15 @@ export function defaultChoice(versions: FilmVersion[]): VersionChoice {
   const languages = uniqueLanguages(versions, aspect);
   const language = languages.includes("zh") ? "zh" : (languages[0] ?? "");
   const durations = uniqueDurations(versions, aspect, language);
-  return { aspect, language, duration: durations.at(-1) ?? null };
+  return reconcile(versions, { aspect, language, duration: durations.at(-1) ?? null });
 }
 
 export function reconcile(versions: FilmVersion[], choice: VersionChoice): VersionChoice {
+  if (choice.version_id) {
+    const exact = versions.find((item) => item.version_id === choice.version_id);
+    // A temporarily unavailable selection must not silently become another file.
+    return exact ? choiceForVersion(exact) : choice;
+  }
   const aspects = uniqueAspects(versions);
   const aspect = aspects.includes(choice.aspect) ? choice.aspect : (aspects[0] ?? "");
   const languages = uniqueLanguages(versions, aspect);
@@ -176,20 +186,43 @@ export function reconcile(versions: FilmVersion[], choice: VersionChoice): Versi
     choice.duration !== null && durations.some((item) => sameDuration(item, choice.duration ?? 0))
       ? durations.find((item) => sameDuration(item, choice.duration ?? 0)) ?? null
       : (durations.at(-1) ?? null);
-  return { aspect, language, duration };
+  const matches = versions.filter((item) => item.aspect_ratio === aspect && item.language === language && duration !== null && sameDuration(item.duration_s, duration));
+  const picked = matches.at(-1);
+  return picked ? choiceForVersion(picked) : { aspect, language, duration };
 }
 
 export function pickVersion(versions: FilmVersion[], choice: VersionChoice): FilmVersion | null {
   const settled = reconcile(versions, choice);
-  return (
-    versions.find(
-      (item) =>
-        item.aspect_ratio === settled.aspect &&
-        item.language === settled.language &&
-        settled.duration !== null &&
-        sameDuration(item.duration_s, settled.duration),
-    ) ?? null
-  );
+  return versions.find((item) => item.version_id === settled.version_id) ?? null;
+}
+
+export function choiceForVersion(version: FilmVersion): VersionChoice {
+  return { aspect: version.aspect_ratio, language: version.language, duration: version.duration_s, version_id: version.version_id };
+}
+
+export function exportResultLabel(version: FilmVersion, index: number): string {
+  return `导出 ${index + 1} · ${version.aspect_ratio} · ${languageLabel(version.language)} · ${durationLabel(version.duration_s)}`;
+}
+
+/** Explicit response IDs win, including idempotent exports of an older source. */
+export function choiceAfterExport(
+  versions: FilmVersion[], previousIds: ReadonlySet<string>,
+  requested: { aspect: string; language: string; source_media_hash?: string | null },
+  exportedIds?: unknown,
+): VersionChoice | null {
+  const matching = versions.filter((item) => item.aspect_ratio === requested.aspect && item.language === requested.language);
+  let candidates: FilmVersion[];
+  if (Array.isArray(exportedIds)) {
+    const ids = exportedIds.filter((item): item is string => typeof item === "string");
+    candidates = ids.flatMap((id) => matching.filter((item) => item.version_id === id));
+  } else {
+    const fresh = matching.filter((item) => !previousIds.has(item.version_id));
+    candidates = fresh.length ? fresh : matching;
+    const source = candidates.filter((item) => requested.source_media_hash && item.source_media_hash === requested.source_media_hash);
+    if (source.length) candidates = source;
+  }
+  const picked = candidates.at(-1);
+  return picked ? choiceForVersion(picked) : null;
 }
 
 export function uniqueAspects(versions: FilmVersion[]): string[] {

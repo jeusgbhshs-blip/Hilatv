@@ -5,6 +5,9 @@ import {
   aspectLabel,
   ASPECT_RATIOS,
   defaultChoice,
+  choiceAfterExport,
+  choiceForVersion,
+  exportResultLabel,
   currentExportLanguage,
   defaultExportAspect,
   deliveryRequest,
@@ -43,11 +46,13 @@ describe("delivery versions", () => {
     assert.equal(languageLabel("zh-CN"), "中文");
     assert.equal(durationLabel(15), "15 秒");
     assert.equal(durationLabel(2.5), "2.5 秒");
+    assert.equal(durationLabel(43 / 30), "1.4 秒");
+    assert.equal(durationLabel(142 / 30), "4.7 秒");
   });
 
   it("starts on the wide Chinese cut and the longest duration", () => {
     const choice = defaultChoice(VERSIONS);
-    assert.deepEqual(choice, { aspect: "16:9", language: "zh", duration: 15 });
+    assert.deepEqual(choice, { aspect: "16:9", language: "zh", duration: 15, version_id: "wide-zh" });
     assert.equal(pickVersion(VERSIONS, choice)?.version_id, "wide-zh");
     assert.equal(downloadName(pickVersion(VERSIONS, choice)), "hilatv-16x9-zh-15s.mp4");
   });
@@ -136,5 +141,65 @@ describe("generation target, actual media and explicit exports", () => {
   });
   it("rejects exported rows with invalid dimensions", () => {
     assert.deepEqual(readVersions([{ ...VERSIONS[0], width: 0 }, { ...VERSIONS[0], height: -1 }]), []);
+  });
+});
+
+describe("exact exported file identity", () => {
+  const older = { ...version("older-source", "16:9", "zh", 15), delivery_status: "ready", quality_pass: true, media_provenance: "live", source_media_hash: "a".repeat(64) };
+  const newer = { ...version("newer-source", "16:9", "zh", 15), delivery_status: "needs_verification", quality_pass: false, media_provenance: "unknown", source_media_hash: "b".repeat(64) };
+  const request = { aspect: "16:9", language: "zh", source_media_hash: newer.source_media_hash };
+
+  it("uses the latest matching row for a filter without pinning an older same-spec file", () => {
+    assert.equal(pickVersion([older, newer], { aspect: "16:9", language: "zh", duration: 15 })?.version_id, newer.version_id);
+    assert.equal(defaultChoice([older, newer]).version_id, newer.version_id);
+  });
+  it("keeps an exact selected ID and its own gate when GET reorders or adds same-spec results", () => {
+    const choice = choiceForVersion(older);
+    const refreshed = [newer, { ...older, quality_pass: false, delivery_status: "needs_verification" }, { ...newer, version_id: "another-new-source" }];
+    const settled = reconcile(refreshed, choice);
+    assert.equal(settled.version_id, older.version_id);
+    assert.equal(pickVersion(refreshed, settled)?.quality_pass, false);
+    assert.equal(pickVersion(refreshed, settled)?.delivery_status, "needs_verification");
+  });
+  it("chooses the explicit POST result even if it is an existing ID and another new row is later", () => {
+    const concurrent = { ...newer, version_id: "concurrent-export" };
+    const found = [older, newer, concurrent];
+    const next = choiceAfterExport(found, new Set([older.version_id, newer.version_id]), request, [older.version_id]);
+    assert.equal(next?.version_id, older.version_id);
+    assert.equal(pickVersion(found, next!)?.download_path, older.download_path);
+  });
+  it("uses new matching IDs for legacy POSTs while ignoring other aspect or language rows", () => {
+    const wrongRatio = version("tall-new", "9:16", "zh", 15);
+    const wrongLanguage = version("english-new", "16:9", "en", 15);
+    const next = choiceAfterExport([older, newer, wrongRatio, wrongLanguage], new Set([older.version_id]), request);
+    assert.equal(next?.version_id, newer.version_id);
+  });
+  it("handles an idempotent legacy export by matching its source without requiring a new ID", () => {
+    const next = choiceAfterExport([newer, older], new Set([older.version_id, newer.version_id]), request);
+    assert.equal(next?.version_id, newer.version_id);
+  });
+  it("does not substitute another file when a pinned ID or an explicit POST result is missing", () => {
+    const choice = choiceForVersion(older);
+    assert.equal(pickVersion([newer], reconcile([newer], choice)), null);
+    assert.equal(reconcile([newer], choice).version_id, older.version_id);
+    assert.equal(choiceAfterExport([older, newer], new Set(), request, []), null);
+    assert.equal(choiceAfterExport([older, newer], new Set(), request, ["missing-id"]), null);
+  });
+  it("updates exact-file metadata without losing identity and only changes file on a new filter choice", () => {
+    const choice = choiceForVersion(older);
+    const updated = { ...older, duration_s: 15.4 };
+    assert.equal(reconcile([updated, newer], choice).duration, 15.4);
+    const tall = version("tall", "9:16", "zh", 15);
+    assert.equal(reconcile([older, newer, tall], { ...choice, version_id: undefined, aspect: "9:16" }).version_id, tall.version_id);
+  });
+  it("retains valid source hashes for matching but never puts identifiers in ordinary labels", () => {
+    const [parsed] = readVersions([{ ...newer, source_key: "c".repeat(64) }]);
+    assert.equal(parsed.source_key, "c".repeat(64));
+    assert.equal(parsed.source_media_hash, newer.source_media_hash);
+    assert.equal(exportResultLabel(parsed, 1), "导出 2 · 16:9 · 中文 · 15 秒");
+    assert.ok(!exportResultLabel(parsed, 1).includes(parsed.version_id));
+    const [invalid] = readVersions([{ ...newer, source_key: "/private/path", source_media_hash: "not-a-hash" }]);
+    assert.equal(invalid.source_key, null);
+    assert.equal(invalid.source_media_hash, null);
   });
 });

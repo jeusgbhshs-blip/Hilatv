@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { apiFetch, apiUrl, ensureSession, errorMessage, withSession } from "@/lib/api";
 import { draftScope } from "@/lib/project-draft";
 import { cardMedia, type StoryboardCard } from "@/lib/storyboard";
+import { durationLabel } from "@/lib/versions";
 
 export function StoryboardStrip({
   projectId,
@@ -150,7 +151,7 @@ export function StoryboardStrip({
               className="w-64 shrink-0 rounded-md border border-border bg-surface p-3"
             >
               <p className="tabular text-caption text-text-3">
-                第 {card.order} 镜 · {card.duration_s} 秒
+                第 {card.order} 镜 · {durationLabel(card.duration_s)}
               </p>
               {card.purpose ? <p className="mt-1 text-h3 font-medium">{card.purpose}</p> : null}
               <div
