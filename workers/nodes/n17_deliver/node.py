@@ -1,4 +1,4 @@
-"""N17 delivery. One 16:9 master becomes aspect, language, and duration versions.
+"""N17 delivery. A clean master becomes aspect, language, and duration versions.
 
 Text, logos, prices, and phones are burned by the render layer after the reframe.
 Localization and dubbing go through the gateway. No vendor SDK is imported here.
