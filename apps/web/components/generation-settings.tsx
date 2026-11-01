@@ -2,6 +2,7 @@
 
 import { X } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,11 +25,14 @@ export function GenerationSettingsPicker({ value, disabled = false, onChange }: 
   const dialogRef = useRef<HTMLDialogElement>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState<"ratio" | "duration" | null>(null);
+  const [mounted, setMounted] = useState(false);
   const [custom, setCustom] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => { setMounted(true); }, []);
+
   useEffect(() => {
-    if (!open || disabled) return;
+    if (!mounted || !open || disabled) return;
     const dialog = dialogRef.current;
     if (!dialog) return;
     const overflow = document.body.style.overflow;
@@ -40,7 +44,7 @@ export function GenerationSettingsPicker({ value, disabled = false, onChange }: 
       document.body.style.overflow = overflow;
       triggerRef.current?.focus();
     };
-  }, [open, disabled]);
+  }, [mounted, open, disabled]);
 
   function show(kind: "ratio" | "duration", trigger: HTMLButtonElement) {
     if (disabled) return;
@@ -78,7 +82,7 @@ export function GenerationSettingsPicker({ value, disabled = false, onChange }: 
     <button type="button" disabled={disabled} aria-haspopup="dialog" aria-expanded={open === "duration" && !disabled} aria-controls={`${id}-settings`} onClick={(event) => show("duration", event.currentTarget)} className="inline-flex min-h-11 items-center rounded-full border border-border px-3 text-caption text-text-2 hover:bg-hover disabled:cursor-not-allowed disabled:text-text-disabled">
       时长 · {settings.duration_s === null ? "自动" : `${settings.duration_s} 秒`}
     </button>
-    {open && !disabled ? <dialog ref={dialogRef} id={`${id}-settings`} aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-hint`} className="fixed inset-4 z-40 m-auto max-h-full w-auto max-w-sm overflow-y-auto rounded-lg border border-border bg-raised p-4 text-text-1 shadow-pop backdrop:bg-overlay" onCancel={(event) => { event.preventDefault(); setOpen(null); }} onClose={() => setOpen(null)} onKeyDown={(event) => {
+    {mounted && open && !disabled ? createPortal(<dialog ref={dialogRef} id={`${id}-settings`} aria-modal="true" aria-labelledby={`${id}-title`} aria-describedby={`${id}-hint`} className="fixed inset-4 z-40 m-auto max-h-full w-auto max-w-sm overflow-y-auto rounded-lg border border-border bg-raised p-4 text-text-1 shadow-pop backdrop:bg-overlay" onCancel={(event) => { event.preventDefault(); setOpen(null); }} onClose={() => setOpen(null)} onKeyDown={(event) => {
       // This picker sits inside the composer form. Enter must not start a film.
       if (event.key === "Enter" && event.target instanceof HTMLInputElement) {
         event.preventDefault();
@@ -116,6 +120,6 @@ export function GenerationSettingsPicker({ value, disabled = false, onChange }: 
         {error ? <p id={`${id}-error`} role="alert" className="mt-2 text-small text-danger">{error}</p> : null}
       </div>}
       <Button type="button" variant="secondary" className="mt-4 min-h-11 w-full" onClick={() => setOpen(null)}>完成</Button>
-    </dialog> : null}
+    </dialog>, document.body) : null}
   </>;
 }

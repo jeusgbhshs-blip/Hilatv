@@ -46,6 +46,11 @@ for (const theme of ["light", "dark"]) {
     const ratio = page.getByRole("button", { name: "比例 · 自动", exact: true });
     await expect(ratio).toBeEnabled(); await ratio.click();
     const ratioDialog = page.getByRole("dialog", { name: "画面比例" });
+    // The creator retains its local dark stage; settings follow app appearance.
+    expect(await ratioDialog.evaluate((dialog) => dialog.parentElement === document.body)).toBe(true);
+    expect(await ratioDialog.evaluate((dialog) => getComputedStyle(dialog).backgroundColor)).toBe(theme === "light" ? "rgb(255, 255, 255)" : "rgb(28, 28, 33)");
+    await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+    expect(await page.getByTestId("home-hero").evaluate((hero) => hero.closest('[data-theme="dark"]') !== null)).toBe(true);
     await expect(ratioDialog.getByRole("radio", { name: "自动", exact: true })).toBeFocused();
     await page.keyboard.press("ArrowRight");
     await expect(ratioDialog.getByRole("radio", { name: "16:9", exact: true })).toBeChecked();
