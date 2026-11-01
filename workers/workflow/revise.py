@@ -7,6 +7,7 @@ work the change set said to keep.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import uuid
@@ -366,6 +367,8 @@ def _execute(
             height,
             **({"clock": clock} if clock else {}),
             render_result=render_result,
+            source_state={**state, "videos": videos},
+            fresh=fresh,
         )
         executed.append("n15_compose")
         deliverable = master_path or deliverable
@@ -391,6 +394,8 @@ def _execute(
                 "timeline": render_result.get("timeline"),
                 "timeline_path": render_result.get("timeline_path"),
                 "rendered_script": render_result.get("script"),
+                "shot_clips": render_result.get("shot_clips") or [],
+                "production_clock": clock,
             }
         )
     ordered = [
@@ -685,14 +690,21 @@ def _compose(
     *,
     clock: dict[str, float] | None = None,
     render_result: dict[str, Any] | None = None,
+    source_state: dict[str, Any] | None = None,
+    fresh: dict[str, bytes] | None = None,
 ):
     from workers.nodes.n15_compose.node import run
 
+    state = source_state if source_state is not None else _state(directory)
+    dumped = script.model_dump(mode="json")
+    clips = _revision_clips(directory, dumped, state, fresh or {})
     result = run(
         {
             "project_id": project_id,
             "payload": {
-                "script": script.model_dump(mode="json"),
+                "script": dumped,
+                "shot_clips": clips,
+                "videos": state.get("videos") or [],
                 **({"target_duration_s": clock["target_duration_s"]} if clock else {}),
                 "voiceovers": voiceovers,
                 "cues": cues,
@@ -709,9 +721,148 @@ def _compose(
         timeout_s=180,
         max_attempts=1,
     )
+    _preserve_mock_pictures(directory, state, fresh or {}, result.payload)
     if render_result is not None:
         render_result.update(result.payload)
+        render_result["shot_clips"] = clips
     return str(Path(result.payload["exports"]["master"]).resolve())
+
+
+def _preserve_mock_pictures(directory, state, fresh, rendered) -> None:
+    """Real input files can contain a simulated preview; keep that provenance."""
+
+    old = state.get("timeline") or {}
+    mock_ids = {
+        row.get("clip_id")
+        for row in old.get("clips") or []
+        if isinstance(row, dict) and row.get("placeholder") is True
+    } - set(fresh)
+    for row in state.get("videos") or []:
+        if (
+            not isinstance(row, dict)
+            or row.get("shot_id") not in fresh
+            or row.get("selected") is False
+        ):
+            continue
+        params = row.get("params") or {}
+        if (
+            str(row.get("model") or "").startswith("mock")
+            or str(row.get("uri") or "").startswith("mock://")
+            or params.get("mock") is True
+            or params.get("execution_mode") == "mock"
+        ):
+            mock_ids.add(row["shot_id"])
+    timeline = rendered.get("timeline") or {}
+    changed = False
+    for row in timeline.get("clips") or []:
+        if row.get("clip_id") in mock_ids:
+            row["placeholder"] = True
+            changed = True
+    if changed:
+        rendered["placeholder_shots"] = [
+            row["clip_id"] for row in timeline["clips"] if row.get("placeholder") is True
+        ]
+    if changed and rendered.get("timeline_path"):
+        path = Path(rendered["timeline_path"]).resolve()
+        if not path.is_relative_to(directory.resolve()):
+            raise RevisionError("新时间线路径超出项目目录")
+        atomic_write(path, _json_bytes(timeline))
+
+
+def _revision_clips(
+    directory: Path,
+    script: dict[str, Any],
+    state: dict[str, Any],
+    fresh: dict[str, bytes],
+) -> list[dict[str, Any]]:
+    """Recover per-shot unlettered pictures without changing any active source."""
+
+    from workers.media.ffmpeg import RenderError, probe
+
+    root = directory.resolve()
+    exports = state.get("exports") or {}
+    forbidden = {
+        str(root / "playback" / "master.mp4"),
+        *[str(value) for value in exports.values() if isinstance(value, str)],
+        str(state.get("deliverable") or ""),
+        str(state.get("clean_picture_path") or ""),
+    }
+    forbidden = {str(Path(value).resolve()) for value in forbidden if value}
+    timeline = state.get("timeline") or {}
+    timeline_clips = {
+        row["clip_id"]: row
+        for row in timeline.get("clips") or []
+        if isinstance(row, dict) and isinstance(row.get("clip_id"), str)
+    }
+    saved_clips = {
+        row["shot_id"]: row
+        for row in state.get("shot_clips") or []
+        if isinstance(row, dict) and isinstance(row.get("shot_id"), str)
+    }
+    verified: set[str] = set()
+
+    def readable(raw: object) -> Path | None:
+        if not isinstance(raw, str) or not raw:
+            return None
+        path = Path(raw).resolve()
+        if not path.is_relative_to(root) or str(path) in forbidden or not path.is_file():
+            return None
+        if str(path) in verified:
+            return path
+        try:
+            info = probe(path)
+        except (RenderError, OSError, ValueError, StopIteration):
+            return None
+        # Legacy per-shot PNG/JPEG plates are real source bytes too. N15 can
+        # hold them, whereas a missing/undecodable file must never become color.
+        if not info.get("width") or not info.get("height"):
+            return None
+        verified.add(str(path))
+        return path
+
+    clips: list[dict[str, Any]] = []
+    for shot in script.get("shots") or []:
+        shot_id = str(shot["shot_id"])
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,40}", shot_id):
+            raise RevisionError("镜头编号无效")
+        saved = saved_clips.get(shot_id) or {}
+        if shot_id in fresh:
+            data = fresh[shot_id]
+            target = root / "render" / "n15" / "sources" / f"{hashlib.sha256(data).hexdigest()}.bin"
+            if not target.resolve().is_relative_to(root):
+                raise RevisionError("新镜头路径超出项目目录")
+            if target.exists():
+                if target.read_bytes() != data:
+                    raise RevisionError("新镜头源文件校验失败，上一版已保留")
+            else:
+                atomic_write(target, data)
+            path = readable(str(target))
+        else:
+            path = None
+            for raw in (
+                (timeline_clips.get(shot_id) or {}).get("path"),
+                saved.get("path"),
+                str(root / "media" / f"{shot_id}.bin"),
+            ):
+                path = readable(raw)
+                if path is not None:
+                    break
+        if path is None:
+            raise RevisionError(
+                f"{shot_id} 缺少可用的原始镜头画面，请先恢复或重新生成该镜头；上一版已保留"
+            )
+        allowed = {row["text"] for row in shot.get("on_screen_text") or []}
+        cards = []
+        for row in saved.get("cards") or []:
+            if not isinstance(row, dict) or row.get("text") not in allowed:
+                continue
+            card = dict(row)
+            card["start_s"] = max(0, min(float(row["start_s"]), float(shot["duration_s"])))
+            card["end_s"] = max(0, min(float(row["end_s"]), float(shot["duration_s"])))
+            if card["end_s"] > card["start_s"]:
+                cards.append(card)
+        clips.append({"shot_id": shot_id, "path": str(path), "cards": cards})
+    return clips
 
 
 def _maybe_fetch_logo(directory: Path, instruction: str, directive: dict[str, Any]) -> None:
@@ -798,6 +949,8 @@ def _remember(patches, **fields: Any) -> None:
     for patch in patches.values():
         if "script" in patch:
             patch["script"] = dumped
+        if "aligned_script" in patch:
+            patch["aligned_script"] = dumped
         if fields["brand"] is not None and "brand_kit" in patch:
             patch["brand_kit"] = fields["brand"]
     patches.setdefault("n05_storyboard", {})["script"] = dumped
@@ -824,7 +977,10 @@ def _remember(patches, **fields: Any) -> None:
             {
                 "deliverable": fields["deliverable"],
                 "script": dumped,
-                "exports": {"master": fields["deliverable"]},
+                "exports": {
+                    **(patches.get("n15_compose", {}).get("exports") or {}),
+                    "master": fields["deliverable"],
+                },
             }
         )
 
@@ -860,7 +1016,7 @@ def _state(directory: Path) -> dict[str, Any]:
 
 
 def _script(state: dict[str, Any]) -> Script:
-    raw = state.get("script")
+    raw = state.get("rendered_script") or state.get("script")
     if not isinstance(raw, dict):
         raise RevisionError("还没有分镜，不能改稿", status=409)
     return Script.model_validate(raw)
