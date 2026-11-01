@@ -11,7 +11,7 @@ import os
 import sqlite3
 import threading
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
@@ -236,11 +236,16 @@ class SqlStore:
         total_cap: Decimal,
         daily_cap: Decimal,
         context: dict[str, Any],
+        admission_time: Callable[[], tuple[str, str]] | None = None,
     ) -> dict[str, Any]:
         if any(not value.is_finite() or value < 0 for value in (estimate, total_cap, daily_cap)):
             raise ValueError("invalid budget amount")
         estimate, total_cap, daily_cap = money_upper(estimate), money(total_cap), money(daily_cap)
         with self._budget_transaction():
+            if admission_time is not None:
+                # Lock contention can cross midnight. Never admit against a day
+                # sampled before waiting for the shared ledger lock.
+                day, created_at = admission_time()
             totals = self.budget_totals(day)
             durable = self.dialect == "postgres" or any(
                 item["file"]

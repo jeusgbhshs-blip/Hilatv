@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # T04 acceptance: mock image, video, and TTS samples are stored and decoded.
 # Object storage is MinIO (or any S3-compatible endpoint in MINIO_* / S3_*).
-# HILATV_LIVE=1 with a budget and a vendor key adds one live sample per modality.
+# This acceptance always disables live providers and uses the mock samples.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

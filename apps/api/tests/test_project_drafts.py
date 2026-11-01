@@ -155,6 +155,81 @@ def test_save_cas_has_exactly_one_winner_and_preserves_owner(setup):
     assert read_snapshot(draft["project_id"])["owner_member_id"] == ident.member_id
 
 
+def test_saved_draft_with_lost_ack_is_recovered_by_same_normalized_retry(setup):
+    client, ident, _ = setup
+    draft = _create(client, sentence="原稿").json()
+    path = f"/v1/projects/{draft['project_id']}/draft"
+    body = {
+        "draft_revision": 1,
+        "sentence": "  已保存而响应丢失  ",
+        "attachments": [{"kind": "url", "uri": "https://example.test/spec"}],
+        "skip_storyboard": False,
+        "concept_selection": "concept-2",
+    }
+
+    def committed_but_ack_lost():
+        response = client.put(path, json=body)
+        assert response.status_code == 200
+        raise ConnectionError("client lost the successful response")
+
+    with pytest.raises(ConnectionError, match="lost"):
+        committed_but_ack_lost()
+    saved_path = project_path(draft["project_id"]) / "project.json"
+    before = saved_path.read_bytes()
+    restarted = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+    retried = restarted.put(path, json={**body, "sentence": body["sentence"].strip()})
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["draft_revision"] == 2
+    assert retried.json()["snapshot"]["sentence"] == "已保存而响应丢失"
+    assert retried.json()["snapshot"]["owner_member_id"] == ident.member_id
+    assert not any(key.startswith("_") for key in retried.json()["snapshot"])
+    assert saved_path.read_bytes() == before  # ACK recovery is a read, not another revision.
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"sentence": "不能把另一段文字当成丢失响应"},
+        {"attachments": [{"kind": "url", "uri": "https://example.test/changed"}]},
+        {"skip_storyboard": True},
+        {"concept_selection": "concept-3"},
+        {"brand_id": "another-brand"},
+    ],
+)
+def test_old_revision_with_different_full_payload_still_conflicts(setup, changes):
+    client, _, _ = setup
+    draft = _create(client, sentence="原稿").json()
+    path = f"/v1/projects/{draft['project_id']}/draft"
+    body = {"draft_revision": 1, "sentence": "保存版本", "concept_selection": "concept-2"}
+    assert client.put(path, json=body).status_code == 200
+    saved_path = project_path(draft["project_id"]) / "project.json"
+    before = saved_path.read_bytes()
+    conflict = client.put(path, json={**body, **changes})
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["code"] == "draft_conflict"
+    assert conflict.json()["detail"]["draft_revision"] == 2
+    assert saved_path.read_bytes() == before
+
+
+def test_ack_recovery_never_jumps_past_a_subsequent_teammate_revision(setup):
+    client, ident, _ = setup
+    draft = _create(client, sentence="原稿").json()
+    path = f"/v1/projects/{draft['project_id']}/draft"
+    body = {"draft_revision": 1, "sentence": "保存版本"}
+    assert client.put(path, json=body).json()["draft_revision"] == 2
+    colleague = mint_session_for_tests(ident.enterprise_id)
+    teammate = TestClient(app, headers={"Authorization": f"Bearer {colleague.token}"})
+    # Even a subsequent save of identical content is a distinct acknowledged revision.
+    assert teammate.put(path, json={**body, "draft_revision": 2}).json()["draft_revision"] == 3
+    saved_path = project_path(draft["project_id"]) / "project.json"
+    before = saved_path.read_bytes()
+    conflict = client.put(path, json=body)
+    assert conflict.status_code == 409
+    assert conflict.json()["detail"]["draft_revision"] == 3
+    assert conflict.json()["detail"]["snapshot"]["owner_member_id"] == ident.member_id
+    assert saved_path.read_bytes() == before
+
+
 def test_valid_uploads_persist_publicly_and_foreign_upload_failure_does_not_modify(setup):
     client, _, _ = setup
     attached = client.post("/v1/uploads", files={"file": ("product.png", PNG, "image/png")}).json()

@@ -10,6 +10,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
+# shellcheck disable=SC1091
+source "$ROOT/infra/scripts/accept_env.sh"
+
 echo "== no hard-coded colours or arbitrary values =="
 if git grep -nE "#[0-9a-fA-F]{6}|text-\[|rounded-\[|bg-\[" -- apps/web/components apps/web/app ':!apps/web/app/globals.css'; then
   echo "hard-coded value found" >&2

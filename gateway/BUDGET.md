@@ -59,6 +59,8 @@ An unfinished call may finish after midnight, so its hold remains counted agains
 the current day's available room until it has an outcome. Actual settled cost is
 recorded on the Shanghai completion day. Normal settled daily totals reset by day;
 outstanding/unknown obligations do not disappear at midnight or restart.
+Admission samples its Shanghai day inside the database lock: a call queued before
+midnight cannot use yesterday's totals after waiting for that lock into today.
 
 Provider completion is distinct from usable application output. Known usage/cost is
 settled even when JSON/schema validation, media download or object persistence

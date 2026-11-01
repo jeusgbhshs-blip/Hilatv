@@ -47,6 +47,12 @@ def draft_id(enterprise_id: str, operation_id: str) -> str:
     return str(uuid.uuid5(_NAMESPACE, f"{canonical_enterprise(enterprise_id)}:{operation_id}"))
 
 
+def _fields_hash(fields: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(fields, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def create_draft(
     *,
     operation_id: str,
@@ -55,9 +61,7 @@ def create_draft(
     fields: dict[str, Any],
 ) -> tuple[dict[str, Any], bool]:
     project_id = draft_id(enterprise_id, operation_id)
-    fingerprint = hashlib.sha256(
-        json.dumps(fields, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
+    fingerprint = _fields_hash(fields)
     with locked_project(project_id):
         current = read_snapshot(project_id)
         if current is not None:
@@ -102,7 +106,21 @@ def save_draft(
     with locked_project(project_id):
         current = owned_draft(project_id, enterprise_id)
         _editable(current)
-        if revision != int(current.get("draft_revision") or 1):
+        current_revision = int(current.get("draft_revision") or 1)
+        fields_hash = _fields_hash(fields)
+        if revision != current_revision:
+            receipt = current.get("_last_draft_save") or {}
+            if (
+                current_revision == revision + 1
+                and receipt.get("base_revision") == revision
+                and receipt.get("new_revision") == current_revision
+                and receipt.get("fields_hash") == fields_hash
+                and _fields_hash({key: current.get(key) for key in fields}) == fields_hash
+            ):
+                # The first write committed but its ACK was lost. This is the
+                # same full normalized payload, not permission to overwrite a
+                # different edit or jump across a subsequent revision.
+                return current
             raise DraftError("draft_conflict", "草稿已在其他页面修改，请先核对已保存内容", current)
         updated = {
             **current,
@@ -110,6 +128,11 @@ def save_draft(
             "draft_revision": revision + 1,
             "updated_at": time.time(),
             "message": "草稿已保存",
+            "_last_draft_save": {
+                "base_revision": revision,
+                "new_revision": revision + 1,
+                "fields_hash": fields_hash,
+            },
         }
         update_snapshot(
             project_id, **{key: value for key, value in updated.items() if key != "project_id"}

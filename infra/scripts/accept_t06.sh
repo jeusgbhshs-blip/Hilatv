@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # T06 acceptance: N4/N5 unit tests, then fixture briefs must meet the duration and provenance rules.
-# No API key is required. HILATV_LIVE=1 still has to satisfy the same rules.
+# No API key is required. The shared acceptance environment forces live off.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

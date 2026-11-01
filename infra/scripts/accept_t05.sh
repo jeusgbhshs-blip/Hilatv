@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # T05 acceptance: N1 unit tests, then 20 fixture inputs must yield a legal Brief.
-# HILATV_LIVE=1 with a key and a positive budget uses the live LLM. Otherwise mock.
+# The shared acceptance environment always disables live providers.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

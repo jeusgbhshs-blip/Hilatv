@@ -105,7 +105,14 @@ def test_local_images_are_scoped_to_project_inputs(tmp_path, monkeypatch):
 
 
 def test_reference_bytes_reach_provider_but_never_gateway_logs(tmp_path):
-    store = MemoryObjectStore()
+    class CountingStore(MemoryObjectStore):
+        reads = 0
+
+        def get(self, uri):
+            self.reads += 1
+            return super().get(uri)
+
+    store = CountingStore()
     png = render_png(3)
     uri = store.put("input.png", png, "image/png")
     seen = []
@@ -130,6 +137,7 @@ def test_reference_bytes_reach_provider_but_never_gateway_logs(tmp_path):
     )
     engine.generate_image("产品无文字", project_id="p1", params={"reference_images": [uri]})
     assert len(seen) == 1
+    assert store.reads == 1  # Admission must not download/decode the private image twice.
     logs = json.dumps(engine.store.list_logs())
     assert uri in logs
     assert "data:image" not in logs and base64.b64encode(png).decode() not in logs

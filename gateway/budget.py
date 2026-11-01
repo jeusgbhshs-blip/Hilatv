@@ -120,6 +120,7 @@ class BudgetGuard:
             total_cap=total_cap,
             daily_cap=daily_cap,
             context=dict(context),
+            admission_time=self._admission_time,
         )
         return BudgetDecision(
             result["allowed"],
@@ -182,6 +183,10 @@ class BudgetGuard:
 
     def today(self) -> str:
         return self.clock.now().astimezone(ZoneInfo(self.tz)).date().isoformat()
+
+    def _admission_time(self) -> tuple[str, str]:
+        now = self.clock.now()
+        return now.astimezone(ZoneInfo(self.tz)).date().isoformat(), now.isoformat()
 
 
 def limits_from_env() -> tuple[bool, Decimal, Decimal]:

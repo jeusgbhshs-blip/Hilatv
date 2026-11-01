@@ -34,8 +34,8 @@ jobs:
           ruff check .
           ruff format --check .
 
-      - name: Unit tests
-        run: pytest -q
+      - name: Complete Python regressions (HP09)
+        run: make accept-hp09
 
       - name: Accept SEC-54
         run: make accept-sec54
@@ -175,7 +175,7 @@ jobs:
       - name: T02 schema and migration acceptance
         run: make accept-t02
 
-      - name: T03 gateway acceptance on migrated Postgres
+      - name: T03 gateway and atomic PostgreSQL budget recovery acceptance
         run: make accept-t03
         env:
           ACCEPT_T03_REQUIRE_POSTGRES: "1"

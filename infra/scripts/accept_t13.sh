@@ -5,18 +5,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$ROOT"
 
-if [[ -z "${ENV_FILE:-}" ]]; then
-  if [[ -f "$ROOT/.env" ]]; then
-    ENV_FILE="$ROOT/.env"
-  else
-    ENV_FILE="$ROOT/.env.example"
-  fi
-fi
-
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+# shellcheck disable=SC1091
+source "$ROOT/infra/scripts/accept_env.sh"
 
 if [[ -x "$ROOT/.venv/bin/python" ]]; then
   PYTHON="$ROOT/.venv/bin/python"

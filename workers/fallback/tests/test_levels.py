@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from PIL import Image, ImageDraw
 
+from gateway.media_bytes import render_wav
 from workers.fallback.direct import direct_shots
 from workers.fallback.encode import motion_graphic
 from workers.fallback.files import read_bytes
@@ -184,6 +185,7 @@ def test_a_qa_rejected_shot_is_absent_from_the_film(
                 "width": WIDTH,
                 "height": HEIGHT,
                 "script": script.model_dump(mode="json"),
+                "voiceovers": _fixture_voiceovers(script, root),
                 "shot_clips": [item.model_dump(mode="json") for item in result.clips],
                 "elements": [
                     {
@@ -221,6 +223,38 @@ def test_a_qa_rejected_shot_is_absent_from_the_film(
     assert "S01" in shot_ids
     assert shot_ids[-1] == "outro"
     assert _has_magenta(master) is False
+    assert composed.payload["audio_provenance"] == "mock"
+
+
+def _fixture_voiceovers(script: Script, root: Path) -> list[dict]:
+    """Original, explicit offline mock audio; this test judges picture fallback."""
+    takes = []
+    for shot in script.shots:
+        data, stamps, duration = render_wav(shot.voiceover, 0, language="zh")
+        path = root / f"voice-{shot.shot_id}.wav"
+        path.write_bytes(data)
+        takes.append(
+            {
+                "shot_id": shot.shot_id,
+                "uri": path.as_uri(),
+                "voice": "zh_male_steady",
+                "speed": 1.0,
+                "pause_s": 0.0,
+                "audio_s": duration,
+                "hold_s": max(0.0, shot.duration_s - duration),
+                "duration_s": shot.duration_s,
+                "timestamps": stamps,
+                "transcript": shot.voiceover,
+                "cer": 0.0,
+                "heard_check": "not_verified_in_mock",
+                "loudness_dbfs": -16.0,
+                "clipped": False,
+                "role": "body",
+                "provenance": "mock",
+                "seed": 0,
+            }
+        )
+    return takes
 
 
 def test_remote_and_outside_paths_are_not_read(

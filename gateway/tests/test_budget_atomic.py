@@ -6,6 +6,8 @@ import base64
 import multiprocessing
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
+from datetime import datetime
 from decimal import Decimal
 
 import httpx
@@ -13,6 +15,8 @@ import pytest
 from pydantic import BaseModel
 
 from gateway.adapters.seedream import SeedreamAdapter
+from gateway.budget import BudgetGuard
+from gateway.clock import FrozenClock
 from gateway.errors import GatewayError, StorageError
 from gateway.models import AdapterResult
 from gateway.store import SqlStore
@@ -65,6 +69,42 @@ def test_multiple_processes_reserve_both_caps_atomically(tmp_path, total, daily)
     store = SqlStore.sqlite(path)
     assert store.budget_totals("2026-11-01")["reserved"] == Decimal("0.04")
     store.close()
+
+
+def test_lock_wait_crossing_midnight_uses_the_admission_day_not_the_queued_day(tmp_path):
+    path = tmp_path / "midnight.sqlite"
+    queued, writer = SqlStore.sqlite(path), SqlStore.sqlite(path)
+    clock = FrozenClock(datetime.fromisoformat("2026-11-01T23:59:59+08:00"))
+    waiting, release = threading.Event(), threading.Event()
+    transaction = queued._budget_transaction
+
+    @contextmanager
+    def wait_for_writer():
+        waiting.set()
+        assert release.wait(timeout=5)
+        with transaction():
+            yield
+
+    queued._budget_transaction = wait_for_writer
+    guard = BudgetGuard(
+        store=queued,
+        limits_fn=lambda: (True, Decimal("10"), Decimal("0.05")),
+        clock=clock,
+        progress_path=None,
+    )
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        future = pool.submit(guard.reserve, Decimal("0.04"))
+        assert waiting.wait(timeout=3)
+        clock.set(datetime.fromisoformat("2026-11-02T00:00:01+08:00"))
+        writer.insert_log(
+            {**_log_row("0.04"), "day": "2026-11-02", "created_at": clock.now().isoformat()}
+        )
+        release.set()
+        decision = future.result(timeout=3)
+    assert not decision.allowed and decision.reason == "daily"
+    assert decision.daily_spent == Decimal("0.04") and queued.list_reservations() == []
+    queued.close()
+    writer.close()
 
 
 def test_inflight_call_blocks_another_gateway_without_holding_network_lock(tmp_path):

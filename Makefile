@@ -141,3 +141,7 @@ accept-hp02:
 	cd $(ROOT)/apps/web && npm run test:unit
 	cd $(ROOT)/apps/web && npm run lint
 	cd $(ROOT)/apps/web && npx tsc --noEmit
+
+.PHONY: accept-hp09
+accept-hp09:
+	PYTHON=$(PYTHON) bash $(ROOT)/infra/scripts/accept_hp09.sh

@@ -6,6 +6,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from gateway.media_bytes import render_wav
 from workers.nodes.n15_compose.node import run as compose
 from workers.nodes.n16_final_review.node import run
 from workers.nodes.n16_final_review.sample import frames_by_shot
@@ -65,6 +66,7 @@ def _film(root: Path) -> dict:
             "payload": {
                 "script": _script(_ORIGINAL),
                 "aligned_script": _script(_ALIGNED),
+                "voiceovers": _fixture_voiceovers(root),
                 "work_dir": str(root / "n16align" / "n15"),
                 "intro_s": 0,
                 "outro_s": 0.4,
@@ -80,6 +82,37 @@ def _film(root: Path) -> dict:
         max_attempts=1,
     )
     return edited.payload
+
+
+def _fixture_voiceovers(root: Path) -> list[dict]:
+    """Short explicit mock takes fit the original 0.5s timing fixture."""
+    takes = []
+    for shot in _script(_ORIGINAL)["shots"]:
+        data, stamps, duration = render_wav(shot["voiceover"], 0, language="zh")
+        path = root / f"voice-{shot['shot_id']}.wav"
+        path.write_bytes(data)
+        takes.append(
+            {
+                "shot_id": shot["shot_id"],
+                "uri": path.as_uri(),
+                "voice": "zh_male_steady",
+                "speed": 1.0,
+                "pause_s": 0.0,
+                "audio_s": duration,
+                "hold_s": shot["duration_s"] - duration,
+                "duration_s": shot["duration_s"],
+                "timestamps": stamps,
+                "transcript": shot["voiceover"],
+                "cer": 0.0,
+                "heard_check": "not_verified_in_mock",
+                "loudness_dbfs": -16.0,
+                "clipped": False,
+                "role": "body",
+                "provenance": "mock",
+                "seed": 0,
+            }
+        )
+    return takes
 
 
 def _script(durations: tuple[float, ...]) -> dict:
@@ -103,7 +136,7 @@ def _shot(index: int, duration: float) -> dict:
         "camera": "locked_off",
         "subject_refs": ["product:HP-300"],
         "scene_ref": "scene:workshop",
-        "voiceover": "这台柱塞泵按资料说明运行。",
+        "voiceover": "泵。",
         "on_screen_text": [],
         "transition_out": "cut",
         "generation_mode": "image_to_video",
