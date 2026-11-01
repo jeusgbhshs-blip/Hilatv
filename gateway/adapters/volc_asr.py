@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import httpx
 
-from gateway.adapters.http_json import price_media, request_json
+from gateway.adapters.http_json import billable_postprocess, price_media, request_json
 from gateway.constants import VOLC_ASR_BASE_URL, VOLC_ASR_FLASH_PATH, VOLC_ASR_RESOURCE
 from gateway.errors import AdapterError
 from gateway.media_bytes import decode_wav, sniff_mime
@@ -55,6 +55,20 @@ class VolcAsrAdapter:
     def available(self) -> bool:
         return bool(self._key().strip() and self._app_id().strip())
 
+    def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
+        if self.store is None:
+            return None
+        try:
+            seconds = decode_wav(self.store.get(call.prompt.strip()))
+        except Exception:
+            return None
+        return pricing.upper_bound(
+            call.model,
+            call.prompt,
+            task="asr",
+            params={"_decoded_audio_seconds": seconds},
+        )
+
     def invoke(self, call: Invocation) -> AdapterResult:
         if self.store is None:
             raise AdapterError("object store is not configured")
@@ -93,26 +107,28 @@ class VolcAsrAdapter:
                 },
                 provider=self.provider,
             )
-        text = parse_transcript(payload)
         try:
             seconds = round(decode_wav(raw), 3) if audio_format == "wav" else 0.0
         except AdapterError:
             seconds = 0.0
         usage = {"audio_seconds": seconds or 1.0}
         cost = price_media(self._pricing_table(), call, usage)
-        return AdapterResult(
+        receipt = AdapterResult(
             provider=self.provider,
             model=call.model,
-            output={
-                "mock": False,
-                "task": "asr",
-                "text": text,
-                "audio_uri": uri,
-                "language": call.language,
-            },
+            output={},
             cost_cny=_decimal(cost),
             usage=usage,
         )
+        with billable_postprocess(receipt):
+            receipt.output = {
+                "mock": False,
+                "task": "asr",
+                "text": parse_transcript(payload),
+                "audio_uri": uri,
+                "language": call.language,
+            }
+        return receipt
 
     def _key(self) -> str:
         if self.key_fn is not None:

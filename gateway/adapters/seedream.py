@@ -13,7 +13,14 @@ from uuid import uuid4
 
 import httpx
 
-from gateway.adapters.http_json import bearer, decode_b64, download_bytes, price_media, request_json
+from gateway.adapters.http_json import (
+    bearer,
+    billable_postprocess,
+    decode_b64,
+    download_bytes,
+    price_media,
+    request_json,
+)
 from gateway.constants import ARK_BASE_URL
 from gateway.errors import AdapterError
 from gateway.image_inputs import image_data_url
@@ -48,6 +55,12 @@ class SeedreamAdapter:
     def available(self) -> bool:
         return bool(self._key().strip())
 
+    def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
+        if call.params.get("n", 1) != 1:
+            return None
+        params = {"n": 1, "size": _body(call)["size"]}
+        return pricing.upper_bound(call.model, call.prompt, task=call.task, params=params)
+
     def invoke(self, call: Invocation) -> AdapterResult:
         if self.store is None:
             raise AdapterError("object store is not configured")
@@ -64,26 +77,28 @@ class SeedreamAdapter:
                 body=_body(call, self.store),
                 provider=self.provider,
             )
-            raw, mime = _image_bytes(client, payload)
-        ext = extension_for(mime)
-        uri = self.store.put(f"gateway/image/{uuid4().hex}.{ext}", raw, mime)
-        usage: dict[str, Any] = {"images": _image_count(payload)}
-        cost = price_media(self._pricing_table(), call, usage)
-        return AdapterResult(
-            provider=self.provider,
-            model=call.model,
-            output={
-                "mock": False,
-                "task": "image",
-                "uri": uri,
-                "mime_type": mime,
-                "prompt": call.prompt,
-                "negative_prompt": call.negative_prompt,
-                "seed": call.seed,
-            },
-            cost_cny=_decimal(cost),
-            usage={"images": int(usage["images"])},
-        )
+            usage: dict[str, Any] = {"images": _image_count(payload)}
+            receipt = AdapterResult(
+                provider=self.provider,
+                model=call.model,
+                output={},
+                cost_cny=_decimal(price_media(self._pricing_table(), call, usage)),
+                usage=usage,
+            )
+            with billable_postprocess(receipt):
+                raw, mime = _image_bytes(client, payload)
+                ext = extension_for(mime)
+                uri = self.store.put(f"gateway/image/{uuid4().hex}.{ext}", raw, mime)
+                receipt.output = {
+                    "mock": False,
+                    "task": "image",
+                    "uri": uri,
+                    "mime_type": mime,
+                    "prompt": call.prompt,
+                    "negative_prompt": call.negative_prompt,
+                    "seed": call.seed,
+                }
+        return receipt
 
     def _key(self) -> str:
         if self.key_fn is not None:

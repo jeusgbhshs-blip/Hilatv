@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import ROUND_CEILING, Decimal
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +28,7 @@ class RateCard:
 
 class Pricing:
     def __init__(self, data: dict[str, Any]) -> None:
+        self.cost_bounds = data.get("cost_bounds") or {}
         self.default_output_tokens = int(data.get("default_output_tokens") or 512)
         self.default = _card(data.get("default") or {})
         models = data.get("models") or {}
@@ -90,6 +91,68 @@ class Pricing:
         tokens_in += _estimate_tokens(schema_text)
         tokens_out = max_output_tokens or self.default_output_tokens
         return self.cost_for(model, tokens_in, tokens_out)
+
+    def upper_bound(
+        self,
+        model: str,
+        prompt: str,
+        *,
+        system: str | None = None,
+        schema: dict[str, Any] | None = None,
+        max_output_tokens: int | None = None,
+        task: str | None = None,
+        params: dict[str, Any] | None = None,
+    ) -> Decimal | None:
+        """Only operator-verified rate/quantity bounds admit paid calls.
+
+        Existing assumed/default prices are useful estimates, not hard spending bounds.
+        ``cost_bounds[model].verified`` is deliberately absent from bundled pricing.
+        """
+        bounds = self.cost_bounds.get(model)
+        card = self.models.get(model)
+        if not isinstance(bounds, dict) or bounds.get("verified") is not True or card is None:
+            return None
+        body = params or {}
+        if card.unit == "image" and task == "image":
+            if str(body.get("size") or "1K") not in bounds.get("image_sizes", []):
+                return None
+            count = body.get("n", 1)
+            if isinstance(count, bool) or not isinstance(count, int) or count < 1:
+                return None
+            amount = card.per_image * count
+        elif card.unit == "second" and task == "video":
+            if str(body.get("resolution") or "720p") not in bounds.get("video_resolutions", []):
+                return None
+            seconds = body.get("duration_s")
+            if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0:
+                return None
+            amount = card.per_second * Decimal(str(seconds))
+        elif card.unit == "second" and task == "asr":
+            seconds = body.get("_decoded_audio_seconds")
+            if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or seconds <= 0:
+                return None
+            amount = card.per_second * Decimal(str(seconds))
+        elif card.unit == "char" and task == "tts":
+            amount = card.per_thousand_chars * Decimal(len(prompt)) / 1000
+        elif card.unit == "token" and task in {"llm", "judge"}:
+            # Supplied by the adapter from its actual bounded request, never a caller estimate.
+            tokens_in = body.get("_request_input_token_bound")
+            if (
+                bounds.get("input_tokenizer") != "utf8_bytes"
+                or bounds.get("output_parameter") != "max_tokens"
+            ):
+                return None
+            if not isinstance(tokens_in, int) or tokens_in <= 0 or not max_output_tokens:
+                return None
+            amount = (
+                card.input_per_million * tokens_in + card.output_per_million * max_output_tokens
+            ) / 1_000_000
+        else:
+            # ASR/other usage has no enforceable duration/request bound yet.
+            return None
+        if not amount.is_finite() or amount <= 0:
+            return None
+        return amount.quantize(Decimal("0.000001"), rounding=ROUND_CEILING)
 
     def from_usage(self, model: str, usage: dict[str, Any]) -> Decimal:
         card = self.models.get(model)

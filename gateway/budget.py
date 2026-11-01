@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -14,7 +15,7 @@ from zoneinfo import ZoneInfo
 from gateway.clock import SystemClock
 from gateway.constants import ALERT_HEADING, ALERT_MARKER, DAILY_LOG_HEADING
 from gateway.logging import log_event
-from gateway.money import money
+from gateway.money import money, money_upper
 from gateway.store import SqlStore
 
 LimitsFn = Callable[[], tuple[bool, Decimal, Decimal]]
@@ -30,6 +31,8 @@ class BudgetDecision:
     daily_spent: Decimal
     daily_limit: Decimal
     estimate: Decimal
+    reservation_id: str | None = None
+    reserved: Decimal = Decimal("0")
 
 
 class BudgetGuard:
@@ -54,21 +57,82 @@ class BudgetGuard:
         daily_cap = money(daily_cap)
         estimate = money(estimate)
         today = self.today()
-        spent = money(self.store.sum_cost())
-        daily_spent = money(self.store.sum_cost(day=today))
+        totals = self.store.budget_totals(today)
+        spent = totals["spent"]
+        daily_spent = totals["daily_spent"]
+        held = totals["reserved"]
         if not live:
             return BudgetDecision(
-                False, "live_off", False, spent, total_cap, daily_spent, daily_cap, estimate
+                False,
+                "live_off",
+                False,
+                spent,
+                total_cap,
+                daily_spent,
+                daily_cap,
+                estimate,
+                reserved=held,
             )
-        if total_cap <= 0 or spent >= total_cap or spent + estimate > total_cap:
+        if total_cap <= 0 or spent + held >= total_cap or spent + held + estimate > total_cap:
             return BudgetDecision(
-                False, "total", True, spent, total_cap, daily_spent, daily_cap, estimate
+                False,
+                "total",
+                True,
+                spent,
+                total_cap,
+                daily_spent,
+                daily_cap,
+                estimate,
+                reserved=held,
             )
-        if daily_cap <= 0 or daily_spent >= daily_cap or daily_spent + estimate > daily_cap:
+        if (
+            daily_cap <= 0
+            or daily_spent + held >= daily_cap
+            or daily_spent + held + estimate > daily_cap
+        ):
             return BudgetDecision(
-                False, "daily", True, spent, daily_cap, daily_spent, daily_cap, estimate
+                False,
+                "daily",
+                True,
+                spent,
+                daily_cap,
+                daily_spent,
+                daily_cap,
+                estimate,
+                reserved=held,
             )
-        return BudgetDecision(True, "ok", False, spent, total_cap, daily_spent, daily_cap, estimate)
+        return BudgetDecision(
+            True, "ok", False, spent, total_cap, daily_spent, daily_cap, estimate, reserved=held
+        )
+
+    def reserve(self, estimate: Decimal, **context: object) -> BudgetDecision:
+        """Admission is atomic with other processes, including outstanding calls."""
+        live, total_cap, daily_cap = self.limits_fn()
+        if not live:
+            return self.evaluate(estimate)
+        reservation_id = str(uuid.uuid4())
+        total_cap, daily_cap, estimate = money(total_cap), money(daily_cap), money_upper(estimate)
+        result = self.store.reserve_budget(
+            reservation_id=reservation_id,
+            day=self.today(),
+            created_at=self.clock.now().isoformat(),
+            estimate=estimate,
+            total_cap=total_cap,
+            daily_cap=daily_cap,
+            context=dict(context),
+        )
+        return BudgetDecision(
+            result["allowed"],
+            result["reason"],
+            not result["allowed"],
+            result["spent"],
+            daily_cap if result["reason"] == "daily" else total_cap,
+            result["daily_spent"],
+            daily_cap,
+            estimate,
+            reservation_id if result["allowed"] else None,
+            result["reserved"],
+        )
 
     def notify(self, decision: BudgetDecision, **context: object) -> None:
         now = self.clock.now()
@@ -82,6 +146,7 @@ class BudgetGuard:
             total_spent_cny=decision.spent,
             total_limit_cny=decision.limit if decision.reason == "total" else None,
             reason=decision.reason,
+            reserved_cny=decision.reserved,
             estimate_cny=decision.estimate,
             ts=now.isoformat(),
             project_id=context.get("project_id"),
@@ -101,6 +166,7 @@ class BudgetGuard:
                 "details": {
                     "reason": decision.reason,
                     "estimate_cny": format(decision.estimate, "f"),
+                    "reserved_cny": format(decision.reserved, "f"),
                     "total_spent_cny": format(decision.spent, "f"),
                     "total_limit_cny": format(
                         decision.limit if decision.reason == "total" else money(0), "f"
@@ -138,7 +204,7 @@ def env_model_overrides() -> dict[str, str]:
 
 def format_alert(now: datetime, decision: BudgetDecision) -> str:
     spent = decision.spent if decision.reason == "total" else decision.daily_spent
-    label = "总上限" if decision.reason == "total" else "每日上限"
+    label = {"total": "总上限", "daily": "每日上限"}.get(decision.reason, "费用上界失效")
     return (
         f"- {now.strftime('%Y-%m-%d %H:%M')} budget_exceeded："
         f"已花费 ¥{spent} / 上限 ¥{decision.limit}"

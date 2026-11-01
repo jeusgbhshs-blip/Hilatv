@@ -15,7 +15,7 @@ from uuid import uuid4
 
 import httpx
 
-from gateway.adapters.http_json import decode_b64, price_media, request_json
+from gateway.adapters.http_json import billable_postprocess, decode_b64, price_media, request_json
 from gateway.constants import DEFAULT_TTS_VOICE, TTS_VOICE_ALIASES, VOLC_TTS_BASE_URL
 from gateway.errors import AdapterError
 from gateway.media_bytes import decode_wav, extension_for, sniff_mime
@@ -57,6 +57,10 @@ class VolcTtsAdapter:
     def available(self) -> bool:
         return bool(self._key().strip() and self._app_id().strip())
 
+    def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
+        params = dict(call.params)
+        return pricing.upper_bound(call.model, call.prompt, task=call.task, params=params)
+
     def invoke(self, call: Invocation) -> AdapterResult:
         if self.store is None:
             raise AdapterError("object store is not configured")
@@ -84,21 +88,23 @@ class VolcTtsAdapter:
         if str(payload.get("code")) not in {"3000", "0"}:
             message = payload.get("message") or payload.get("code")
             raise AdapterError(f"volc tts failed: {message}")
-        encoded = payload.get("data")
-        if not isinstance(encoded, str) or not encoded:
-            raise AdapterError("volc tts response missing audio")
-        raw = decode_b64(encoded)
-        mime = sniff_mime(raw, "audio/wav")
-        ext = extension_for(mime)
-        uri = self.store.put(f"gateway/tts/{uuid4().hex}.{ext}", raw, mime)
-        timestamps = parse_timestamps(payload)
-        duration = _duration(payload, raw)
         usage = {"characters": len(text)}
-        cost = price_media(self._pricing_table(), call, usage)
-        return AdapterResult(
+        receipt = AdapterResult(
             provider=self.provider,
             model=call.model,
-            output={
+            output={},
+            cost_cny=_decimal(price_media(self._pricing_table(), call, usage)),
+            usage=usage,
+        )
+        with billable_postprocess(receipt):
+            encoded = payload.get("data")
+            if not isinstance(encoded, str) or not encoded:
+                raise AdapterError("volc tts response missing audio")
+            raw = decode_b64(encoded)
+            mime = sniff_mime(raw, "audio/wav")
+            ext = extension_for(mime)
+            uri = self.store.put(f"gateway/tts/{uuid4().hex}.{ext}", raw, mime)
+            receipt.output = {
                 "mock": False,
                 "task": "tts",
                 "uri": uri,
@@ -106,12 +112,10 @@ class VolcTtsAdapter:
                 "text": call.prompt,
                 "voice": call.params.get("voice") or self.default_voice,
                 "seed": call.seed,
-                "duration_s": duration,
-                "timestamps": timestamps,
-            },
-            cost_cny=_decimal(cost),
-            usage=usage,
-        )
+                "duration_s": _duration(payload, raw),
+                "timestamps": parse_timestamps(payload),
+            }
+        return receipt
 
     def _key(self) -> str:
         if self.key_fn is not None:

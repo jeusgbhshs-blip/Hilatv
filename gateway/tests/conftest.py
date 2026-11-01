@@ -6,6 +6,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from gateway.adapters.mock_adapter import MockAdapter
 from gateway.cache import MemoryCache
 from gateway.clock import SystemClock
@@ -74,6 +76,23 @@ routes:
 """
 
 
+def verified_fixture_pricing() -> Pricing:
+    """Explicit synthetic rate approval for MockTransport-based vendor adapter tests."""
+    pricing = Pricing.load()
+    pricing.cost_bounds = {
+        model: {"verified": True, "image_sizes": ["1K"], "video_resolutions": ["720p"]}
+        for model in pricing.models
+    }
+    return pricing
+
+
+class FakeProviderPricing(Pricing):
+    """Trusted synthetic prices only for isolated scripted-adapter tests."""
+
+    def upper_bound(self, model, prompt, **kwargs):
+        return self.estimate(model, prompt, **kwargs)
+
+
 def build_gateway(
     tmp_path: Path,
     *,
@@ -101,7 +120,11 @@ def build_gateway(
         routes=RouteTable(path),
         store=store,
         cache=cache or MemoryCache(),
-        pricing=pricing if pricing is not None else Pricing.load(),
+        pricing=pricing
+        if pricing is not None
+        else FakeProviderPricing(
+            yaml.safe_load((Path(__file__).parents[1] / "pricing.yaml").read_text())
+        ),
         registry=adapters,
         limits_fn=limits_fn,
         clock=clock or SystemClock(),

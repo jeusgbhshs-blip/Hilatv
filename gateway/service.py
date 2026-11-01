@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 import threading
@@ -11,6 +12,7 @@ from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel
@@ -21,9 +23,9 @@ from gateway.budget import BudgetGuard, env_model_overrides, limits_from_env
 from gateway.cache import Cache, make_cache_key, open_cache
 from gateway.clock import SystemClock
 from gateway.constants import DEFAULT_JSON_SYSTEM, NO_RENDERED_TEXT, TASKS
-from gateway.errors import GatewayError
+from gateway.errors import BillableAdapterError, GatewayError
 from gateway.models import AdapterResult, Invocation
-from gateway.money import money
+from gateway.money import money, money_upper
 from gateway.pricing import Pricing
 from gateway.registry import build_registry
 from gateway.router import Endpoint, Route, RouteTable, default_routes_path
@@ -242,6 +244,16 @@ class Gateway:
         if task == "content_safety":
             candidates = self._content_safety_candidates(candidates)
         billable = [(endpoint, adapter) for endpoint, adapter in candidates if adapter.billable]
+        if billable and task in {"llm", "judge"}:
+            clean_params.setdefault(
+                "max_tokens", getattr(self.pricing, "default_output_tokens", 512)
+            )
+            if (
+                not isinstance(clean_params["max_tokens"], int)
+                or isinstance(clean_params["max_tokens"], bool)
+                or clean_params["max_tokens"] <= 0
+            ):
+                raise GatewayError("max_tokens must be a positive integer")
         mode = "live" if billable else "mock"
         system_effective = system
         if system_effective is None and json_schema is not None and task in {"llm", "judge"}:
@@ -312,37 +324,6 @@ class Gateway:
             return cached["output"]
 
         if billable:
-            estimate = self.pricing.estimate(
-                billable[0][0].model,
-                prompt,
-                system=system_effective,
-                schema=json_schema,
-                max_output_tokens=max_output_tokens,
-                task=task,
-                params=clean_params,
-            )
-            decision = self.budget.evaluate(estimate)
-            if not decision.allowed:
-                if decision.notify:
-                    self.budget.notify(
-                        decision,
-                        project_id=project_id,
-                        node=node,
-                        shot_id=shot_id,
-                        attempt=attempt,
-                    )
-                if task == "content_safety":
-                    raise GatewayError(
-                        "content safety unreviewed: budget blocked the live moderator"
-                    )
-                return self._serve_mock(
-                    base,
-                    model=f"mock-{task}",
-                    reason="budget_exceeded",
-                    cache_key=None,
-                    model_cls=model_cls,
-                    json_schema=json_schema,
-                )
             last_error: Exception | None = None
             for index, (endpoint, adapter) in enumerate(candidates, start=1):
                 invocation = replace(
@@ -352,24 +333,135 @@ class Gateway:
                     attempt=index,
                     timeout_s=route.timeout_s,
                 )
+                reservation_id = None
+                estimate = money(0)
+                if adapter.billable:
+                    # Every fallback has its own price and admission; no shared stale estimate.
+                    bounder = getattr(adapter, "cost_upper_bound", None)
+                    if bounder is not None:
+                        bound = bounder(invocation, self.pricing)
+                    else:
+                        bound = self.pricing.upper_bound(
+                            endpoint.model,
+                            prompt,
+                            system=system_effective,
+                            schema=json_schema,
+                            max_output_tokens=max_output_tokens,
+                            task=task,
+                            params=clean_params,
+                        )
+                    if bound is None:
+                        blocked = self.budget.evaluate(money(0))
+                        if blocked.notify:
+                            self.budget.notify(
+                                blocked, project_id=project_id, node=node, shot_id=shot_id
+                            )
+                        if task == "content_safety":
+                            raise GatewayError(
+                                "content safety unreviewed: no verified cost upper bound"
+                            )
+                        return self._serve_mock(
+                            base,
+                            model=f"mock-{task}",
+                            reason="unbounded_cost" if blocked.allowed else "budget_exceeded",
+                            cache_key=None,
+                            model_cls=model_cls,
+                            json_schema=json_schema,
+                        )
+                    estimate = money_upper(bound)
+                    decision = self.budget.reserve(
+                        estimate,
+                        project_id=project_id,
+                        node=node,
+                        shot_id=shot_id,
+                        attempt=index,
+                        provider=endpoint.provider,
+                        model=endpoint.model,
+                        cost_bound_key=self._cost_bound_key(endpoint),
+                    )
+                    if not decision.allowed:
+                        if decision.notify:
+                            self.budget.notify(
+                                decision,
+                                project_id=project_id,
+                                node=node,
+                                shot_id=shot_id,
+                                attempt=index,
+                            )
+                        if task == "content_safety":
+                            raise GatewayError(
+                                "content safety unreviewed: budget blocked the live moderator"
+                            )
+                        return self._serve_mock(
+                            replace(base, params={**base.params, "budget_reason": decision.reason}),
+                            model=f"mock-{task}",
+                            reason="budget_exceeded",
+                            cache_key=None,
+                            model_cls=model_cls,
+                            json_schema=json_schema,
+                        )
+                    reservation_id = decision.reservation_id
+                    invocation = replace(
+                        invocation,
+                        params={
+                            **invocation.params,
+                            "budget_reservation_id": reservation_id,
+                            "budget_reserved_cny": format(estimate, "f"),
+                        },
+                    )
                 try_started = time.perf_counter()
                 try:
                     result = adapter.invoke(invocation)
+                except Exception as exc:
+                    if reservation_id and isinstance(exc, BillableAdapterError):
+                        cost = self._priced(exc.result, invocation, True)
+                        self._log(
+                            invocation,
+                            provider=endpoint.provider,
+                            model=endpoint.model,
+                            cost=cost,
+                            status="error",
+                            latency_ms=_ms(try_started),
+                            live=True,
+                            error=exc,
+                            reservation_id=reservation_id,
+                            billing_unknown=not _known_receipt(exc.result),
+                        )
+                    else:
+                        if reservation_id:
+                            self.store.hold_uncertain_budget(reservation_id)
+                        self._log(
+                            invocation,
+                            provider=endpoint.provider,
+                            model=endpoint.model,
+                            cost=money(0),
+                            status="error",
+                            latency_ms=_ms(try_started),
+                            live=bool(adapter.billable),
+                            error=exc,
+                            fallback_reason="billing_unknown" if reservation_id else None,
+                        )
+                    last_error = exc
+                    continue
+                # The provider has returned a billable result. Validation cannot erase it.
+                cost = self._priced(result, invocation, adapter.billable)
+                try:
                     output = coerce_output(result.output, model_cls, json_schema)
                 except Exception as exc:
                     self._log(
                         invocation,
-                        provider=endpoint.provider,
-                        model=endpoint.model,
-                        cost=money(0),
+                        provider=result.provider,
+                        model=result.model,
+                        cost=cost,
                         status="error",
                         latency_ms=_ms(try_started),
                         live=bool(adapter.billable),
                         error=exc,
+                        reservation_id=reservation_id,
+                        billing_unknown=bool(adapter.billable) and not _known_receipt(result),
                     )
                     last_error = exc
                     continue
-                cost = self._priced(result, invocation, adapter.billable)
                 self._log(
                     invocation,
                     provider=result.provider,
@@ -379,12 +471,20 @@ class Gateway:
                     latency_ms=_ms(try_started),
                     live=bool(adapter.billable),
                     output=output,
+                    reservation_id=reservation_id,
+                    billing_unknown=bool(adapter.billable) and not _known_receipt(result),
                 )
-                self.cache.set(
-                    cache_key,
-                    {"output": output, "provider": result.provider, "model": result.model},
-                    self.cache_ttl_s,
-                )
+                try:
+                    self.cache.set(
+                        cache_key,
+                        {"output": output, "provider": result.provider, "model": result.model},
+                        self.cache_ttl_s,
+                    )
+                except Exception:
+                    # A failed cache write must not turn a billed success into a retry.
+                    from gateway.logging import log_event
+
+                    log_event("cache_write_failed", project_id=project_id, node=node)
                 return output
             raise GatewayError(f"all adapters failed for {task}") from last_error
 
@@ -522,7 +622,23 @@ class Gateway:
             fallbacks=tuple(apply(item) for item in route.fallbacks),
         )
 
+    def _cost_bound_key(self, endpoint: Endpoint) -> str:
+        details = (
+            endpoint.provider,
+            endpoint.model,
+            json.dumps(
+                getattr(self.pricing, "cost_bounds", {}).get(endpoint.model),
+                sort_keys=True,
+                default=str,
+            ),
+            repr(getattr(self.pricing, "models", {}).get(endpoint.model)),
+            str(getattr(self.pricing, "amount", "")),
+        )
+        return hashlib.sha256(repr(details).encode()).hexdigest()
+
     def _priced(self, result: AdapterResult, call: Invocation, billable: bool) -> Decimal:
+        if not billable:
+            return money(0)
         usage = result.usage or {}
         prompt_tokens = int(usage.get("prompt_tokens") or 0)
         completion_tokens = int(usage.get("completion_tokens") or 0)
@@ -559,31 +675,52 @@ class Gateway:
         fallback_reason: str | None = None,
         output: dict[str, Any] | None = None,
         error: Exception | None = None,
+        reservation_id: str | None = None,
+        billing_unknown: bool = False,
     ) -> None:
         now = self.clock.now()
-        self.store.insert_log(
-            {
-                "created_at": now.isoformat(),
-                "day": now.astimezone(ZoneInfo(self.tz)).date().isoformat(),
-                "project_id": call.project_id,
-                "node": call.node,
-                "shot_id": call.shot_id,
-                "attempt": call.attempt,
-                "task": call.task,
-                "provider": provider,
-                "model": model,
-                "params": _stored_params(call),
-                "latency_ms": latency_ms,
-                "cost_cny": money(cost),
-                "status": status,
-                "cache_hit": cache_hit,
-                "qa_score": None,
-                "live": live,
-                "fallback_reason": fallback_reason,
-                "output": output,
-                "error": None if error is None else str(error)[:500],
-            }
-        )
+        row = {
+            "created_at": now.isoformat(),
+            "day": now.astimezone(ZoneInfo(self.tz)).date().isoformat(),
+            "project_id": call.project_id,
+            "node": call.node,
+            "shot_id": call.shot_id,
+            "attempt": call.attempt,
+            "task": call.task,
+            "provider": provider,
+            "model": model,
+            "params": _stored_params(call),
+            "latency_ms": latency_ms,
+            "cost_cny": money(cost),
+            "status": status,
+            "cache_hit": cache_hit,
+            "qa_score": None,
+            "live": live,
+            "fallback_reason": fallback_reason,
+            "output": _redact_value(output),
+            "error": None if error is None else _redact_text(str(error))[:500],
+        }
+        if reservation_id is not None and billing_unknown:
+            self.store.hold_uncertain_budget(reservation_id)
+            row.update(cost_cny=money(0), fallback_reason="billing_unknown")
+            self.store.insert_log(row)
+        elif reservation_id is not None:
+            fresh = self.store.settle_budget(reservation_id, row)
+            if fresh:
+                decision = self.budget.evaluate(money(0))
+                if money(cost) > money(call.params.get("budget_reserved_cny")):
+                    decision = replace(
+                        decision, allowed=False, notify=True, reason="untrusted_bound"
+                    )
+                if decision.notify:
+                    self.budget.notify(
+                        decision,
+                        project_id=call.project_id,
+                        node=call.node,
+                        shot_id=call.shot_id,
+                    )
+        else:
+            self.store.insert_log(row)
 
 
 def get_gateway() -> Gateway:
@@ -659,7 +796,82 @@ def _require_voice_consent(token: str | None, voice: object, enterprise_id: str)
 
 
 def _public_params(params: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in params.items() if not _SECRET.search(str(key))}
+    return {
+        key: value
+        for key, value in params.items()
+        if not _sensitive_key(str(key)) and not str(key).startswith(("_request_", "budget_"))
+    }
+
+
+_TOKEN_LIMIT_KEYS = {
+    "max_tokens",
+    "max_output_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+}
+_DATA_URL = re.compile(r"data:[^,\s]*;base64,[A-Za-z0-9+/_=-]+", re.IGNORECASE)
+_HTTP_URL = re.compile(r"https?://[^\s<>\"'\]\)]+", re.IGNORECASE)
+
+
+def _sensitive_key(key: str) -> bool:
+    return key.lower() in {"authorization", "proxy-authorization", "cookie", "set-cookie"} or (
+        key.lower() not in _TOKEN_LIMIT_KEYS and bool(_SECRET.search(key))
+    )
+
+
+def _digest(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _redact_text(text: str) -> str:
+    def data_url(match: re.Match[str]) -> str:
+        value = match.group(0)
+        media = value.split(";", 1)[0]
+        return f"[{media};base64;sha256={_digest(value)}]"
+
+    def http_url(match: re.Match[str]) -> str:
+        value = match.group(0)
+        try:
+            parts = urlsplit(value)
+            if not parts.query and not parts.fragment and not parts.username and not parts.password:
+                return value
+            host = parts.hostname or ""
+            if ":" in host:
+                host = f"[{host}]"
+            if parts.port is not None:
+                host += f":{parts.port}"
+            return urlunsplit((parts.scheme, host, parts.path, "", "")) + (
+                f"[credentials_sha256={_digest(value)}]"
+            )
+        except ValueError:
+            return f"[http-url;sha256={_digest(value)}]"
+
+    clean = _HTTP_URL.sub(http_url, _DATA_URL.sub(data_url, text))
+    return re.sub(
+        r"(?i)\b(?:bearer\s+|(?:api[_-]?key|access[_-]?token|token|signature|secret|password)"
+        r"\s*[:=]\s*)[A-Za-z0-9._~+/%=-]+",
+        lambda m: f"[credential;sha256={_digest(m.group(0))}]",
+        clean,
+    )
+
+
+def _redact_value(value: Any) -> Any:
+    """Log-only copy. Never change the request, cache key or returned media URI."""
+    if isinstance(value, dict):
+        return {
+            str(key): (
+                {"redacted": True, "sha256": _digest(str(item))}
+                if _sensitive_key(str(key))
+                else _redact_value(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [_redact_value(item) for item in value]
+    if isinstance(value, str):
+        return _redact_text(value)
+    return value
 
 
 def _stored_params(call: Invocation) -> dict[str, Any]:
@@ -677,7 +889,23 @@ def _stored_params(call: Invocation) -> dict[str, Any]:
             "timeout_s": call.timeout_s,
         }
     )
-    return stored
+    return _redact_value(stored)
+
+
+def _known_receipt(result: AdapterResult) -> bool:
+    if result.cost_cny:
+        return True
+    return any(
+        result.usage.get(key) not in (None, 0, 0.0, "0")
+        for key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "images",
+            "video_seconds",
+            "audio_seconds",
+            "characters",
+        )
+    )
 
 
 def _media_usage(usage: dict[str, Any]) -> bool:

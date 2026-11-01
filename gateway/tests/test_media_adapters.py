@@ -21,7 +21,7 @@ from gateway.polling import TaskState
 from gateway.pricing import Pricing
 from gateway.registry import build_registry
 from gateway.storage import MemoryObjectStore
-from gateway.tests.conftest import build_gateway
+from gateway.tests.conftest import build_gateway, verified_fixture_pricing
 
 IMAGE_MODEL = "doubao-seedream-4-0-250828"
 VIDEO_MODEL = "doubao-seedance-1-0-pro-250528"
@@ -121,7 +121,7 @@ def test_budget_fallback_covers_image_video_and_tts(tmp_path) -> None:
         routes=MEDIA_ROUTES,
         registry=registry,
         limits=(True, Decimal("0"), Decimal("0")),
-        pricing=Pricing.load(),
+        pricing=verified_fixture_pricing(),
     )
     image = gateway.generate_image("泵", seed=1)
     video = gateway.generate_video("泵旋转", seed=1)
@@ -168,7 +168,7 @@ def test_seedream_stores_bytes_and_records_cost(tmp_path) -> None:
             )
         },
         limits=(True, Decimal("10"), Decimal("10")),
-        pricing=Pricing.load(),
+        pricing=verified_fixture_pricing(),
     )
     out = gateway.generate_image("金属泵体", seed=2, project_id="p")
     body = seen["body"]
@@ -199,7 +199,7 @@ def test_seedream_downloads_a_url(tmp_path) -> None:
         api_key="k",
         store=store,
         transport=httpx.MockTransport(handler),
-        pricing=Pricing.load(),
+        pricing=verified_fixture_pricing(),
     )
     result = adapter.invoke(
         Invocation(
@@ -254,7 +254,7 @@ def test_seedance_polls_then_stores(tmp_path) -> None:
             )
         },
         limits=(True, Decimal("20"), Decimal("20")),
-        pricing=Pricing.load(),
+        pricing=verified_fixture_pricing(),
     )
     out = gateway.generate_video("泵旋转", seed=11, duration_s=5)
     assert gets["n"] == 3
@@ -350,7 +350,7 @@ def test_tts_returns_audio_and_word_timestamps(tmp_path) -> None:
             )
         },
         limits=(True, Decimal("10"), Decimal("10")),
-        pricing=Pricing.load(),
+        pricing=verified_fixture_pricing(),
     )
     from workers.compliance.consent_gate import issue_tts_consent
 

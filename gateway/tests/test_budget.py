@@ -42,6 +42,9 @@ class FlatPricing:
     def estimate(self, model: str, prompt: str, **kwargs: object) -> Decimal:
         return self.amount
 
+    def upper_bound(self, model: str, prompt: str, **kwargs: object) -> Decimal:
+        return self.estimate(model, prompt, **kwargs)
+
     def from_usage(self, model: str, usage: dict) -> Decimal:  # type: ignore[type-arg]
         return self.amount
 
@@ -171,10 +174,13 @@ def test_budget_fallback_is_not_cached(tmp_path) -> None:
     assert adapter.calls == 1
 
 
-def test_actual_cost_can_exhaust_the_cap_for_the_next_call(tmp_path) -> None:
+def test_known_maximum_cost_blocks_underestimated_call_before_spend(tmp_path) -> None:
     clock = FrozenClock(datetime(2026, 10, 29, 12, 0, tzinfo=SH))
 
     class Underestimate(FlatPricing):
+        def upper_bound(self, model: str, prompt: str, **kwargs: object) -> Decimal:
+            return Decimal("1.000000")
+
         def from_usage(self, model: str, usage: dict) -> Decimal:  # type: ignore[type-arg]
             return Decimal("1.000000")
 
@@ -198,7 +204,7 @@ def test_actual_cost_can_exhaust_the_cap_for_the_next_call(tmp_path) -> None:
         pricing=Underestimate("0.010000"),
         box={"live": True, "total": Decimal("0.50"), "daily": Decimal("10")},
     )
-    assert gateway.generate_text("a", seed=1)["text"] == "spent"
-    assert Decimal(gateway.store.list_logs()[-1]["cost_cny"]) == Decimal("1.000000")
+    assert gateway.generate_text("a", seed=1)["mock"] is True
+    assert Decimal(gateway.store.sum_cost()) == 0
     assert gateway.generate_text("b", seed=2)["mock"] is True
-    assert adapter.calls == 1
+    assert adapter.calls == 0

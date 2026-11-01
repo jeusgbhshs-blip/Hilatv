@@ -17,6 +17,7 @@ import httpx
 
 from gateway.adapters.http_json import (
     bearer,
+    billable_postprocess,
     download_bytes,
     error_message,
     price_media,
@@ -68,6 +69,11 @@ class SeedanceAdapter:
     def available(self) -> bool:
         return bool(self._key().strip())
 
+    def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
+        body = _submit_body(call)
+        params = {"duration_s": body["duration"], "resolution": body["resolution"]}
+        return pricing.upper_bound(call.model, call.prompt, task=call.task, params=params)
+
     def invoke(self, call: Invocation) -> AdapterResult:
         if self.store is None:
             raise AdapterError("object store is not configured")
@@ -84,32 +90,34 @@ class SeedanceAdapter:
                 now=self.now,
                 sleep=self.sleep,
             )
-            assert snap.result_url is not None
-            raw = download_bytes(client, snap.result_url, provider=self.provider)
-        mime = sniff_mime(raw, "video/mp4")
-        ext = extension_for(mime)
-        uri = self.store.put(f"gateway/video/{uuid4().hex}.{ext}", raw, mime)
-        seconds = snap.duration_s if snap.duration_s is not None else float(_duration(call))
-        usage: dict[str, Any] = {"video_seconds": seconds}
-        if snap.usage.get("completion_tokens"):
-            usage["completion_tokens"] = int(snap.usage["completion_tokens"])
-        cost = price_media(self._pricing_table(), call, usage)
-        return AdapterResult(
-            provider=self.provider,
-            model=call.model,
-            output={
-                "mock": False,
-                "task": "video",
-                "uri": uri,
-                "mime_type": mime,
-                "duration_s": seconds,
-                "prompt": call.prompt,
-                "negative_prompt": call.negative_prompt,
-                "seed": call.seed,
-            },
-            cost_cny=_decimal(cost),
-            usage={"video_seconds": seconds},
-        )
+            seconds = snap.duration_s if snap.duration_s is not None else float(_duration(call))
+            usage: dict[str, Any] = {"video_seconds": seconds}
+            if snap.usage.get("completion_tokens"):
+                usage["completion_tokens"] = int(snap.usage["completion_tokens"])
+            receipt = AdapterResult(
+                provider=self.provider,
+                model=call.model,
+                output={},
+                cost_cny=_decimal(price_media(self._pricing_table(), call, usage)),
+                usage={"video_seconds": seconds},
+            )
+            with billable_postprocess(receipt):
+                assert snap.result_url is not None
+                raw = download_bytes(client, snap.result_url, provider=self.provider)
+                mime = sniff_mime(raw, "video/mp4")
+                ext = extension_for(mime)
+                uri = self.store.put(f"gateway/video/{uuid4().hex}.{ext}", raw, mime)
+                receipt.output = {
+                    "mock": False,
+                    "task": "video",
+                    "uri": uri,
+                    "mime_type": mime,
+                    "duration_s": seconds,
+                    "prompt": call.prompt,
+                    "negative_prompt": call.negative_prompt,
+                    "seed": call.seed,
+                }
+        return receipt
 
     def _submit(self, client: httpx.Client, call: Invocation, key: str) -> str:
         payload = request_json(

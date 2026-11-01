@@ -13,7 +13,10 @@ REVISION = ROOT / "migrations" / "versions" / "20261029_0002_t03_gateway_logs.py
 
 def test_single_head_is_gateway_logs() -> None:
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
-    assert script.get_heads() == ["r02_canvas_0003"]
+    assert script.get_heads() == ["hp03_budget_0004"]
+    budget = script.get_revision("hp03_budget_0004")
+    assert budget is not None
+    assert budget.down_revision == "r02_canvas_0003"
     gateway = script.get_revision("t03_gateway_0002")
     assert gateway is not None
     assert gateway.down_revision == "t02_business_0001"

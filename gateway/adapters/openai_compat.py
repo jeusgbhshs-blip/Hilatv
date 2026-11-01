@@ -10,6 +10,7 @@ from typing import Any
 
 import httpx
 
+from gateway.adapters.http_json import billable_postprocess
 from gateway.errors import AdapterError, AdapterTimeout
 from gateway.models import AdapterResult, Invocation
 
@@ -41,6 +42,26 @@ class OpenAICompatAdapter:
     def available(self) -> bool:
         return bool(self._key().strip())
 
+    def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
+        if call.image_b64 or call.cutout_b64:
+            # Vision image-token billing needs a separately verified dimension bound.
+            return None
+        maximum = call.params.get("max_tokens")
+        if not isinstance(maximum, int) or isinstance(maximum, bool) or maximum <= 0:
+            return None
+        # UTF-8 byte-level tokenizers cannot produce more text tokens than the
+        # serialized request's ASCII-escaped bytes, including message framing.
+        input_bound = len(json.dumps(_body(call), ensure_ascii=True).encode("ascii"))
+        return pricing.upper_bound(
+            call.model,
+            call.prompt,
+            system=call.system,
+            schema=call.json_schema,
+            max_output_tokens=maximum,
+            task=call.task,
+            params={**call.params, "_request_input_token_bound": input_bound},
+        )
+
     def invoke(self, call: Invocation) -> AdapterResult:
         key = self._key().strip()
         if not key:
@@ -67,19 +88,21 @@ class OpenAICompatAdapter:
             payload = response.json()
         except json.JSONDecodeError as exc:
             raise AdapterError(f"{self.provider} returned non-JSON") from exc
-        content = _message_text(payload, self.provider)
-        output = _parse_content(content, call.json_schema is not None, self.provider)
         usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
-        return AdapterResult(
+        receipt = AdapterResult(
             provider=self.provider,
             model=call.model,
-            output=output,
+            output={},
             cost_cny=Decimal("0"),
             usage={
                 "prompt_tokens": int(usage.get("prompt_tokens") or 0),
                 "completion_tokens": int(usage.get("completion_tokens") or 0),
             },
         )
+        with billable_postprocess(receipt):
+            content = _message_text(payload, self.provider)
+            receipt.output = _parse_content(content, call.json_schema is not None, self.provider)
+        return receipt
 
     def _key(self) -> str:
         if self.key_fn is not None:

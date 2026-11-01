@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 import httpx
 
-from gateway.errors import AdapterError, AdapterTimeout
-from gateway.models import Invocation
+from gateway.errors import AdapterError, AdapterTimeout, BillableAdapterError
+from gateway.models import AdapterResult, Invocation
 from gateway.pricing import Pricing
 
 
@@ -97,3 +99,14 @@ def error_message(payload: dict[str, object]) -> str:
     if message and str(payload.get("code") or "") not in {"", "3000", "0"}:
         return str(message)
     return ""
+
+
+@contextmanager
+def billable_postprocess(result: AdapterResult) -> Iterator[None]:
+    """Preserve the vendor receipt if local response handling or storage fails."""
+    try:
+        yield
+    except BillableAdapterError:
+        raise
+    except Exception as exc:
+        raise BillableAdapterError(str(exc), result) from exc

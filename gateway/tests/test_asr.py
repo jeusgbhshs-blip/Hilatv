@@ -12,7 +12,7 @@ from gateway.adapters.volc_asr import VolcAsrAdapter, parse_transcript
 from gateway.media_bytes import render_wav
 from gateway.pricing import Pricing
 from gateway.storage import MemoryObjectStore
-from gateway.tests.conftest import build_gateway
+from gateway.tests.conftest import build_gateway, verified_fixture_pricing
 
 ASR_MODEL = "volc-asr-1.0"
 ASR_ROUTES = f"""
@@ -55,7 +55,7 @@ def test_flash_asr_posts_audio_and_returns_text(tmp_path) -> None:
             )
         },
         limits=(True, Decimal("10"), Decimal("10")),
-        pricing=Pricing.load(),
+        pricing=verified_fixture_pricing(),
     )
     out = gateway.asr(uri, language="zh", params={"reference_text": "三十"})
     body = seen["body"]
