@@ -13,17 +13,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.delivery_gate import media_response, public_readiness
 from app.identity import owned_project, require_identity
 from workers.expert.canvas import media_file
 from workers.identity.session import Identity
 from workers.logging import log_event
+from workers.workflow.readiness import readiness
 from workers.workflow.store import (
     init_project,
     load_checkpoint,
+    locked_project,
     project_path,
     read_snapshot,
     valid_project_id,
 )
+from workers.workflow.versions import atomic_write
 
 router = APIRouter()
 
@@ -46,9 +50,7 @@ def _read_shares(project_id: str) -> dict[str, dict[str, Any]]:
 
 
 def _write_shares(project_id: str, data: dict[str, dict[str, Any]]) -> None:
-    _shares_path(project_id).write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    atomic_write(_shares_path(project_id), json.dumps(data, ensure_ascii=False, indent=2).encode())
 
 
 class ShareBody(BaseModel):
@@ -63,13 +65,18 @@ def create_share(
     body: ShareBody,
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
-    owned_project(project_id, identity)
+    snapshot = owned_project(project_id, identity)
     if body.role not in _ROLES:
         raise HTTPException(status_code=422, detail="分享权限不对")
     token = secrets.token_urlsafe(18)
-    data = _read_shares(project_id)
-    data[token] = {"role": body.role, "created_at": time.time()}
-    _write_shares(project_id, data)
+    with locked_project(project_id):
+        data = _read_shares(project_id)
+        data[token] = {
+            "role": body.role,
+            "created_at": time.time(),
+            "enterprise_id": snapshot["enterprise_id"],
+        }
+        _write_shares(project_id, data)
     log_event("share_created", service="hilatv-api", project_id=project_id, role=body.role)
     return {"token": token, "role": body.role, "url": f"/share/{token}"}
 
@@ -94,11 +101,12 @@ def delete_share(
     project_id: str, token: str, identity: Identity = Depends(require_identity)
 ) -> dict[str, Any]:
     owned_project(project_id, identity)
-    data = _read_shares(project_id)
-    if token not in data:
-        raise HTTPException(status_code=404, detail="没有这个分享")
-    data.pop(token, None)
-    _write_shares(project_id, data)
+    with locked_project(project_id):
+        data = _read_shares(project_id)
+        if token not in data:
+            raise HTTPException(status_code=404, detail="没有这个分享")
+        data.pop(token, None)
+        _write_shares(project_id, data)
     return {"deleted": token}
 
 
@@ -106,7 +114,13 @@ def _share_or_404(token: str) -> tuple[str, dict[str, Any]]:
     for project_id in _candidate_projects():
         data = _read_shares(project_id)
         if token in data:
-            return project_id, data[token]
+            item = data[token]
+            snapshot = read_snapshot(project_id) or {}
+            if not snapshot or not isinstance(item, dict):
+                raise HTTPException(status_code=404, detail="分享链接无效或已失效")
+            if item.get("enterprise_id") not in {None, snapshot.get("enterprise_id")}:
+                raise HTTPException(status_code=404, detail="分享链接无效或已失效")
+            return project_id, item
     raise HTTPException(status_code=404, detail="分享链接无效或已失效")
 
 
@@ -126,6 +140,8 @@ def read_share(token: str) -> dict[str, Any]:
     project_id, item = _share_or_404(token)
     snapshot = read_snapshot(project_id) or {}
     state = load_checkpoint(project_id)
+    view = readiness(snapshot, state)
+    allowed = item.get("role") == "view" and view["delivery_status"] == "ready"
     shots: list[dict[str, Any]] = []
     for row in (state.get("script") or {}).get("shots") or []:
         shot_id = str(row.get("shot_id") or "")
@@ -151,18 +167,43 @@ def read_share(token: str) -> dict[str, Any]:
         "message": snapshot.get("message") or "",
         "shots": shots,
         "ai_label": True,
-        "download_allowed": item.get("role") != "view_no_download",
-        "has_film": bool(snapshot.get("deliverable")),
+        **public_readiness(view),
+        "download_allowed": allowed,
+        "has_film": view["preview_available"],
+        "preview_path": None,
+        "download_path": f"/v1/share-links/{token}/media/master" if allowed else None,
+        "owner_preview_path": f"/v1/projects/{project_id}/preview"
+        if view["preview_available"]
+        else None,
+        "shared_preview_available": False,
+        "preview_message": (
+            "此链接只提供审阅信息，尚未生成受限预览，不提供原件；项目成员可登录预览"
+            if item.get("role") == "view_no_download"
+            else "此文件已通过交付核验，可按分享权限下载"
+            if allowed
+            else "原件只有通过正式交付核验后才可下载；项目成员可登录预览"
+        ),
     }
 
 
 @router.get("/v1/share-links/{token}/media/{candidate_id}")
 def read_share_media(token: str, candidate_id: str) -> FileResponse:
-    project_id, _item = _share_or_404(token)
-    path = media_file(project_id, candidate_id)
-    if path is None:
+    project_id, item = _share_or_404(token)
+    if item.get("role") != "view":
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "code": "restricted_preview_unavailable",
+                "message": "此链接不提供原件，受限预览尚未生成",
+            },
+        )
+    snapshot = read_snapshot(project_id) or {}
+    path = (
+        None if candidate_id in {"master", "deliverable"} else media_file(project_id, candidate_id)
+    )
+    if path is None and candidate_id not in {"master", "deliverable"}:
         raise HTTPException(status_code=404, detail="没有可看的画面")
-    return FileResponse(path, filename=path.name)
+    return media_response(snapshot, media=path)
 
 
 @router.post("/v1/projects/{project_id}/copy")
@@ -181,6 +222,7 @@ async def copy_project(
         phase="画布",
         message="从另一个项目复制过来的画布",
         enterprise_id=identity.enterprise_id,
+        owner_member_id=identity.member_id,
         shots=[],
         events=[],
         attachments=snapshot.get("attachments") or [],

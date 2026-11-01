@@ -20,7 +20,7 @@ def _session():
     return ident, {"Authorization": f"Bearer {ident.token}"}
 
 
-def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
+def test_versions_preview_keeps_formal_download_and_share_gated(tmp_path, monkeypatch) -> None:
     root = tmp_path / "projects"
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(root))
     monkeypatch.setenv("HILATV_LIVE", "0")
@@ -58,6 +58,7 @@ def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
         )
         assert created.status_code == 200, created.text
         body = created.json()
+        assert str(root) not in created.text
         assert len(body["versions"]) == 1
         version = body["versions"][0]
         assert version["aspect_ratio"] == "9:16"
@@ -66,18 +67,23 @@ def test_versions_download_and_share(tmp_path, monkeypatch) -> None:
         assert version["qa_status"] == "pass"
         assert version["subject_box_source"] == "provided"
         assert "download_path" in version
+        assert version["quality_pass"] is False
+        assert version["delivery_status"] != "ready"
         listed = client.get(f"/v1/projects/{project_id}/versions")
         assert listed.status_code == 200
         assert listed.json()["versions"][0]["version_id"] == version["version_id"]
-        downloaded = client.get(version["download_path"])
-        assert downloaded.status_code == 200
-        assert downloaded.headers["content-type"].startswith("video/mp4")
-        assert downloaded.content[:8] != b""
+        previewed = client.get(version["preview_path"])
+        assert previewed.status_code == 200
+        assert previewed.headers["content-type"].startswith("video/mp4")
+        assert previewed.content[:8] != b""
+        assert previewed.headers["content-disposition"].startswith("inline")
+        assert previewed.headers["cache-control"] == "private, no-store"
+        assert client.get(version["download_path"]).status_code == 409
         shared = client.post(f"/v1/projects/{project_id}/versions/{version['version_id']}/share")
         assert shared.status_code == 200
         opened = client.get(shared.json()["share_path"])
-        assert opened.status_code == 200
-        assert opened.content == downloaded.content
+        assert opened.status_code == 409
+        assert not opened.content.startswith(previewed.content[:8])
         assert shared.json()["expires_at"] > 0
         revoked = client.delete(f"/v1/projects/{project_id}/versions/{version['version_id']}/share")
         assert revoked.status_code == 204

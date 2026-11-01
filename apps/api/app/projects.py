@@ -23,6 +23,7 @@ from fastapi import (
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from app.delivery_gate import media_response, public_readiness, public_rights
 from app.identity import owned_project, require_frame_identity, require_identity
 from app.logging import log_event
 from gateway import get_gateway
@@ -50,6 +51,7 @@ from workers.workflow.drafts import (
     save_draft,
     submission_response,
 )
+from workers.workflow.readiness import readiness
 from workers.workflow.revise import RevisionError, revise_project
 from workers.workflow.runtime import get_runtime
 from workers.workflow.service import release_film, start_film
@@ -354,6 +356,25 @@ def _public_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     project_id = str(body.get("project_id") or "")
     if "storyboard" in body:
         body["storyboard"] = public_cards(body.get("storyboard"), project_id)
+    view = readiness(snapshot)
+    body.update(public_readiness(view))
+    for key in (
+        "media_path",
+        "master_plate",
+        "previous_deliverable",
+        "held_deliverable",
+        "work_dir",
+    ):
+        body.pop(key, None)
+    body["preview_path"] = (
+        f"/v1/projects/{project_id}/preview" if view["preview_available"] else None
+    )
+    body["download_path"] = (
+        f"/v1/projects/{project_id}/download" if view["delivery_status"] == "ready" else None
+    )
+    body["deliverable"] = body["download_path"]
+    if "rights" in body:
+        body["rights"] = public_rights(body["rights"])
     return body
 
 
@@ -572,6 +593,7 @@ def list_projects(identity: Identity = Depends(require_identity)) -> dict[str, A
             stored = snapshot.get("enterprise_id")
             if not isinstance(stored, str) or canonical_enterprise(stored) != owner:
                 continue
+            media_view = readiness(snapshot)
             started = snapshot.get("created_at") or snapshot.get("started_at")
             finished = snapshot.get("finished_at")
             updated = snapshot.get("updated_at") or finished
@@ -587,7 +609,8 @@ def list_projects(identity: Identity = Depends(require_identity)) -> dict[str, A
                     if isinstance(updated, (int, float))
                     else (started if isinstance(started, (int, float)) else 0),
                     "shot_count": len(snapshot.get("shots") or []),
-                    "has_film": bool(snapshot.get("deliverable")),
+                    "has_film": media_view["preview_available"],
+                    **public_readiness(media_view),
                 }
             )
     rows.sort(key=lambda item: item["updated_at"], reverse=True)
@@ -829,7 +852,7 @@ async def release_human_review(
             content={
                 "project_id": project_id,
                 "status": "completed",
-                "deliverable": snapshot.get("deliverable"),
+                **_public_snapshot(snapshot),
             },
         )
     from workers.workflow.service import start_film
@@ -908,14 +931,16 @@ def download_master(
     identity: Identity = Depends(require_identity),
 ) -> FileResponse:
     snapshot = _snapshot_or_404(project_id, identity)
-    raw = snapshot.get("deliverable")
-    if not isinstance(raw, str) or not raw:
-        raise HTTPException(status_code=404, detail="成片尚未就绪")
-    path = Path(raw).resolve()
-    root = project_path(project_id).resolve()
-    if not path.is_file() or not path.is_relative_to(root):
-        raise HTTPException(status_code=404, detail="成片文件不存在")
-    return FileResponse(path, media_type="video/mp4", filename="master.mp4")
+    return media_response(snapshot)
+
+
+@router.get("/v1/projects/{project_id}/preview")
+@router.head("/v1/projects/{project_id}/preview", include_in_schema=False)
+def preview_master(
+    project_id: str,
+    identity: Identity = Depends(require_frame_identity),
+) -> FileResponse:
+    return media_response(_snapshot_or_404(project_id, identity), preview=True)
 
 
 @router.websocket("/v1/projects/{project_id}/progress")

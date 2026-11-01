@@ -13,6 +13,7 @@ from workers.qa.pixels import MediaLoad, resolve_project_file
 from workers.qa.scores import content_blocked
 from workers.schemas.asset import Candidate
 from workers.workflow.contract import PIPELINE
+from workers.workflow.readiness import readiness
 from workers.workflow.store import load_checkpoint, read_snapshot, valid_project_id
 
 LABELS = {
@@ -63,8 +64,10 @@ def build_canvas(project_id: str) -> dict[str, Any]:
     videos = _candidates(state.get("videos"))
     budget = open_project_budget(project_id)
     shots = _shots(state, keyframes, videos, project_id)
+    delivery = readiness(snapshot, state)
     body = {
         "project_id": project_id,
+        "draft_revision": snapshot.get("draft_revision"),
         "sentence": snapshot.get("sentence") or "",
         "status": snapshot.get("status") or "",
         "budget": {
@@ -86,9 +89,25 @@ def build_canvas(project_id: str) -> dict[str, Any]:
         "timeline": _timeline_view(project_id, state),
         "master": _master(keyframes, videos, snapshot),
     }
+    body.update({key: value for key, value in delivery.items() if key != "media_path"})
+    body["master"].update(
+        ready=delivery["delivery_status"] == "ready",
+        quality_pass=delivery["quality_pass"],
+        delivery_status=delivery["delivery_status"],
+        preview_available=delivery["preview_available"],
+        media_provenance=delivery["media_provenance"],
+    )
     from workers.expert.desk import extend_canvas
 
-    return extend_canvas(project_id, state, snapshot, body)
+    return extend_canvas(
+        project_id,
+        state,
+        {
+            **snapshot,
+            "deliverable": snapshot.get("deliverable") if delivery["quality_pass"] else None,
+        },
+        body,
+    )
 
 
 def media_file(project_id: str, candidate_id: str) -> Path | None:

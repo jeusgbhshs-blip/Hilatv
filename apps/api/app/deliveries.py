@@ -5,6 +5,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -17,19 +18,26 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.identity import owned_project, require_identity
+from app.delivery_gate import media_response, public_readiness, public_rights
+from app.identity import owned_project, require_frame_identity, require_identity
 from workers.identity.session import Identity
 from workers.nodes.n17_deliver.node import run
 from workers.nodes.n17_deliver.qa import QAError
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
 from workers.schemas.script import Script
+from workers.workflow.readiness import readiness, state_from_directory
 from workers.workflow.store import (
+    contained_file,
     load_checkpoint,
     project_path,
     project_root,
+    read_snapshot,
     update_snapshot,
+    valid_project_id,
 )
+from workers.workflow.versions import VersionError
+from workers.workflow.versions import list_versions as revision_versions
 
 router = APIRouter()
 
@@ -96,8 +104,6 @@ def create_delivery(
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
     snapshot = _snapshot_or_404(project_id, identity)
-    if snapshot.get("status") == "needs_human_review":
-        raise HTTPException(status_code=409, detail="成片待人工复核，尚未放行")
     if not _acquire_export():
         raise HTTPException(status_code=429, detail="导出太多，请稍后再试")
     try:
@@ -120,8 +126,10 @@ def create_delivery(
     update_snapshot(project_id, versions=record.get("versions") or [], rights=record.get("rights"))
     return {
         "project_id": project_id,
-        "versions": record.get("versions") or [],
-        "rights": record.get("rights") or {},
+        "versions": [
+            _version_public(project_id, item, snapshot) for item in record.get("versions") or []
+        ],
+        "rights": public_rights(record.get("rights")),
     }
 
 
@@ -130,12 +138,14 @@ def list_versions(
     project_id: str,
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
-    _snapshot_or_404(project_id, identity)
+    snapshot = _snapshot_or_404(project_id, identity)
     record = _read(project_id)
     return {
         "project_id": project_id,
-        "versions": record.get("versions") or [],
-        "rights": record.get("rights") or {},
+        "versions": [
+            _version_public(project_id, item, snapshot) for item in record.get("versions") or []
+        ],
+        "rights": public_rights(record.get("rights")),
     }
 
 
@@ -145,8 +155,8 @@ def read_version(
     version_id: str,
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
-    _snapshot_or_404(project_id, identity)
-    return _find(project_id, version_id)
+    snapshot = _snapshot_or_404(project_id, identity)
+    return _version_public(project_id, _find(project_id, version_id), snapshot)
 
 
 @router.get("/v1/projects/{project_id}/versions/{version_id}/download")
@@ -155,8 +165,19 @@ def download_version(
     version_id: str,
     identity: Identity = Depends(require_identity),
 ) -> FileResponse:
-    _snapshot_or_404(project_id, identity)
-    return _file(project_id, version_id)
+    snapshot = _snapshot_or_404(project_id, identity)
+    return _file(project_id, version_id, snapshot=snapshot)
+
+
+@router.get("/v1/projects/{project_id}/versions/{version_id}/preview")
+@router.head("/v1/projects/{project_id}/versions/{version_id}/preview", include_in_schema=False)
+def preview_version(
+    project_id: str,
+    version_id: str,
+    identity: Identity = Depends(require_frame_identity),
+) -> FileResponse:
+    snapshot = _snapshot_or_404(project_id, identity)
+    return _file(project_id, version_id, snapshot=snapshot, preview=True)
 
 
 @router.post("/v1/projects/{project_id}/versions/{version_id}/share")
@@ -165,8 +186,8 @@ def share_version(
     version_id: str,
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
-    _snapshot_or_404(project_id, identity)
-    _find(project_id, version_id)
+    snapshot = _snapshot_or_404(project_id, identity)
+    version = _version_public(project_id, _find(project_id, version_id), snapshot)
     token = secrets.token_urlsafe(18)
     expires_at = time.time() + _share_ttl()
     share_path = f"/v1/shares/{token}"
@@ -175,7 +196,12 @@ def share_version(
         if not any(item.get("version_id") == version_id for item in record.get("versions") or []):
             raise HTTPException(status_code=404, detail="版本不存在")
         shares = dict(record.get("shares") or {})
-        shares[token] = {"version_id": version_id, "expires_at": expires_at}
+        shares[token] = {
+            "version_id": version_id,
+            "expires_at": expires_at,
+            "enterprise_id": snapshot["enterprise_id"],
+            "media_hash": version.get("media_hash"),
+        }
         for item in record.get("versions") or []:
             if item.get("version_id") == version_id:
                 item["share_path"] = share_path
@@ -186,7 +212,7 @@ def share_version(
     folder.mkdir(parents=True, exist_ok=True)
     _replace_json(
         folder / f"{token}.json",
-        {"project_id": project_id, "version_id": version_id, "expires_at": expires_at},
+        {"project_id": project_id, **shares[token]},
     )
     update_snapshot(project_id, versions=record.get("versions") or [])
     return {
@@ -194,6 +220,10 @@ def share_version(
         "share_path": share_path,
         "token": token,
         "expires_at": expires_at,
+        "delivery_status": version["delivery_status"],
+        "download_allowed": version["delivery_status"] == "ready",
+        "owner_preview_path": version["preview_path"],
+        "message": "分享原件需通过正式交付核验；项目成员可登录预览",
     }
 
 
@@ -226,16 +256,39 @@ def revoke_share(
 
 @router.get("/v1/shares/{token}")
 def open_share(token: str) -> FileResponse:
-    if not token or not all(char.isalnum() or char in "-_" for char in token):
+    if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", token) is None:
         raise HTTPException(status_code=404, detail="分享不存在")
     path = project_root() / "shares" / f"{token}.json"
     if not path.is_file():
         raise HTTPException(status_code=404, detail="分享不存在")
-    body = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        body = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        raise HTTPException(status_code=404, detail="分享不存在") from None
     expires_at = body.get("expires_at")
     if not isinstance(expires_at, int | float) or time.time() >= float(expires_at):
         raise HTTPException(status_code=410, detail="分享已过期")
-    return _file(str(body["project_id"]), str(body["version_id"]))
+    project_id = str(body.get("project_id") or "")
+    if not valid_project_id(project_id):
+        raise HTTPException(status_code=404, detail="分享不存在")
+    snapshot = read_snapshot(project_id)
+    stored = (_read(project_id).get("shares") or {}).get(token) or {}
+    if (
+        not snapshot
+        or stored.get("version_id") != body.get("version_id")
+        or stored.get("expires_at") != body.get("expires_at")
+        or stored.get("enterprise_id") != body.get("enterprise_id")
+        or stored.get("media_hash") != body.get("media_hash")
+        or body.get("enterprise_id") != snapshot.get("enterprise_id")
+        or not body.get("media_hash")
+    ):
+        raise HTTPException(status_code=410, detail="分享已更新，请负责人重新创建链接")
+    return _file(
+        project_id,
+        str(body["version_id"]),
+        snapshot=snapshot,
+        expected_hash=str(body["media_hash"]),
+    )
 
 
 def _share_ttl() -> float:
@@ -296,7 +349,12 @@ def _payload(project_id: str, snapshot: dict[str, Any], body: DeliverBody) -> di
 
 
 def _master_in_project(project_id: str, snapshot: dict[str, Any], saved: dict[str, Any]) -> str:
-    raw = snapshot.get("master_plate") or snapshot.get("deliverable") or saved.get("deliverable")
+    raw = (
+        snapshot.get("preview_path")
+        or snapshot.get("deliverable")
+        or saved.get("deliverable")
+        or snapshot.get("master_plate")
+    )
     if not isinstance(raw, str) or not raw.strip():
         raise HTTPException(status_code=409, detail="成片母版或脚本还没准备好")
     root = project_path(project_id).resolve()
@@ -319,6 +377,7 @@ def _public(project_id: str, version: dict[str, Any]) -> dict[str, Any]:
         "subject_box_source": version.get("subject_box_source") or "default",
         "qa_status": version.get("qa_status") or "needs_review",
         "download_path": f"/v1/projects/{project_id}/versions/{version_id}/download",
+        "preview_path": f"/v1/projects/{project_id}/versions/{version_id}/preview",
         "share_path": None,
     }
 
@@ -397,16 +456,78 @@ def _find(project_id: str, version_id: str) -> dict[str, Any]:
     for item in _read(project_id).get("versions") or []:
         if item.get("version_id") == version_id:
             return item
+    if re.fullmatch(r"[a-f0-9]{32}", version_id):
+        try:
+            for item in revision_versions(project_id).get("versions") or []:
+                if item.get("version_id") == version_id:
+                    return item
+        except VersionError:
+            pass
     raise HTTPException(status_code=404, detail="版本不存在")
 
 
-def _file(project_id: str, version_id: str) -> FileResponse:
+def _version_source(
+    project_id: str, version_id: str
+) -> tuple[Path, dict[str, Any] | None, dict[str, bool]]:
     record = _read(project_id)
     raw = (record.get("files") or {}).get(version_id)
-    if not isinstance(raw, str):
-        raise HTTPException(status_code=404, detail="版本不存在")
-    path = Path(raw).resolve()
-    root = project_path(project_id).resolve()
-    if not path.is_file() or not path.is_relative_to(root):
+    state = None
+    flags = {}
+    if not isinstance(raw, str) and re.fullmatch(r"[a-f0-9]{32}", version_id):
+        _find(project_id, version_id)
+        raw = str(project_path(project_id) / "versions" / version_id / "master.mp4")
+        state = state_from_directory(Path(raw).parent)
+        try:
+            manifest = json.loads((Path(raw).parent / "manifest.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise HTTPException(status_code=404, detail="版本记录不可读取") from None
+        if not isinstance(manifest, dict):
+            raise HTTPException(status_code=404, detail="版本记录不可读取")
+        flags = {
+            "concept_degraded": manifest.get("concept_degraded") is True,
+            "revision_incomplete": manifest.get("revision_incomplete") is True,
+        }
+    located = contained_file(project_id, raw)
+    if not located:
         raise HTTPException(status_code=404, detail="成片文件不存在")
-    return FileResponse(path, media_type="video/mp4", filename=f"{version_id}.mp4")
+    return Path(located), state, flags
+
+
+def _version_public(
+    project_id: str, item: dict[str, Any], snapshot: dict[str, Any]
+) -> dict[str, Any]:
+    public = {
+        key: value
+        for key, value in item.items()
+        if key not in {"path", "media_path", "picture_path"}
+    }
+    version_id = str(item["version_id"])
+    try:
+        path, state, flags = _version_source(project_id, version_id)
+        view = readiness({**snapshot, **flags}, state, path)
+    except HTTPException:
+        view = readiness(snapshot, {}, media=project_path(project_id) / ".missing-version")
+    public.update(public_readiness(view))
+    public["preview_path"] = f"/v1/projects/{project_id}/versions/{version_id}/preview"
+    public["download_path"] = f"/v1/projects/{project_id}/versions/{version_id}/download"
+    return public
+
+
+def _file(
+    project_id: str,
+    version_id: str,
+    *,
+    snapshot: dict[str, Any],
+    preview: bool = False,
+    expected_hash: str | None = None,
+) -> FileResponse:
+    path, state, flags = _version_source(project_id, version_id)
+    return media_response(
+        snapshot,
+        media=path,
+        state=state,
+        preview=preview,
+        filename=f"{version_id}.mp4",
+        expected_hash=expected_hash,
+        version_flags=flags,
+    )
