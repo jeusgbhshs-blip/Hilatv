@@ -155,6 +155,9 @@ def init_project(project_id: str, **fields: Any) -> dict[str, Any]:
         "error": None,
         "shots": [],
         "events": [],
+        "delivery_status": "unavailable",
+        "media_provenance": "unknown",
+        "quality_pass": False,
     }
     snapshot.update(fields)
     with _lock(project_id) as directory:
@@ -283,12 +286,18 @@ def record_human_release(
         kept = contained_file(project_id, snapshot.get("held_deliverable"))
         if kept:
             snapshot["deliverable"] = kept
+            snapshot["preview_path"] = kept
             snapshot.pop("held_deliverable", None)
             snapshot["status"] = "completed"
             snapshot["paused"] = False
             snapshot["phase"] = "成片"
-            snapshot["message"] = "人工复核已放行"
+            snapshot["message"] = "已允许继续生成，正式交付仍需核验"
             snapshot["error"] = None
+        from workers.workflow.readiness import readiness
+
+        assessed = readiness(snapshot, media=kept) if kept else readiness(snapshot)
+        snapshot["review_required_hash"] = assessed.get("media_hash")
+        snapshot.update(readiness(snapshot, media=kept) if kept else readiness(snapshot))
         events = list(snapshot.get("events") or [])
         events.append(summary)
         snapshot["events"] = events[-200:]

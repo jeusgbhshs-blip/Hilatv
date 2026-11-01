@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -161,7 +162,7 @@ def revise_project(
         _write_patches(directory, outcome["patches"])
         manifest = commit_locked(
             directory,
-            {**snapshot, "deliverable": deliverable},
+            {**snapshot, "deliverable": deliverable, "revision_incomplete": bool(kept)},
             instruction=text,
             quality_pass=passes,
             concept_degraded=view.degraded or view.ok is False,
@@ -177,7 +178,13 @@ def revise_project(
                 "status": "completed",
                 "message": message,
                 "current_version_id": manifest["version_id"],
-                "quality_pass": passes,
+                "quality_pass": manifest["quality_pass"],
+                "delivery_status": manifest["delivery"]["delivery_status"],
+                "media_provenance": manifest["delivery"]["media_provenance"],
+                "media_hash": manifest["media_hash"],
+                "preview_available": manifest["delivery"]["preview_available"],
+                "reasons": manifest["delivery"]["reasons"],
+                "revision_incomplete": bool(kept),
                 "deliverable": deliverable,
                 "revision_notice": notice,
                 "concept_degraded": view.degraded or view.ok is False,
@@ -201,7 +208,7 @@ def revise_project(
             shot_id=shot_id,
             attempt=1,
             version_id=manifest["version_id"],
-            quality_pass=passes,
+            quality_pass=manifest["quality_pass"],
         )
         return {
             "project_id": project_id,
@@ -209,7 +216,8 @@ def revise_project(
             "directive": parsed.payload["directive"],
             "nodes": outcome["executed"],
             "video_shots": outcome["video_shots"],
-            "quality_pass": passes,
+            "quality_pass": manifest["quality_pass"],
+            "delivery_status": manifest["delivery"]["delivery_status"],
             "concept_degraded": view.degraded or view.ok is False,
             "concept_ok": False if view.degraded or view.ok is False else view.ok,
             "concept_text_source": view.text_source,
@@ -666,7 +674,7 @@ def _compose(
                 "outro_s": outro_s,
                 "width": width,
                 "height": height,
-                "work_dir": str(_work(directory, "n15")),
+                "work_dir": str(_work(directory, "n15") / "renders" / uuid.uuid4().hex),
             },
         },
         timeout_s=180,

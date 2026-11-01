@@ -7,6 +7,7 @@ or a failed quality check) up to three times.
 from __future__ import annotations
 
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -654,7 +655,9 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
                 "brand_kit": state.get("brand_kit"),
                 "intro_s": float(state.get("intro_s") or 0),
                 "outro_s": float(state.get("outro_s") or 0),
-                "work_dir": _work(payload, "n15"),
+                # Each attempt is immutable: a failed preview cannot overwrite
+                # the previous film while its new evidence is still missing.
+                "work_dir": str(Path(_work(payload, "n15")) / "renders" / uuid.uuid4().hex),
                 "logo_status": state.get("logo_status") or "unknown",
                 "shot_clips": state.get("shot_clips") or [],
                 **timeline_fields(state),
@@ -668,23 +671,45 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
     snapshot = read_snapshot(project_id) or {}
     started = float(snapshot.get("started_at") or time.time())
     elapsed = round(time.time() - started, 3)
+    patch = {
+        "deliverable": deliverable,
+        "exports": exports,
+        "timeline_path": result.payload.get("timeline_path"),
+        "elapsed_s": elapsed,
+        "timeline": result.payload.get("timeline"),
+        "audio_provenance": result.payload.get("audio_provenance", "unknown"),
+        "logo_status": result.payload.get("logo_status", "unknown"),
+        "preview_path": deliverable,
+        "revision_incomplete": False,
+    }
+    from workers.workflow.readiness import invalidate_media_cache, readiness, record_render_context
+
+    invalidate_media_cache()
+    record_render_context(project_id, deliverable, {**state, **patch})
+    assessed = readiness(
+        {**snapshot, "deliverable": deliverable, "revision_incomplete": False},
+        {**state, **patch},
+        deliverable,
+    )
+    patch.update(assessed)
+    previous = snapshot.get("deliverable")
+    if previous and previous != deliverable:
+        update_snapshot(project_id, previous_deliverable=previous)
+    if assessed["quality_pass"]:
+        update_snapshot(project_id, last_ready_deliverable=deliverable)
+    finished = _finish(project_id, "n15_compose", patch, attempt)
+    update_snapshot(project_id, **assessed, preview_path=deliverable, revision_incomplete=False)
     _emit(
         project_id,
         "n15_compose",
-        message="成片已就绪",
+        message=("成片已通过核验" if assessed["quality_pass"] else "预览已生成，等待交付核验"),
         attempt=attempt,
         status="completed",
         phase="成片",
         deliverable=deliverable,
         elapsed_s=elapsed,
     )
-    patch = {
-        "deliverable": deliverable,
-        "exports": exports,
-        "timeline_path": result.payload.get("timeline_path"),
-        "elapsed_s": elapsed,
-    }
-    return _finish(project_id, "n15_compose", patch, attempt)
+    return finished
 
 
 ACTIVITIES = [

@@ -16,7 +16,13 @@ from workers.workflow.runtime import (
     task_queue,
     temporal_mode,
 )
-from workers.workflow.store import init_project, project_path, read_snapshot, update_snapshot
+from workers.workflow.store import (
+    contained_file,
+    init_project,
+    project_path,
+    read_snapshot,
+    update_snapshot,
+)
 
 
 def _storyboard_wait(value: int | None) -> int:
@@ -141,11 +147,19 @@ def prepare(
         if snapshot is None or snapshot.get("workflow_id") != workflow_id:
             raise ValueError("project submission is not claimed")
     elif start_from:
+        previous = read_snapshot(project_id) or {}
+        kept = contained_file(
+            project_id, previous.get("deliverable") or previous.get("preview_path")
+        )
         update_snapshot(
             project_id,
             status="running",
             error=None,
             deliverable=None,
+            previous_deliverable=kept,
+            preview_path=kept,
+            quality_pass=False,
+            delivery_status="needs_verification" if kept else "unavailable",
             elapsed_s=None,
             finished_at=None,
             message=f"正在从 {start_from} 继续",

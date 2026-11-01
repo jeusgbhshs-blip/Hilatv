@@ -17,8 +17,14 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from workers.nodes.n18_revision.concept_gate import delivery_passes
 from workers.workflow.contract import PIPELINE
+from workers.workflow.readiness import (
+    draft_context,
+    evidence_for,
+    invalidate_media_cache,
+    readiness,
+    state_from_directory,
+)
 from workers.workflow.store import locked_project, valid_project_id
 
 _VERSION = re.compile(r"^[a-f0-9]{32}$")
@@ -67,8 +73,12 @@ def restore_version(project_id: str, version_id: str) -> dict[str, Any]:
         if (staged / "master.mp4").is_file():
             snapshot["deliverable"] = str(playback)
         snapshot["current_version_id"] = version_id
-        concept = {"degraded": True, "ok": False} if manifest.get("concept_degraded") else None
-        snapshot["quality_pass"] = delivery_passes(list(manifest.get("shots") or []), concept)
+        snapshot["concept_degraded"] = manifest.get("concept_degraded") is True
+        snapshot["revision_incomplete"] = manifest.get("revision_incomplete") is True
+        assessed = readiness(snapshot, state_from_directory(staged), staged / "master.mp4")
+        snapshot.update(assessed)
+        snapshot["preview_path"] = str(playback) if (staged / "master.mp4").is_file() else None
+        snapshot["media_path"] = snapshot["preview_path"]
         # The regenerate count is not part of a version. Leave its file alone.
         snapshot.pop("regen_used", None)
         snapshot["status"] = "completed"
@@ -76,6 +86,7 @@ def restore_version(project_id: str, version_id: str) -> dict[str, Any]:
         index = _index(directory)
         index["current"] = version_id
         _swap_restore(directory, staged, snapshot, index)
+        invalidate_media_cache()
         return _public(directory)
 
 
@@ -126,6 +137,8 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
     folder.mkdir(parents=True, exist_ok=True)
     _copy_tree(directory / "nodes", folder / "nodes")
     _copy_tree(directory / "media", folder / "media")
+    _write_json(folder / "canvas.json", _json_document(directory / "canvas.json"))
+    _write_json(folder / "draft-context.json", draft_context(directory.name))
     master_name = ""
     deliverable = snapshot.get("deliverable")
     if isinstance(deliverable, str) and deliverable:
@@ -137,13 +150,9 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
         if source.is_file():
             _copy_bytes(source, folder / "master.mp4")
             master_name = "master.mp4"
-    reviews = list(fields.get("shot_reviews") or [])
-    concept = (
-        {"degraded": True, "ok": False, "text_source": "template_fallback"}
-        if fields.get("concept_degraded")
-        else None
-    )
-    quality_pass = bool(fields.get("quality_pass")) and delivery_passes(reviews, concept)
+    reviewed_snapshot = {**snapshot, "concept_degraded": fields.get("concept_degraded") is True}
+    assessed = readiness(reviewed_snapshot, state_from_directory(directory), folder / "master.mp4")
+    quality_pass = assessed["quality_pass"]
     manifest = {
         "version_id": version_id,
         "index": number,
@@ -156,7 +165,15 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
         "decisions": list(fields.get("decisions") or []),
         "shots": list(fields.get("shot_reviews") or []),
         "master": master_name,
+        "revision_incomplete": snapshot.get("revision_incomplete") is True,
+        "delivery": assessed,
+        "media_hash": assessed["media_hash"],
     }
+    evidence = evidence_for(
+        str(snapshot.get("project_id") or directory.name), assessed["media_hash"]
+    )
+    if evidence:
+        _write_json(folder / "delivery-evidence.json", evidence)
     _write_json(folder / "manifest.json", manifest)
     index["items"].append(
         {
@@ -165,9 +182,12 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
             "instruction": manifest["instruction"],
             "created_at": manifest["created_at"],
             "quality_pass": manifest["quality_pass"],
+            "delivery_status": assessed["delivery_status"],
         }
     )
     index["current"] = version_id
+    if quality_pass:
+        index["last_ready"] = version_id
     _write_json(directory / "versions" / "index.json", index)
     _fsync_dir(directory / "versions")
     return manifest
@@ -200,6 +220,16 @@ def _stage_restore(directory: Path, version_id: str, manifest: dict[str, Any]) -
     master = folder / "master.mp4"
     if master.is_file():
         _copy_bytes(master, staging / "master.mp4")
+        expected_hash = manifest.get("media_hash")
+        if (
+            expected_hash
+            and hashlib.sha256((staging / "master.mp4").read_bytes()).hexdigest() != expected_hash
+        ):
+            raise VersionError("版本文件与保存时的校验值不一致")
+    for name in ("canvas.json", "draft-context.json"):
+        source = folder / name
+        if source.is_file():
+            _copy_bytes(source, staging / name)
     return staging
 
 
@@ -231,6 +261,9 @@ def _swap_restore(
             os.replace(live, previous / name)
         os.replace(staged, live)
     _swap_file(staging / "master.mp4", _playback(directory), previous / "master.mp4", previous)
+    _swap_file(
+        staging / "canvas.json", directory / "canvas.json", previous / "canvas.json", previous
+    )
     atomic_write(
         staging / "project.json",
         json.dumps(snapshot, ensure_ascii=False, indent=2).encode("utf-8") + b"\n",
@@ -280,6 +313,7 @@ def _recover_restore(directory: Path) -> None:
                 shutil.rmtree(live)
             os.replace(backup, live)
     _restore_file(previous / "master.mp4", _playback(directory), previous)
+    _restore_file(previous / "canvas.json", directory / "canvas.json", previous)
     _restore_file(previous / "project.json", directory / "project.json", previous)
     _restore_file(previous / "index.json", directory / "versions" / "index.json", previous)
     marker.unlink(missing_ok=True)
@@ -304,18 +338,48 @@ def _public(directory: Path) -> dict[str, Any]:
     index = _index(directory)
     current = index.get("current")
     versions = []
+    snapshot = _snapshot(directory, directory.name)
     for item in index["items"]:
+        folder = _version_dir(directory, item["version_id"])
+        manifest = _json_document(folder / "manifest.json")
+        assessed = readiness(
+            {
+                **snapshot,
+                "concept_degraded": manifest.get("concept_degraded") is True,
+                "revision_incomplete": manifest.get("revision_incomplete") is True,
+            },
+            state_from_directory(folder),
+            folder / "master.mp4",
+        )
         versions.append(
             {
                 "version_id": item["version_id"],
                 "index": item["index"],
                 "instruction": item.get("instruction") or "",
                 "created_at": item.get("created_at"),
-                "quality_pass": bool(item.get("quality_pass")),
+                "quality_pass": assessed["quality_pass"],
+                "delivery_status": assessed["delivery_status"],
+                "media_provenance": assessed["media_provenance"],
+                "media_hash": assessed["media_hash"],
+                "preview_available": assessed["preview_available"],
+                "reasons": assessed["reasons"],
                 "current": item["version_id"] == current,
             }
         )
-    return {"versions": versions, "current_version_id": current}
+    ready = [item["version_id"] for item in versions if item["quality_pass"]]
+    return {
+        "versions": versions,
+        "current_version_id": current,
+        "last_ready_version_id": ready[-1] if ready else None,
+    }
+
+
+def _json_document(path: Path) -> dict[str, Any]:
+    try:
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
 
 
 def _manifest(directory: Path, version_id: str) -> dict[str, Any]:
