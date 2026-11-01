@@ -178,7 +178,6 @@ def prepared(tmp_path, monkeypatch, film_bytes):
         )
     ledger.conn.commit()
     monkeypatch.setattr(gates, "_source_store", lambda: ledger)
-    save_node("ready-film", "n15_compose", state)
     digest = hashlib.sha256(film_bytes).hexdigest()
     review = {
         "media_hash": digest,
@@ -214,6 +213,9 @@ def prepared(tmp_path, monkeypatch, film_bytes):
         "film_judge": {"usable": True},
         "shots": [{"shot_id": "S01", "visual_reviewed": True, "total": 8.0, "hard_fail": []}],
     }
+    for candidate in state["videos"]:
+        candidate["qa"] = copy.deepcopy(review["qa"])
+    save_node("ready-film", "n15_compose", state)
     proofs = {
         "media_provenance": "live",
         "source_evidence": {
