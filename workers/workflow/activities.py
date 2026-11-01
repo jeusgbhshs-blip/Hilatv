@@ -576,6 +576,7 @@ def n14_packaging(payload: dict[str, Any]) -> dict[str, Any]:
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
                 "work_dir": _work(payload, "n14"),
+                "enterprise_id": _request(payload).get("enterprise_id"),
             },
             "attempt": attempt,
         },
@@ -585,6 +586,7 @@ def n14_packaging(payload: dict[str, Any]) -> dict[str, Any]:
         "elements": result.payload["elements"],
         "intro_s": result.payload.get("intro_s") or 0,
         "outro_s": result.payload.get("outro_s") or 0,
+        "logo_status": result.payload.get("logo_status") or "unknown",
     }
     return _finish(project_id, "n14_packaging", patch, attempt)
 
@@ -653,6 +655,7 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
                 "intro_s": float(state.get("intro_s") or 0),
                 "outro_s": float(state.get("outro_s") or 0),
                 "work_dir": _work(payload, "n15"),
+                "logo_status": state.get("logo_status") or "unknown",
                 "shot_clips": state.get("shot_clips") or [],
                 **timeline_fields(state),
             },

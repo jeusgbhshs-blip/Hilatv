@@ -125,6 +125,10 @@ def render_timeline(timeline: Timeline, dest: Path, *, variant: str = "master") 
 
 def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> NodeResult:
     payload = N15Input.model_validate(request.payload)
+    if payload.logo_status == "unknown":
+        for element in payload.elements:
+            if element.kind == "outro_cta" and element.logo_status != "unknown":
+                payload.logo_status = element.logo_status
     log_event(
         "node_started",
         project_id=request.project_id,
@@ -187,6 +191,8 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> Node
             "fps": FPS,
             "placeholder_shots": [clip.clip_id for clip in timeline.clips if clip.placeholder],
             "audio_provenance": timeline.audio_provenance,
+            "logo_status": timeline.logo_status,
+            "preview_only": timeline.logo_status != "ready",
             **_license_payload(payload),
         },
     )
@@ -287,6 +293,7 @@ def _timeline(
         overlays=overlays,
         work_dir=str(work),
         audio_provenance=combine_provenance([clip.provenance for clip in audio]),
+        logo_status=payload.logo_status,
     )
 
 

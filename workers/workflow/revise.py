@@ -326,6 +326,7 @@ def _execute(
             width,
             height,
             brand_logo=change.get("logo") != "remove",
+            enterprise_id=enterprise_id,
         )
         executed.append("n14_packaging")
         ran_picture = True
@@ -596,7 +597,18 @@ def _subtitles(directory, project_id, script, voiceovers, brand, brief, width, h
     return result.payload.get("cues") or []
 
 
-def _package(directory, project_id, script, brand, brief, width, height, *, brand_logo: bool):
+def _package(
+    directory,
+    project_id,
+    script,
+    brand,
+    brief,
+    width,
+    height,
+    *,
+    brand_logo: bool,
+    enterprise_id: str | None = None,
+):
     from workers.nodes.n14_packaging.node import run
 
     result = run(
@@ -610,6 +622,7 @@ def _package(directory, project_id, script, brand, brief, width, height, *, bran
                 "height": height,
                 "work_dir": str(_work(directory, "n14")),
                 "brand_logo": brand_logo,
+                "enterprise_id": enterprise_id,
                 "intro": None if brand_logo else "none",
             },
         },

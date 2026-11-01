@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from workers.media.audio import AudioProvenance
 from workers.nodes.n06_voiceover.schema import ShotVoiceover
 from workers.nodes.n13_subtitle.schema import SubtitleCue
-from workers.nodes.n14_packaging.schema import PackageElement
+from workers.nodes.n14_packaging.schema import LogoStatus, PackageElement
 from workers.schemas.asset import Candidate
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
@@ -91,6 +91,7 @@ class N15Input(BaseModel):
     audio_track: AudioTrack | None = None
     licenses: list[TrackLicense] = Field(default_factory=list)
     shot_clips: list[ShotClip] = Field(default_factory=list)
+    logo_status: LogoStatus = "unknown"
 
 
 class VideoClip(BaseModel):
@@ -139,3 +140,4 @@ class Timeline(BaseModel):
     work_dir: str
     produce_ids: dict[str, str] = Field(default_factory=dict)
     audio_provenance: AudioProvenance = "unknown"
+    logo_status: LogoStatus = "unknown"

@@ -41,8 +41,12 @@ def check(result: NodeResult) -> list[PackageElement]:
     logos = [item for item in elements if item.kind == "outro_logo"]
     ctas = [item for item in elements if item.kind == "outro_cta"]
     show_logo = result.payload.get("brand_logo", True) is not False
-    if len(logos) != 1 or len(ctas) != 1:
+    logo_status = str(result.payload.get("logo_status") or "unknown")
+    expects_logo = logo_status not in {"missing", "mock"}
+    if len(logos) != int(expects_logo) or len(ctas) != 1:
         raise QAError("the ending needs one logo and one CTA")
+    if not expects_logo and any("logo" in item.kind for item in elements):
+        raise QAError("a missing or simulated brand must not draw a replacement logo")
     if not show_logo and any(item.kind in {"intro_logo", "corner_logo"} for item in elements):
         raise QAError("corner and opening logos were supposed to be omitted")
     phone = str(result.payload.get("phone") or "")
@@ -57,7 +61,7 @@ def check(result: NodeResult) -> list[PackageElement]:
     expected = [card.text for shot in script.shots for card in shot.on_screen_text]
     if badges != expected:
         raise QAError("badges must be the on-screen cards, in order")
-    if not any(item.kind is AssetKind.logo for item in assets):
+    if expects_logo and not any(item.kind is AssetKind.logo for item in assets):
         raise QAError("logo asset is missing")
     for item in elements:
         if item.end_s + 1e-3 < item.start_s:

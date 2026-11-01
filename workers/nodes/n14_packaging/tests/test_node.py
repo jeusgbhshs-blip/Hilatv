@@ -5,9 +5,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
-from workers.media.raster import render_logo, render_overlay, same_pixels
+from workers.media.raster import render_overlay, same_pixels
 from workers.nodes.n14_packaging.node import run
 from workers.nodes.n14_packaging.qa import QAError, check
 from workers.nodes.n14_packaging.schema import PackageElement
@@ -80,9 +80,16 @@ def _brand() -> dict:
 
 
 def _run(tmp_path: Path, **payload):
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    logo = Image.new("RGBA", (100, 50))
+    ImageDraw.Draw(logo).rectangle((25, 12, 74, 37), fill=(235, 31, 89, 255))
+    source = tmp_path / "source-logo.png"
+    logo.save(source)
+    brand = _brand()
+    brand["logo"]["primary"] = str(source)
     body = {
         "script": _script(4.0, [{"text": "¥12800", "style": "spec_badge", "in": 0.2, "out": 2.0}]),
-        "brand_kit": _brand(),
+        "brand_kit": brand,
         "brief": _brief(30, ["YouTube"]),
         "width": 640,
         "height": 360,
@@ -128,9 +135,8 @@ def test_badge_pixels_match_the_source_text(tmp_path: Path) -> None:
     redraw = render_overlay(**badge.spec)
     assert same_pixels(Image.open(badge.png_path), redraw)
     logo = next(item for item in result.payload["elements"] if item["kind"] == "outro_logo")
-    spec = logo["spec"]
-    redraw = render_logo(spec["size"], spec["primary"], spec["secondary"])
-    assert same_pixels(Image.open(logo["png_path"]), redraw)
+    source = Image.open(tmp_path / "source-logo.png")
+    assert same_pixels(Image.open(logo["png_path"]), source)
 
 
 def test_instruction_cannot_remove_the_ai_label(tmp_path: Path) -> None:

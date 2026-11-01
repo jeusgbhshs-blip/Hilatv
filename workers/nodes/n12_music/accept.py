@@ -9,9 +9,12 @@ Master loudness is ffmpeg ebur128 on the N15 mp4.
 from __future__ import annotations
 
 import copy
+import json
 import os
 from pathlib import Path
 from typing import Any
+
+from PIL import Image, ImageDraw
 
 from gateway.media_bytes import speech_timestamps
 from workers.nodes.n12_music.measure import ducking_db_on_mix, integrated_lufs
@@ -308,6 +311,7 @@ def _packaging(
             "payload": {
                 "script": script,
                 "brief": brief,
+                "brand_kit": _fixture_brand(root),
                 "width": 320,
                 "height": 180,
                 "work_dir": str(root / "n14"),
@@ -321,6 +325,22 @@ def _packaging(
         float(result.payload.get("intro_s") or 0),
         float(result.payload.get("outro_s") or 0),
     )
+
+
+def _fixture_brand(root: Path) -> dict[str, Any]:
+    """An independently drawn local Logo, never an invented cloud URI."""
+
+    fixture_path = Path(__file__).resolve().parents[2] / "schemas/tests/fixtures/brand_kit.json"
+    brand = json.loads(fixture_path.read_text(encoding="utf-8"))
+    root.mkdir(parents=True, exist_ok=True)
+    image = Image.new("RGBA", (100, 50))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((25, 12, 49, 37), fill=(235, 31, 89, 255))
+    draw.rectangle((50, 22, 74, 37), fill=(17, 201, 216, 255))
+    source = root / "source-logo.png"
+    image.save(source)
+    brand["logo"]["primary"] = str(source.resolve())
+    return brand
 
 
 def _compose_mp4(

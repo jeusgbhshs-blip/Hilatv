@@ -17,7 +17,7 @@ import pytest
 from gateway.media_bytes import prosody_timing, render_beat_pcm
 from workers.media.audio import AudioError, audio_bytes, decode_audio, wav_bytes
 from workers.nodes.n06_voiceover.node import run as voice_run
-from workers.nodes.n12_music.accept import fixture
+from workers.nodes.n12_music.accept import _fixture_brand, fixture
 from workers.nodes.n12_music.measure import read_wav
 from workers.nodes.n12_music.node import run as music_run
 from workers.nodes.n12_music.qa import QAError
@@ -193,6 +193,7 @@ def test_actual_mix_survives_encoded_n15_master_and_subtitle_mapping(tmp_path: P
             "project_id": "real-audio",
             "payload": {
                 "script": voice["script"],
+                "brand_kit": _fixture_brand(tmp_path / "brand"),
                 "intro": "fade",
                 "width": 320,
                 "height": 180,

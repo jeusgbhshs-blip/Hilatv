@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
 from workers.schemas.script import Script
+
+LogoStatus = Literal["ready", "mock", "missing", "unknown"]
 
 
 class NodeRequest(BaseModel):
@@ -29,6 +31,7 @@ class NodeResult(BaseModel):
 class N14Input(BaseModel):
     script: Script
     brand_kit: BrandKit | None = None
+    enterprise_id: str | None = None
     brief: Brief | None = None
     intro: str | None = None
     corner_logo: bool | None = None
@@ -53,3 +56,4 @@ class PackageElement(BaseModel):
     anchor: str = "topleft"
     png_path: str = ""
     spec: dict[str, Any] = Field(default_factory=dict)
+    logo_status: LogoStatus = "unknown"

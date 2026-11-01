@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from gateway.media_bytes import speech_timestamps
 from workers.media.ffmpeg import composite_overlay_png, probe
-from workers.media.raster import render_logo, render_overlay, same_pixels
+from workers.media.raster import render_overlay, same_pixels
 from workers.nodes.n13_subtitle.node import run as run_subs
 from workers.nodes.n13_subtitle.schema import SubtitleCue
 from workers.nodes.n14_packaging.node import run as run_pack
@@ -47,11 +48,17 @@ def run_acceptance(work: Path) -> list[str]:
 
 
 def _case(work: Path) -> None:
+    os.environ["HILATV_PROJECT_DIR"] = str(work.resolve())
+    logo = Image.new("RGBA", (100, 50))
+    ImageDraw.Draw(logo).rectangle((25, 12, 74, 37), fill=(235, 31, 89, 255))
+    logo_path = work / "source-logo.png"
+    logo.save(logo_path)
     language = "zh"
     voice = "这台高压柱塞泵以三十兆帕稳定运行，适合连续作业的工厂产线。"
     audio_s = speech_timestamps(voice, language=language)[1]
     duration = max(2.0, round(audio_s + 0.2, 3))
     raw = _storyboard(voice, language, duration)
+    raw["brand_kit"]["logo"]["primary"] = str(logo_path.resolve())
     subs = run_subs({"project_id": "accept-t09", "payload": {**raw, "work_dir": str(work / "n13")}})
     cues = [SubtitleCue.model_validate(item) for item in subs.payload["cues"]]
     if not cues:
@@ -139,10 +146,9 @@ def _pixels(badge: PackageElement, cta: PackageElement, elements: list[PackageEl
     if not same_pixels(Image.open(cta.png_path), render_overlay(**cta.spec)):
         raise AssertionError("phone CTA pixels differ from the reference render")
     logo = next(item for item in elements if item.kind == "outro_logo")
-    spec = logo.spec
-    redraw = render_logo(spec["size"], spec["primary"], spec["secondary"])
-    if not same_pixels(Image.open(logo.png_path), redraw):
-        raise AssertionError("logo pixels differ from the reference render")
+    source = Path(logo.spec["source_uri"])
+    if not same_pixels(Image.open(logo.png_path), Image.open(source)):
+        raise AssertionError("logo pixels differ from the independent uploaded source")
 
 
 def _overlay_proof(work: Path, badge: PackageElement) -> None:

@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import math
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
 from workers.media.fonts import resolve_font
 
@@ -80,19 +81,51 @@ def render_overlay(
     return image
 
 
-def render_logo(size: int, primary: str, secondary: str) -> Image.Image:
-    """A wordless mark. Names and numbers are drawn by the text overlays."""
+def render_logo(
+    source: bytes, *, max_width: int, max_height: int, safe_area_ratio: float = 0.2
+) -> Image.Image:
+    """Contain the supplied pixels, preserving color, alpha, and aspect ratio.
 
-    side = max(16, int(size))
-    image = Image.new("RGBA", (side, side), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle(
-        (0, 0, side - 1, side - 1),
-        radius=side // 6,
-        fill=(*hex_rgb(primary), 255),
+    Existing transparent padding is retained. More padding is added only when
+    needed to meet the declared safe margin; a small source is never upscaled.
+    """
+
+    if not source or len(source) > 8 * 1024 * 1024:
+        raise ValueError("logo source is empty or exceeds 8 MiB")
+    if max_width < 1 or max_height < 1 or not 0 < safe_area_ratio < 0.5:
+        raise ValueError("logo bounds or safe margin are invalid")
+    try:
+        with Image.open(io.BytesIO(source)) as opened:
+            if opened.format not in {"PNG", "JPEG", "WEBP"} or getattr(opened, "n_frames", 1) != 1:
+                raise ValueError("logo must be a still PNG, JPEG, or WebP")
+            if opened.width * opened.height > 4_000_000 or max(opened.size) > 4096:
+                raise ValueError("logo image dimensions are too large")
+            opened.load()
+            image = opened.convert("RGBA")
+    except (UnidentifiedImageError, OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("logo source could not be decoded") from exc
+    bounds = image.getchannel("A").getbbox()
+    if bounds is None:
+        raise ValueError("logo source is fully transparent")
+    left, top, right, bottom = bounds
+    ratio = safe_area_ratio
+    pad_x = max(
+        0, math.ceil((ratio * image.width - min(left, image.width - right)) / (1 - 2 * ratio))
     )
-    margin = side // 4
-    draw.ellipse((margin, margin, side - margin, side - margin), fill=(*hex_rgb(secondary), 255))
+    pad_y = max(
+        0, math.ceil((ratio * image.height - min(top, image.height - bottom)) / (1 - 2 * ratio))
+    )
+    canvas_width, canvas_height = image.width + 2 * pad_x, image.height + 2 * pad_y
+    scale = min(1.0, max_width / canvas_width, max_height / canvas_height)
+    if scale < 1:
+        size = (max(1, int(image.width * scale)), max(1, int(image.height * scale)))
+        image = image.resize(size, Image.Resampling.LANCZOS)
+    if pad_x or pad_y:
+        canvas = Image.new(
+            "RGBA", (max(1, int(canvas_width * scale)), max(1, int(canvas_height * scale)))
+        )
+        canvas.paste(image, (int(pad_x * scale), int(pad_y * scale)))
+        image = canvas
     return image
 
 

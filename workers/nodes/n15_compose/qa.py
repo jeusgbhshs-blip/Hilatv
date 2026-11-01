@@ -55,8 +55,11 @@ def check(result: NodeResult) -> Timeline:
     if burned:
         raise QAError("no-subtitle export still burns subtitles")
     kinds = {item.kind for item in timeline.overlays}
-    if "outro_logo" not in kinds or "outro_cta" not in kinds:
+    preview_without_logo = timeline.logo_status in {"missing", "mock"}
+    if (not preview_without_logo and "outro_logo" not in kinds) or "outro_cta" not in kinds:
         raise QAError("the ending overlay is missing a logo or a CTA")
+    if preview_without_logo and any("logo" in kind for kind in kinds):
+        raise QAError("missing/simulated branding cannot use a replacement logo")
     if not any(item.kind is AssetKind.deliverable for item in _assets(result)):
         raise QAError("deliverable asset is missing")
     _check_soundtrack(result, timeline)
