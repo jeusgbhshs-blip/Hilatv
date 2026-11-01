@@ -128,6 +128,9 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState("");
+  const [noticeTone, setNoticeTone] = useState<"neutral" | "danger">("neutral");
+  const [loadError, setLoadError] = useState("");
+  const [loadAttempt, setLoadAttempt] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [choosingId, setChoosing] = useState<string | null>(null);
@@ -173,15 +176,9 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           return next;
         } catch (error) {
           const message = error instanceof CanvasRequestError ? error.message : "没有保存成功";
+          setNoticeTone("danger");
           setNotice(message);
-          if (error instanceof CanvasRequestError && error.status === 409 && clientRef.current) {
-            const fresh = await clientRef.current.load();
-            versionRef.current = fresh.layout_version;
-            docRef.current = fresh;
-            viewportRef.current = fresh.viewport;
-            setDoc(fresh);
-            syncFlow(fresh);
-          }
+          // Preserve local positions on conflict; do not adopt a different revision silently.
           throw error;
         }
       });
@@ -208,7 +205,6 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     };
     const key = JSON.stringify({ positions, viewport });
     if (key === lastPersist.current) return;
-    lastPersist.current = key;
     void enqueue(
       () =>
         client.saveLayout({
@@ -217,7 +213,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           viewport,
         }),
       "remember",
-    );
+    ).then(() => { lastPersist.current = key; }).catch(() => undefined);
   }, [enqueue]);
 
   const scheduleLayout = useCallback(() => {
@@ -226,7 +222,9 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   }, [persistLayout]);
 
   useEffect(() => {
-    const client = createCanvasClient(projectId);
+    const client = createCanvasClient(projectId, undefined, { demo: projectId === "demo-canvas" });
+    setLoadError("");
+    setReady(false);
     clientRef.current = client;
     let cancel = false;
     void client.load().then((snapshot) => {
@@ -248,13 +246,15 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         viewport: snapshot.viewport,
       });
       setReady(true);
+    }).catch((error: unknown) => {
+      if (!cancel) setLoadError(error instanceof Error ? error.message : "读取失败，请重试");
     });
     return () => {
       cancel = true;
       window.clearTimeout(timerRef.current);
       window.clearInterval(pollRef.current);
     };
-  }, [projectId]);
+  }, [projectId, loadAttempt]);
 
   useEffect(() => {
     setGroups(loadGroups());
@@ -311,7 +311,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
             target_handle: connection.targetHandle,
           }),
         "adopt",
-      ).then(() => setNotice(""));
+      ).then(() => setNotice("")).catch(() => undefined);
     },
     [enqueue],
   );
@@ -351,7 +351,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         let latest = docRef.current;
         for (const node of deleted) latest = await client.deleteNode(node.id);
         return latest ?? docRef.current!;
-      }, "adopt");
+      }, "adopt").catch(() => undefined);
     },
     [enqueue],
   );
@@ -364,7 +364,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         let latest = docRef.current;
         for (const edge of deleted) latest = await client.deleteEdge(edge.id);
         return latest ?? docRef.current!;
-      }, "adopt");
+      }, "adopt").catch(() => undefined);
     },
     [enqueue],
   );
@@ -417,6 +417,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         await client.startFilm(sentence);
         setAgentOpen(false);
         setFilmRunning(true);
+        setNoticeTone("neutral");
         setNotice("AI 开始出片，约 1–2 分钟");
         beginPolling(client);
       },
@@ -425,6 +426,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         if (!client) return;
         await client.releaseFilm();
         setFilmRunning(true);
+        setNoticeTone("neutral");
         setNotice("已放行，正在合成成片");
         beginPolling(client);
       },
@@ -467,6 +469,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         };
         setGroups(addGroup(group));
         setGroupName("");
+        setNoticeTone("neutral");
         setNotice(`已存入工具箱：${group.name}`);
       },
       applyGroup: (group: ToolboxGroup) => {
@@ -510,7 +513,8 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         }, "adopt")
           .then(() => {
             setToolboxOpen(false);
-            setNotice(`已套用组合：${group.name}`);
+            setNoticeTone("neutral");
+        setNotice(`已套用组合：${group.name}`);
           })
           .catch(() => undefined);
       },
@@ -641,7 +645,17 @@ export function CanvasStage({ projectId }: { projectId: string }) {
   if (!doc || !ready) {
     return (
       <div className="hilatv-canvas-workspace" data-theme="dark" data-stage="canvas" data-standalone="true">
-        <p className="p-6 text-small text-text-2">正在读取节点</p>
+        {loadError ? (
+          <div className="grid gap-4 p-6">
+            <h1 className="text-h2 font-medium">未能打开项目</h1>
+            <p role="alert" className="text-small text-danger">{loadError}</p>
+            <div className="flex gap-4">
+              <button type="button" className="hilatv-canvas-back" onClick={() => setLoadAttempt((n) => n + 1)}>重新读取</button>
+              <Link href="/projects" className="hilatv-canvas-back">返回项目</Link>
+              <Link href="/projects/demo-canvas/expert" className="hilatv-canvas-back">打开演示画布</Link>
+            </div>
+          </div>
+        ) : <p role="status" className="p-6 text-small text-text-2">正在读取节点</p>}
       </div>
     );
   }
@@ -660,6 +674,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           <span className="hilatv-canvas-brand-sep" aria-hidden="true" />
           <span className="max-w-sm truncate text-small text-text-2">{doc.sentence || "未命名项目"}</span>
         </Link>
+        {doc.origin === "mock" ? <p title="修改仅保存在此浏览器" className="shrink-0 whitespace-nowrap text-caption text-warning">本地演示<span className="sr-only"> · 修改仅保存在此浏览器</span></p> : null}
         {filmRunning ? <p className="hilatv-canvas-running">AI 正在出片…</p> : null}
         {doc.status === "needs_human_review" ? (
           <button type="button" className="hilatv-canvas-release" onClick={() => void actions.releaseFilm()}>
@@ -682,7 +697,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           {doc.layout_version}
         </p>
         {notice ? (
-          <p role="alert" data-testid="canvas-notice" className="hilatv-canvas-notice">
+          <p role={noticeTone === "danger" ? "alert" : "status"} data-tone={noticeTone} data-testid="canvas-notice" className="hilatv-canvas-notice px-3 py-2 text-caption">
             {notice}
           </p>
         ) : null}

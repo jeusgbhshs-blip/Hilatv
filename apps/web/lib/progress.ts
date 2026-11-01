@@ -51,6 +51,8 @@ export type ProjectSnapshot = {
   concept_ok?: boolean | null;
   concept_text_source?: string | null;
   quality_pass?: boolean;
+  delivery_status?: string;
+  media_provenance?: string;
   revision_notice?: string | null;
 };
 
@@ -156,7 +158,7 @@ export function latestMessage(events: ProgressEvent[], fallback: string): string
 }
 
 export function projectStatus(snapshotStatus: string | undefined, events: ProgressEvent[]): string {
-  if (snapshotStatus === "needs_human_review") return snapshotStatus;
+  if (snapshotStatus && ["draft", "paused", "needs_human_review", "failed", "completed"].includes(snapshotStatus)) return snapshotStatus;
   let status = snapshotStatus || "running";
   for (const event of events) {
     if (event.status) status = event.status;

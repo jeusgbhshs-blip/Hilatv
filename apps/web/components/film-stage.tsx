@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { conceptNotice } from "@/lib/concept";
 import { readShots, type ProjectSnapshot, type ShotSummary } from "@/lib/progress";
-import { PROJECT_COPY } from "@/lib/status-copy";
+import { filmConclusion, PROJECT_COPY } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 import {
   aspectLabel,
@@ -42,6 +42,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
   const [shots, setShots] = useState<ShotSummary[]>([]);
   const [missing, setMissing] = useState(false);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [src, setSrc] = useState<string | null>(null);
   const [downloadError, setDownloadError] = useState<string | null>(null);
   const [versions, setVersions] = useState<FilmVersion[]>([]);
@@ -70,13 +72,15 @@ export function FilmStage({ projectId }: { projectId: string }) {
           setMissing(true);
           return;
         }
-        if (!response.ok) return;
+        if (!response.ok) throw new Error(await errorMessage(response));
+        setReadError(null);
         const body = (await response.json()) as ProjectSnapshot;
         if (closed) return;
         setSnapshot(body);
         setShots(readShots(body.shots));
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
+        if (!closed) setReadError(caught instanceof Error ? caught.message : "读取项目失败，请稍后重试");
       }
     }
 
@@ -147,6 +151,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
   }, [projectId, ready, playerToken]);
 
   useEffect(() => {
+    setSrc(null);
+    setMediaError(null);
     if (!mediaPath) return;
     let closed = false;
     let objectUrl = "";
@@ -154,12 +160,15 @@ export function FilmStage({ projectId }: { projectId: string }) {
     void (async () => {
       try {
         const response = await apiFetch(mediaPath, { signal: controller.signal });
-        if (!response.ok || closed) return;
+        if (closed) return;
+        if (!response.ok) throw new Error(await errorMessage(response));
         const blob = await response.blob();
+        if (!blob.size) throw new Error("成片文件为空，请重新生成或联系支持");
         objectUrl = URL.createObjectURL(new Blob([blob], { type: blob.type || "video/mp4" }));
         if (!closed) setSrc(objectUrl);
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
+        if (!closed) setMediaError(caught instanceof Error ? caught.message : "成片读取失败，请重试");
       }
     })();
     return () => {
@@ -277,8 +286,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
   if (!ready) {
     return (
       <div className="max-w-xl">
-        <h1 className="text-h1 font-medium">{PROJECT_COPY.filmNotReady}</h1>
-        <p className="mt-2 text-body text-text-2">{PROJECT_COPY.filmNotReadyHint}</p>
+        <h1 className="text-h1 font-medium">{readError ? "未能读取成片" : snapshot ? PROJECT_COPY.filmNotReady : PROJECT_COPY.loadingFilm}</h1>
+        <p role={readError ? "alert" : "status"} className="mt-2 text-body text-text-2">{readError || PROJECT_COPY.filmNotReadyHint}</p>
         <Button asChild className="mt-6" variant="secondary">
           <Link href={`/projects/${projectId}`}>{PROJECT_COPY.backToProgress}</Link>
         </Button>
@@ -291,6 +300,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const durations = uniqueDurations(versions, choice.aspect, choice.language);
   const portrait = selected ? selected.height > selected.width : false;
   const notice = conceptNotice(snapshot);
+  const conclusion = filmConclusion(snapshot, selected);
   const current = edits.find((item) => item.current);
   const currentEdit = current?.version_id ?? "";
   const focused = shots.find((shot) => shot.shot_id && shot.shot_id === shotId);
@@ -306,7 +316,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
     <div className="mx-auto grid w-full min-w-0 max-w-360 gap-6">
       <div className="min-w-0">
         <p className="text-small text-text-2">成片</p>
-        <h1 className="mt-2 text-h1 font-medium tracking-wide">可以发布了</h1>
+        <h1 className="mt-2 text-h1 font-medium tracking-wide">{conclusion.title}</h1>
+        <p role="status" data-testid="film-conclusion" className="mt-2 text-small text-text-2">{conclusion.detail}</p>
+        {readError ? <p role="alert" className="text-small text-danger">{readError}</p> : null}
         {snapshot?.sentence ? (
           <p className="mt-2 break-words text-body text-text-2">{snapshot.sentence}</p>
         ) : null}
@@ -328,6 +340,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
           aria-label="视频舞台"
           className="min-w-0 flex-1 rounded-lg bg-stage p-3 text-text-1 md:p-4"
         >
+          {mediaError ? <p role="alert" className="p-3 text-small text-danger">{mediaError}</p> : null}
           <div className="relative overflow-hidden rounded-md bg-stage">
             <video
               data-testid="film-player"

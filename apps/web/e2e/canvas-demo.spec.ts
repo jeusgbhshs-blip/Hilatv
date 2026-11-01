@@ -24,7 +24,7 @@ test("expert canvas demo: connect, switch, trim, keep position, keep the AI labe
   }, storageKey);
 
   await page.goto(`/projects/${projectId}/expert`);
-  await expect(page.getByRole("heading", { name: "专家画布" })).toBeVisible();
+  await expect(page.getByText("本地演示 · 修改仅保存在此浏览器")).toBeVisible();
   await expect(page.getByTestId("node-brief-1")).toBeVisible();
   await expect(page.getByTestId("node-ref-product")).toBeVisible();
   await expect(page.getByTestId("node-shot-1")).toBeVisible();
@@ -88,8 +88,9 @@ test("expert canvas demo: connect, switch, trim, keep position, keep the AI labe
   await expect(page.getByTestId("node-shot-2").getByAltText("已接入的参考图")).toBeVisible();
   await expect(page.getByTestId("node-shot-2")).toContainText("质检通过");
 
-  await page.getByRole("button", { name: "导出" }).click();
-  await expect(page.getByTestId("export-ai-label")).toHaveText("AI生成");
+  await expect(page.getByRole("button", { name: "导出", exact: true })).toBeDisabled();
+  await expect(page.getByText("演示画布不生成文件。新建项目后可以制作和导出成片。")).toBeVisible();
+  await expect(page.getByTestId("export-result")).toHaveCount(0);
   await snap("export");
   await expect(page.getByRole("switch")).toHaveCount(0);
   if (shots) {

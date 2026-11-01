@@ -312,11 +312,14 @@
   top: 64px;
   z-index: 30;
   transform: translateX(-50%);
-  border: 1px solid var(--danger);
-  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   background: var(--raised);
-  padding: 6px 10px;
-  font-size: 12px;
+  color: var(--text-1);
+}
+
+.hilatv-canvas-notice[data-tone="danger"] {
+  border-color: var(--danger);
   color: var(--danger);
 }
 

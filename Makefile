@@ -128,3 +128,9 @@ accept-t25:
 
 api:
 	$(PYTHON) -m uvicorn app.main:app --app-dir $(ROOT)/apps/api --host 0.0.0.0 --port 8000
+
+.PHONY: accept-hp01
+accept-hp01:
+	cd $(ROOT)/apps/web && npm run test:unit
+	cd $(ROOT)/apps/web && npm run lint
+	cd $(ROOT)/apps/web && npx tsc --noEmit

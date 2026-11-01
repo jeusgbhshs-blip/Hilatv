@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { SHOT_STATUS, shotStatus, stageIndex, stageProgress, STAGES, stageShort } from "./status-copy.ts";
+import { filmConclusion, SHOT_STATUS, shotStatus, stageIndex, stageProgress, STAGES, stageShort } from "./status-copy.ts";
 
 describe("status copy", () => {
   it("has the five DESIGN.md stages in order", () => {
@@ -25,5 +25,24 @@ describe("status copy", () => {
     for (const item of Object.values(SHOT_STATUS)) {
       assert.doesNotMatch(item.label, /N\d|n\d\d|seed|gpt|模型/i);
     }
+  });
+});
+
+
+describe("truthful film and progress conclusions", () => {
+  it("does not invent running progress for drafts or missing state", () => {
+    assert.equal(stageProgress("理解需求", "draft"), 0);
+    assert.equal(stageProgress("理解需求", "queued"), 0);
+    assert.equal(stageProgress("生成中", undefined), 0);
+  });
+  it("requires review and provenance evidence before claiming release readiness", () => {
+    assert.equal(filmConclusion(null).title, "已生成，待核验");
+    assert.equal(filmConclusion({ quality_pass: true }).tone, "warning");
+    assert.equal(filmConclusion({ quality_pass: false }).title, "已生成，待处理");
+    for (const media_provenance of ["mock", "mixed"]) {
+      assert.equal(filmConclusion({ media_provenance, quality_pass: true, delivery_status: "ready" }).title, "模拟成片，可预览");
+    }
+    assert.equal(filmConclusion({ quality_pass: true, delivery_status: "ready", media_provenance: "live" }).tone, "success");
+    assert.equal(filmConclusion({ quality_pass: true, delivery_status: "ready", media_provenance: "live" }, { qa_status: "needs_review" }).tone, "warning");
   });
 });

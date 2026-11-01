@@ -8,8 +8,7 @@ import { StoryboardStrip } from "@/components/storyboard-strip";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { apiFetch, ensureSession, withSession, wsUrl } from "@/lib/api";
+import { apiFetch, ensureSession, errorMessage, withSession, wsUrl } from "@/lib/api";
 import { readCards, type StoryboardCard } from "@/lib/storyboard";
 import {
   attachmentLabel,
@@ -26,7 +25,7 @@ import {
   type ProjectSnapshot,
   type ShotSummary,
 } from "@/lib/progress";
-import { PROJECT_COPY, SHOT_STATUS, shotStatus, stageProgress, STAGES } from "@/lib/status-copy";
+import { PROJECT_COPY, SHOT_STATUS, shotStatus, STAGES } from "@/lib/status-copy";
 
 export function ProgressBoard({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
@@ -36,25 +35,36 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
   const [cards, setCards] = useState<StoryboardCard[]>([]);
   const [missing, setMissing] = useState(false);
   const [tick, setTick] = useState(0);
+  const [readError, setReadError] = useState<string | null>(null);
+  const [releaseBusy, setReleaseBusy] = useState(false);
 
   useEffect(() => {
     let closed = false;
     let socket: WebSocket | null = null;
+    let timer = 0;
+    let pulling = false;
+    let terminal = false;
     const controller = new AbortController();
 
     async function pull() {
+      if (closed || pulling) return;
+      pulling = true;
+      window.clearTimeout(timer);
       try {
         const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}`, {
           signal: controller.signal,
         });
         if (closed) return;
         if (response.status === 404) {
+          terminal = true;
           setMissing(true);
           return;
         }
-        if (!response.ok) return;
+        if (!response.ok) throw new Error(await errorMessage(response));
         const body = (await response.json()) as ProjectSnapshot;
         if (closed) return;
+        terminal = ["completed", "failed", "draft", "paused", "needs_human_review"].includes(body.status ?? "");
+        setReadError(null);
         setSnapshot(body);
         setShots(readShots(body.shots));
         setAttachments(readAttachments(body.attachments));
@@ -62,13 +72,14 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         setEvents((current) => mergeEvents(current, readEvents(body.events)));
       } catch (caught) {
         if (caught instanceof DOMException && caught.name === "AbortError") return;
+        if (!closed) setReadError(caught instanceof Error ? caught.message : "读取失败，请重试");
+      } finally {
+        pulling = false;
+        if (!closed && !terminal) timer = window.setTimeout(() => void pull(), 1500);
       }
     }
 
     void pull();
-    const timer = window.setInterval(() => {
-      void pull();
-    }, 700);
 
     void ensureSession().then((token) => {
       if (closed || !token) return;
@@ -76,7 +87,8 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         withSession(wsUrl(`/v1/projects/${encodeURIComponent(projectId)}/progress`), token),
       );
       socket.onmessage = onSocket;
-    });
+      socket.onclose = () => { if (!closed && !terminal) setReadError("连接已断开，正在重新读取进度"); };
+    }).catch(() => { if (!closed) setReadError("连接未建立，正在重新读取进度"); });
 
     function onSocket(message: MessageEvent) {
       let data: ProgressEvent;
@@ -86,7 +98,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         return;
       }
       if (data.type === "error") {
-        setMissing(true);
+        setReadError(data.error || data.message || "进度连接异常，正在重新读取");
         return;
       }
       setEvents((current) => mergeEvents(current, [data]));
@@ -96,13 +108,15 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
     return () => {
       closed = true;
       controller.abort();
-      window.clearInterval(timer);
+      window.clearTimeout(timer);
       socket?.close();
     };
   }, [projectId, tick]);
 
-  const phase = latestPhase(events, snapshot?.phase || STAGES[0]);
   const status = projectStatus(snapshot?.status, events);
+  const phase = ["draft", "paused", "needs_human_review"].includes(status)
+    ? snapshot?.phase || STAGES[0]
+    : latestPhase(events, snapshot?.phase || STAGES[0]);
   useShellStage(missing ? null : phase, status === "completed");
 
   if (missing) {
@@ -116,7 +130,8 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
     );
   }
 
-  const headline = latestMessage(events, snapshot?.message || PROJECT_COPY.queued);
+  const waiting = status === "draft" ? "尚未开始生成" : status === "paused" ? "等待你确认分镜" : status === "needs_human_review" ? "等待你确认，生成已暂停" : null;
+  const headline = waiting || latestMessage(events, snapshot?.message || (snapshot ? PROJECT_COPY.queued : "正在读取项目"));
   const rows = shotViews(shots, events);
   const failed = status === "failed";
 
@@ -124,7 +139,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
     <div className="mx-auto grid w-full min-w-0 max-w-300 gap-6">
       <div>
         <p className="text-small text-text-2">生成进度</p>
-        <h1 className="mt-2 text-h1 font-medium tracking-wide">正在做这条片</h1>
+        <h1 className="mt-2 text-h1 font-medium tracking-wide">{status === "completed" ? "已生成，可查看" : waiting ? "继续这条创作" : "正在做这条片"}</h1>
         {snapshot?.sentence ? (
           <p className="mt-2 break-words text-body text-text-2">{snapshot.sentence}</p>
         ) : null}
@@ -145,7 +160,9 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
             </p>
           ) : null}
         </div>
-        <Progress label="总进度" value={stageProgress(phase, status)} />
+        <p className="text-small text-text-2">当前阶段：{phase}</p>
+        {readError ? <p role="alert" className="text-small text-danger">{readError}</p> : null}
+        {readError ? <Button variant="secondary" onClick={() => setTick((value) => value + 1)}>重新读取进度</Button> : null}
       </Card>
 
       {snapshot?.status === "paused" && cards.length > 0 ? (
@@ -203,10 +220,19 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
             data-testid="release-review"
             size="lg"
             className="w-full sm:w-auto"
+            disabled={releaseBusy}
+            loading={releaseBusy}
             onClick={() => {
-              void apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`, {
-                method: "POST",
-              });
+              setReleaseBusy(true);
+              void (async () => {
+                try {
+                  const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/human-review/release`, { method: "POST" });
+                  if (!response.ok) throw new Error(await errorMessage(response));
+                  setTick((value) => value + 1);
+                } catch (error) {
+                  setReadError(error instanceof Error ? error.message : "未能继续，请重试");
+                } finally { setReleaseBusy(false); }
+              })();
             }}
           >
             放行并成片

@@ -194,7 +194,7 @@ export type CanvasSnapshot = {
   sentence: string;
   budget: CanvasBudget;
   timeline: CanvasTimeline;
-  /** api：来自现有 GET /canvas。mock：后端没有这个项目时的演示底稿。 */
+  /** api：来自现有 GET /canvas。mock：用户显式打开的本地演示底稿。 */
   origin?: "api" | "mock";
   /** 项目状态：draft / running / needs_human_review / completed。 */
   status?: string;

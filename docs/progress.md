@@ -591,3 +591,9 @@
 ## UI 设计规范
 
 - 2026-10-30：`DESIGN.md` V1.0 已确认（主题随时间切换：白天浅色外壳 + 深色视频舞台，夜间全深色）。token 已写入 `apps/web/app/globals.css`，效果图在 `docs/design/`。现有前端（T11/T15/T16/T19/T23）按 UI-01 换皮迁移，之后所有界面按此实现。公司标志已放入 `apps/web/public/brand/`。Noto Sans SC woff2 子集由 UI-01 补上（`apps/web/public/fonts/`）。
+
+
+## 2026-11-01 审查整改 HP01（开发分支，未合并）
+- 修正真实项目错误被替换演示、虚假导出、固定可发布结论和等待进度；来源不明保守标待核验。
+- 分支 `t17-hp01-truthful-state`。`make accept-hp01`、生产构建通过；28 Node＋31 Vitest，类型和lint通过。浏览器验证错误恢复和显式演示。
+- 完整服务端交付门、持久草稿与真实媒体链继续按HP06/HP02/HP08/HP04推进；没有修改原验收阈值、密钥、生产服务或live开关。

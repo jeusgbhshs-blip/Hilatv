@@ -2,6 +2,8 @@
 
 import { useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 
+import Link from "next/link";
+
 import { Button } from "@/components/ui/button";
 import {
   AI_LABEL_COPY,
@@ -25,7 +27,6 @@ export function TimelineTrack({
   onCommit: (clips: TimelineClip[]) => void;
 }) {
   const [clips, setClips] = useState(doc.timeline.clips);
-  const [exported, setExported] = useState(false);
   useEffect(() => {
     setClips(doc.timeline.clips);
   }, [doc.timeline]);
@@ -42,9 +43,15 @@ export function TimelineTrack({
             <span data-testid="ai-label">{AI_LABEL_COPY}</span>
             <span className="text-text-3"> · 标识不能关闭</span>
           </p>
-          <Button type="button" variant="secondary" onClick={() => setExported(true)} disabled={busy}>
-            导出
-          </Button>
+          {!busy && doc.origin === "api" && doc.status === "completed" ? (
+            <Button asChild variant="secondary">
+              <Link href={`/projects/${encodeURIComponent(doc.project_id)}/film`}>查看成片与导出</Link>
+            </Button>
+          ) : (
+            <Button type="button" variant="secondary" disabled aria-describedby="timeline-export-note">
+              导出
+            </Button>
+          )}
         </div>
       </div>
       <div
@@ -65,15 +72,11 @@ export function TimelineTrack({
           />
         ))}
       </div>
-      {exported ? (
-        <div data-testid="export-result" className="mt-3 grid gap-1">
-          <p className="text-small">成片已导出</p>
-          <p data-testid="export-ai-label" className="text-small">
-            {AI_LABEL_COPY}
-          </p>
-          <p className="text-caption text-text-3">这个标识不能关闭</p>
-        </div>
-      ) : null}
+      <p id="timeline-export-note" className="mt-3 text-caption text-text-3">
+        {doc.origin === "mock"
+          ? "演示画布不生成文件。新建项目后可以制作和导出成片。"
+          : "时间轴修改会保存到项目；请在成片页核对最新渲染版本后导出。"}
+      </p>
     </section>
   );
 }
