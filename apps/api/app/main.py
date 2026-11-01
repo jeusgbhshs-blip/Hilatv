@@ -13,7 +13,7 @@ from app.brands import router as brand_router
 from app.deliveries import router as delivery_router
 from app.expert import router as expert_router
 from app.identity import router as identity_router
-from app.logging import log_event
+from app.logging import install_session_log_redaction, log_event
 from app.members import router as member_router
 from app.projects import router
 from app.settings import get_settings
@@ -23,6 +23,8 @@ from app.upload_limits import UploadLimitMiddleware
 from app.usage import router as usage_router
 from workers.identity.session import assert_live_session_configured
 from workers.workflow.runtime import shutdown_runtime
+
+install_session_log_redaction()
 
 _MEDIA_QUERY = re.compile(
     r"^/v1/projects/[^/]+/(?:preview|versions/[^/]+/preview|storyboard/[^/]+/frame|"
