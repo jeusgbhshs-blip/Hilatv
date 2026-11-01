@@ -22,7 +22,7 @@ from workers.expert.desk import (
 )
 from workers.expert.gates import GateError, refuse_label_bypass
 from workers.expert.invoke import invoke_node
-from workers.expert.uploads import resolve_upload
+from workers.expert.uploads import materialize_reference, resolve_upload
 from workers.identity.session import canonical_enterprise
 from workers.logging import log_event
 from workers.schemas.asset import Candidate
@@ -66,8 +66,10 @@ def regenerate_shot(
         uploads = list(dict.fromkeys(uploads))
         enterprise_id = snapshot.get("enterprise_id")
         owner = enterprise_id if isinstance(enterprise_id, str) else ""
-        for item in uploads:
-            _check_upload(item, owner)
+        references = [
+            materialize_reference(item, enterprise_id=owner, project_id=project_id)
+            for item in uploads
+        ]
         for text in texts:
             refuse_label_bypass(text)
         model_suffix = _model_suffix(suffix, spoken, texts, uploads)
@@ -94,6 +96,7 @@ def regenerate_shot(
                 prompt_suffix=model_suffix,
                 gateway=gateway,
                 enterprise_id=owner or None,
+                reference_images=references,
             )
             fresh = [
                 item
@@ -197,12 +200,6 @@ def _model_suffix(suffix: str, narration: str, texts: list[str], uploads: list[s
     if uploads:
         parts.append("参考图 " + " ".join(uploads))
     return "\n".join(parts)
-
-
-def _check_upload(upload_id: str, enterprise_id: str) -> str:
-    if not enterprise_id:
-        raise GateError("参考图不存在", status=404)
-    return str(resolve_upload(upload_id, enterprise_id=enterprise_id))
 
 
 def _demote(rows: list[dict[str, Any]], shot_id: str) -> list[dict[str, Any]]:

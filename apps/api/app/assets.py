@@ -31,7 +31,17 @@ async def upload_asset(
     kind: str = Form("product_image"),
     identity: Identity = Depends(require_identity),
 ) -> dict[str, Any]:
-    payload = await file.read()
+    if kind not in store.KINDS:
+        raise HTTPException(status_code=422, detail="素材类型不对")
+    chunks = bytearray()
+    try:
+        while chunk := await file.read(64 * 1024):
+            if len(chunks) + len(chunk) > store.MAX_BYTES:
+                raise HTTPException(status_code=413, detail="文件过大")
+            chunks.extend(chunk)
+    finally:
+        await file.close()
+    payload = bytes(chunks)
     try:
         meta = store.save_asset(identity.enterprise_id, kind, file.filename or "", payload)
     except ValueError as exc:
@@ -49,7 +59,15 @@ def asset_file(
     path = store.asset_file(identity.enterprise_id, asset_id)
     if path is None:
         raise HTTPException(status_code=404, detail="没有这个素材")
-    return FileResponse(path, media_type=None, filename=path.name)
+    return FileResponse(
+        path,
+        media_type=None,
+        filename=path.name,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.delete("/v1/assets/{asset_id}")

@@ -26,6 +26,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from app.identity import owned_project, require_frame_identity, require_identity
 from app.logging import log_event
 from gateway import get_gateway
+from workers.assets.validation import validate_upload
 from workers.expert.charge import BudgetExhausted, reserve
 from workers.identity.access import Conflict, NotFound, audit_human_release
 from workers.identity.session import (
@@ -195,7 +196,11 @@ def _bind_upload(item: dict[str, Any], kind: str, *, enterprise_id: str) -> dict
         raise _invalid_attachment()
     path = _resolve_upload(upload_id)
     owner_path = path.parent / ".enterprise"
-    owner = owner_path.read_text(encoding="utf-8").strip() if owner_path.is_file() else ""
+    owner = (
+        owner_path.read_text(encoding="utf-8").strip()
+        if owner_path.is_file() and not owner_path.is_symlink()
+        else ""
+    )
     if owner != enterprise_id:
         raise _invalid_attachment()
     stored = "pdf" if path.suffix.lower() == ".pdf" else "image"
@@ -228,8 +233,8 @@ def _resolve_upload(upload_id: str) -> Path:
     if ".." in upload_id or _UPLOAD_ID.fullmatch(upload_id) is None:
         raise _invalid_attachment()
     root = _uploads_root()
-    folder = (root / upload_id).resolve()
-    if not _is_inside(folder, root) or not folder.is_dir():
+    folder = root / upload_id
+    if folder.is_symlink() or not _is_inside(folder.resolve(), root) or not folder.is_dir():
         raise _invalid_attachment()
     found = [
         item
@@ -239,7 +244,7 @@ def _resolve_upload(upload_id: str) -> Path:
     if len(found) != 1:
         raise _invalid_attachment()
     path = found[0].resolve()
-    if not _is_inside(path, root) or not path.is_file():
+    if found[0].is_symlink() or not _is_inside(path, folder.resolve()) or not path.is_file():
         raise _invalid_attachment()
     return path
 
@@ -383,23 +388,25 @@ async def upload_asset(
         raise HTTPException(status_code=400, detail="文件名无效")
     limit = _upload_limit()
     size = 0
-    too_big = False
-    with path.open("wb") as handle:
-        while True:
-            chunk = await file.read(_CHUNK)
-            if not chunk:
-                break
-            size += len(chunk)
-            if size > limit:
-                too_big = True
-                break
-            handle.write(chunk)
-    if too_big or size == 0:
+    try:
+        with path.open("wb") as handle:
+            while chunk := await file.read(_CHUNK):
+                size += len(chunk)
+                if size > limit:
+                    raise HTTPException(status_code=413, detail="文件过大")
+                handle.write(chunk)
+        if size == 0:
+            raise HTTPException(status_code=400, detail="文件是空的")
+        try:
+            validate_upload(filename, path.read_bytes())
+        except ValueError as exc:
+            raise HTTPException(status_code=415, detail="文件内容与格式不匹配") from exc
+        (folder / ".enterprise").write_text(identity.enterprise_id, encoding="utf-8")
+    except BaseException:
         _discard_upload(path, folder)
-        if too_big:
-            raise HTTPException(status_code=413, detail="文件过大")
-        raise HTTPException(status_code=400, detail="文件是空的")
-    (folder / ".enterprise").write_text(identity.enterprise_id, encoding="utf-8")
+        raise
+    finally:
+        await file.close()
     log_event("upload_stored", service="hilatv-api", kind=kind, size=size)
     return {"upload_id": upload_id, "kind": kind, "filename": filename}
 

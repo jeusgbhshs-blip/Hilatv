@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from workers.expert.gates import GateError, verdict_of
+from workers.media.assets import materialize_project_asset
 from workers.media.packaging import ai_label_text
 from workers.qa.budget_store import open_project_budget
 from workers.qa.pixels import MediaLoad, resolve_project_file
@@ -94,13 +95,21 @@ def media_file(project_id: str, candidate_id: str) -> Path | None:
     if not valid_project_id(project_id):
         return None
     state = load_checkpoint(project_id)
-    for raw in list(state.get("keyframes") or []) + list(state.get("videos") or []):
+    from workers.expert.desk import load_doc
+
+    content = [
+        row
+        for node in load_doc(project_id).user_nodes
+        for row in node.data.get("candidates", [])
+        if isinstance(row, dict)
+    ]
+    for raw in list(state.get("keyframes") or []) + list(state.get("videos") or []) + content:
         if not isinstance(raw, dict) or raw.get("candidate_id") != candidate_id:
             continue
         uri = raw.get("uri")
         if not isinstance(uri, str):
             return None
-        return _servable(uri)
+        return materialize_project_asset(project_id, uri)
     return None
 
 
@@ -175,18 +184,13 @@ def _media(candidate: Candidate, project_id: str) -> tuple[str | None, str]:
     uri = candidate.uri
     if uri.startswith("mock://"):
         return None, "mock 无画面"
-    if _servable(uri) is None:
+    if not uri.startswith(("oss://", "s3://")) and _servable(uri, project_id) is None:
         return None, "未测"
     return f"/v1/projects/{project_id}/expert/media/{candidate.candidate_id}", ""
 
 
-def _servable(uri: str) -> Path | None:
-    located = resolve_project_file(Path(uri))
-    if isinstance(located, MediaLoad) or not located.is_file():
-        return None
-    if located.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp", ".mp4", ".mov", ".webm"}:
-        return None
-    return located
+def _servable(uri: str, project_id: str) -> Path | None:
+    return materialize_project_asset(project_id, uri)
 
 
 def _timeline_view(project_id: str, state: dict[str, Any]) -> dict[str, Any]:

@@ -12,6 +12,7 @@ from typing import Any
 from gateway import get_gateway
 from workers.expert.desk import CanvasDoc, UserNode, update_document
 from workers.expert.gates import GateError, refuse_label_bypass
+from workers.expert.uploads import materialize_reference
 from workers.logging import log_event
 
 _CONTENT = frozenset({"image", "video", "audio"})
@@ -51,8 +52,9 @@ def generate_node(
         if len(rows) >= _MAX_CANDIDATES:
             raise GateError("候选太多了，先选一张")
         engine = gateway or get_gateway()
+        references = _upstream_images(doc, node, snapshot, project_id)
         for index in range(count):
-            row = _generate_one(engine, node, prompt, project_id, index)
+            row = _generate_one(engine, node, prompt, project_id, index, references)
             rows.append(row)
         node.data = {
             **node.data,
@@ -77,14 +79,25 @@ def generate_node(
 
 
 def _generate_one(
-    engine: Any, node: UserNode, prompt: str, project_id: str, index: int
+    engine: Any,
+    node: UserNode,
+    prompt: str,
+    project_id: str,
+    index: int,
+    references: list[str],
 ) -> dict[str, Any]:
     common = {"project_id": project_id, "node": "canvas", "params": {"seed": index}}
     if node.kind == "image":
+        if references:
+            common["params"]["reference_images"] = references
         result = engine.generate_image(prompt, **common)
     elif node.kind == "audio":
         result = engine.music(prompt, **common)
     else:
+        if len(references) > 1:
+            raise GateError("视频节点目前只接受一张首帧参考图")
+        if references:
+            common["params"].update(image_url=references[0], image_role="first_frame")
         duration = node.data.get("duration_s")
         seconds = (
             float(duration)
@@ -105,6 +118,47 @@ def _generate_one(
         "thumbnail_url": None,
         "duration_s": result.get("duration_s"),
     }
+
+
+def _upstream_images(
+    doc: CanvasDoc, node: UserNode, snapshot: dict[str, Any], project_id: str
+) -> list[str]:
+    references: list[str] = []
+    by_id = {item.id: item for item in doc.user_nodes}
+    owner = str(snapshot.get("enterprise_id") or "")
+    for edge in doc.edges or []:
+        if edge.target != node.id or edge.role != "reference":
+            continue
+        source = by_id.get(edge.source)
+        if source is None:
+            continue
+        if source.kind == "ref_image":
+            upload_id = source.data.get("upload_id")
+            if not isinstance(upload_id, str):
+                raise GateError("参考图不存在", status=404)
+            references.append(
+                materialize_reference(upload_id, enterprise_id=owner, project_id=project_id)
+            )
+        elif source.kind == "image" and node.kind == "video":
+            selected = source.data.get("selected_candidate_id")
+            candidate = next(
+                (
+                    row
+                    for row in source.data.get("candidates", [])
+                    if isinstance(row, dict) and row.get("candidate_id") == selected
+                ),
+                None,
+            )
+            if not candidate or not isinstance(candidate.get("uri"), str) or not candidate["uri"]:
+                raise GateError("先在上游图片节点选一张候选")
+            references.append(candidate["uri"])
+        else:
+            raise GateError("这个参考连线还不支持生成")
+    if references and node.kind not in {"image", "video"}:
+        raise GateError("这个节点不支持图片参考")
+    if len(references) > 14:
+        raise GateError("一次最多使用 14 张参考图")
+    return list(dict.fromkeys(references))
 
 
 def _upstream_prompt(doc: CanvasDoc, node_id: str) -> str:

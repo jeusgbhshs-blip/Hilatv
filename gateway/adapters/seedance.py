@@ -24,6 +24,7 @@ from gateway.adapters.http_json import (
 )
 from gateway.constants import ARK_BASE_URL
 from gateway.errors import AdapterError
+from gateway.image_inputs import image_data_url
 from gateway.media_bytes import extension_for, sniff_mime
 from gateway.models import AdapterResult, Invocation
 from gateway.polling import TaskSnapshot, TaskState, poll_task
@@ -116,7 +117,7 @@ class SeedanceAdapter:
             "POST",
             f"{self.base_url}/contents/generations/tasks",
             headers=bearer(key),
-            body=_submit_body(call),
+            body=_submit_body(call, self.store),
             provider=self.provider,
         )
         task_id = str(payload.get("id") or "")
@@ -146,7 +147,9 @@ class SeedanceAdapter:
         return self._pricing
 
 
-def _submit_body(call: Invocation) -> dict[str, Any]:
+def _submit_body(call: Invocation, store: ObjectStore | None = None) -> dict[str, Any]:
+    if call.params.get("reference_images"):
+        raise AdapterError("this seedance adapter supports first/last frames, not reference_images")
     body: dict[str, Any] = {
         "model": call.model,
         "content": [{"type": "text", "text": call.prompt}],
@@ -159,15 +162,38 @@ def _submit_body(call: Invocation) -> dict[str, Any]:
     if call.seed is not None:
         body["seed"] = int(call.seed)
     image_url = call.params.get("image_url")
-    if isinstance(image_url, str) and image_url:
+    last_frame = call.params.get("last_frame_url")
+    if image_url or last_frame:
+        if call.model not in {
+            "doubao-seedance-1-0-pro-250528",
+            "doubao-seedance-1-0-pro-fast-251015",
+        }:
+            raise AdapterError("this seedance model does not support first/last frame inputs")
+        if call.params.get("image_role", "first_frame") != "first_frame":
+            raise AdapterError("this seedance adapter only supports first and last frames")
+        if last_frame and (not image_url or "fast" in call.model):
+            raise AdapterError("this seedance model does not support these first/last frames")
+    if image_url:
         body["content"].append(
             {
                 "type": "image_url",
-                "image_url": {"url": image_url},
-                "role": str(call.params.get("image_role") or "first_frame"),
+                "image_url": {"url": _frame_url(image_url, call, store)},
+                "role": "first_frame",
+            }
+        )
+    if last_frame:
+        body["content"].append(
+            {
+                "type": "image_url",
+                "image_url": {"url": _frame_url(last_frame, call, store)},
+                "role": "last_frame",
             }
         )
     return body
+
+
+def _frame_url(uri: object, call: Invocation, store: ObjectStore | None) -> str:
+    return image_data_url(uri, call, store, min_side=300, max_side=6000, aspect_range=(0.4, 2.5))
 
 
 def _duration(call: Invocation) -> int:

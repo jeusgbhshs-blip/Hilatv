@@ -17,6 +17,32 @@ PNG = base64.b64decode(
 SVG = b"<svg xmlns='http://www.w3.org/2000/svg'></svg>"
 
 
+def test_upload_owner_marker_cannot_be_a_symlink(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
+    ident = open_session()
+    client = TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
+    made = client.post("/v1/uploads", files={"file": ("p.png", PNG, "image/png")})
+    assert made.status_code == 200
+    owner_path = tmp_path / "uploads" / made.json()["upload_id"] / ".enterprise"
+    owner_path.unlink()
+    target = tmp_path / "borrowed-owner"
+    target.write_text(ident.enterprise_id)
+    owner_path.symlink_to(target)
+
+    async def unexpected_start(**kwargs):
+        raise AssertionError("an upload with a linked owner marker must not start a workflow")
+
+    monkeypatch.setattr("app.projects.start_film", unexpected_start)
+    response = client.post(
+        "/v1/projects",
+        json={
+            "sentence": "产品广告",
+            "attachments": [{"kind": "image", "upload_id": made.json()["upload_id"]}],
+        },
+    )
+    assert response.status_code == 422
+
+
 def _client() -> TestClient:
     ident = open_session()
     return TestClient(app, headers={"Authorization": f"Bearer {ident.token}"})
@@ -66,8 +92,7 @@ def test_upload_requires_matching_mime_and_extension(tmp_path, monkeypatch) -> N
     assert _upload(client, "logo.png", PNG, "image/jpeg").status_code == 415
     assert _upload(client, "logo.jpg", PNG, "image/png").status_code == 415
     jpeg = _upload(client, "logo.jpg", PNG, "image/jpeg")
-    assert jpeg.status_code == 200
-    assert jpeg.json()["kind"] == "image"
+    assert jpeg.status_code == 415  # The payload is PNG, despite its name and MIME claim.
     pdf = _upload(client, "spec.pdf", b"%PDF-1.4", "application/pdf")
     assert pdf.status_code == 200
     assert pdf.json()["kind"] == "pdf"

@@ -668,6 +668,15 @@ def _user_node(project_id: str, node: UserNode, positions: dict[str, Position]) 
         data["candidates"] = [
             _content_candidate(item, node.kind) for item in data.get("candidates") or []
         ]
+        for candidate in data["candidates"]:
+            if (
+                candidate["candidate_id"]
+                and candidate["uri"]
+                and not candidate["uri"].startswith("mock://")
+            ):
+                candidate["thumbnail_url"] = (
+                    f"/v1/projects/{project_id}/expert/media/{candidate['candidate_id']}"
+                )
         selected = data.get("selected_candidate_id")
         chosen = next(
             (item for item in data["candidates"] if item["candidate_id"] == selected), None

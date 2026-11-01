@@ -359,6 +359,7 @@ def n08_keyframe(payload: dict[str, Any]) -> dict[str, Any]:
     attempt = _announce(payload, "n08_keyframe")
     project_id = _project(payload)
     state = _state(payload)
+    from workers.expert.uploads import materialize_attachments
     from workers.nodes.n08_keyframe.node import run
 
     result = _call(
@@ -371,6 +372,11 @@ def n08_keyframe(payload: dict[str, Any]) -> dict[str, Any]:
                 "brand_kit": state.get("brand_kit"),
                 "enterprise_id": _request(payload).get("enterprise_id"),
                 "keyframe_candidates": _count(payload, "keyframe_candidates"),
+                "reference_images": materialize_attachments(
+                    _request(payload).get("attachments") or [],
+                    enterprise_id=str(_request(payload).get("enterprise_id") or ""),
+                    project_id=project_id,
+                ),
             },
             "attempt": attempt,
         },

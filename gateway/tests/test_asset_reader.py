@@ -1,5 +1,6 @@
 """Private media references are bounded and cannot become arbitrary file reads."""
 
+import os
 from pathlib import Path
 
 import httpx
@@ -39,11 +40,22 @@ def test_object_media_accepts_both_private_schemes_and_checks_bucket() -> None:
     uri = store.put("frame.png", b"image", "image/png")
     assert read_asset_bytes(uri, store=store) == b"image"
     assert read_asset_bytes(uri.replace("oss:", "s3:"), store=store) == b"image"
-    for uri in ["oss://other/frame.png", "oss://own/missing.png"]:
+    for uri in [
+        "oss://other/frame.png",
+        "oss://own/missing.png",
+        "oss://own/frame.png?token=secret",
+    ]:
         with pytest.raises(StorageError):
             read_asset_bytes(uri, store=store)
     with pytest.raises(StorageError):
         read_asset_bytes("oss://own/frame.png", store=store, max_bytes=4)
+
+
+def test_local_fifo_is_rejected_without_blocking(tmp_path):
+    fifo = tmp_path / "not-media.wav"
+    os.mkfifo(fifo)
+    with pytest.raises(StorageError):
+        read_asset_bytes(str(fifo), allowed_roots=[tmp_path])
 
 
 def test_s3_read_is_bounded_without_issuing_a_public_url() -> None:

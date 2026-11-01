@@ -45,3 +45,4 @@ class N8Input(BaseModel):
     keyframe_candidates: int = Field(default=4, ge=3, le=8)
     enterprise_id: str | None = None
     prompt_suffix: str = ""
+    reference_images: list[str] = Field(default_factory=list, max_length=14)

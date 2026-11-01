@@ -19,6 +19,7 @@ from app.projects import router
 from app.settings import get_settings
 from app.shares import router as share_router
 from app.templates import router as template_router
+from app.upload_limits import UploadLimitMiddleware
 from app.usage import router as usage_router
 from workers.identity.session import assert_live_session_configured
 from workers.workflow.runtime import shutdown_runtime
@@ -46,6 +47,7 @@ async def _lifespan(app: FastAPI):
 
 app = FastAPI(title="HiLatv API", version="0.1.0", lifespan=_lifespan)
 WEB_ORIGINS = web_origins()
+app.add_middleware(UploadLimitMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=WEB_ORIGINS,

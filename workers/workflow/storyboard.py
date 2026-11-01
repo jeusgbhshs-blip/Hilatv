@@ -18,6 +18,7 @@ from PIL import Image, UnidentifiedImageError
 
 from workers.compliance.moderation import classify, live_mode
 from workers.logging import log_event
+from workers.media.assets import materialize_project_asset
 from workers.nodes.n06_voiceover.node import load_take
 from workers.qa.budget_store import open_project_budget
 from workers.qa.service import review_shot
@@ -437,6 +438,12 @@ def _review_selected(
     for shot in script.shots:
         row = _selected_opening(keyframes, shot.shot_id)
         uri = str(row.get("uri") or "") if row else ""
+        located = materialize_project_asset(
+            project_id, uri, gateway=gateway, max_bytes=20 * 1024 * 1024
+        )
+        if located is not None and row is not None:
+            uri = str(located)
+            row["uri"] = uri
         try:
             report = review_shot(
                 {

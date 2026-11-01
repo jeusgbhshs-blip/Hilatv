@@ -199,7 +199,7 @@ def _shot(
                 node=NODE,
                 shot_id=shot.shot_id,
                 attempt=attempt,
-                params={"frame": frame},
+                params={"frame": frame, "reference_images": payload.reference_images},
             )
             uri = output.get("uri") if isinstance(output, dict) else None
             if not isinstance(uri, str) or not uri:

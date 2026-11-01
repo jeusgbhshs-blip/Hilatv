@@ -41,6 +41,8 @@ _MEDIA = {
     ".mp4": "video/mp4",
     ".mov": "video/mp4",
     ".webm": "video/webm",
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
 }
 
 
@@ -265,7 +267,15 @@ def project_media(
     if path is None:
         raise HTTPException(status_code=404, detail="没有可看的画面")
     media_type = _MEDIA.get(path.suffix.lower(), "application/octet-stream")
-    return FileResponse(path, media_type=media_type, filename=Path(path).name)
+    return FileResponse(
+        path,
+        media_type=media_type,
+        filename=Path(path).name,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 class GenerateBody(BaseModel):

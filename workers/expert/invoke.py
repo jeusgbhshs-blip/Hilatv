@@ -29,6 +29,7 @@ def invoke_node(
     prompt_suffix: str = "",
     gateway: Any | None = None,
     enterprise_id: str | None = None,
+    reference_images: list[str] | None = None,
 ) -> dict[str, Any]:
     try:
         patch = _RUNNERS[name](
@@ -39,6 +40,7 @@ def invoke_node(
             prompt_suffix=prompt_suffix,
             gateway=gateway,
             enterprise_id=enterprise_id,
+            reference_images=reference_images or [],
         )
     except GateError:
         raise
@@ -263,6 +265,7 @@ def _n06(**kwargs: Any) -> dict[str, Any]:
 
 
 def _n08(**kwargs: Any) -> dict[str, Any]:
+    from workers.expert.uploads import materialize_attachments
     from workers.nodes.n08_keyframe.node import run
 
     state = kwargs["state"]
@@ -276,6 +279,12 @@ def _n08(**kwargs: Any) -> dict[str, Any]:
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
                 "keyframe_candidates": _count(kwargs["snapshot"], "keyframe_candidates"),
+                "reference_images": kwargs.get("reference_images")
+                or materialize_attachments(
+                    kwargs["snapshot"].get("attachments") or [],
+                    enterprise_id=kwargs["enterprise_id"] or "",
+                    project_id=kwargs["project_id"],
+                ),
                 "prompt_suffix": kwargs["prompt_suffix"],
                 "enterprise_id": kwargs["enterprise_id"],
             },

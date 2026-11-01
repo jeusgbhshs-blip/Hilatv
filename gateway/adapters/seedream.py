@@ -16,6 +16,7 @@ import httpx
 from gateway.adapters.http_json import bearer, decode_b64, download_bytes, price_media, request_json
 from gateway.constants import ARK_BASE_URL
 from gateway.errors import AdapterError
+from gateway.image_inputs import image_data_url
 from gateway.media_bytes import extension_for, sniff_mime
 from gateway.models import AdapterResult, Invocation
 from gateway.pricing import Pricing
@@ -60,7 +61,7 @@ class SeedreamAdapter:
                 "POST",
                 f"{self.base_url}/images/generations",
                 headers=bearer(key),
-                body=_body(call),
+                body=_body(call, self.store),
                 provider=self.provider,
             )
             raw, mime = _image_bytes(client, payload)
@@ -95,7 +96,9 @@ class SeedreamAdapter:
         return self._pricing
 
 
-def _body(call: Invocation) -> dict[str, Any]:
+def _body(call: Invocation, store: ObjectStore | None = None) -> dict[str, Any]:
+    if call.params.get("image_url") or call.params.get("last_frame_url"):
+        raise AdapterError("seedream requires reference_images, not video frame roles")
     # Seedream's documented size modes include "1K". Pixel sizes below ~0.9MP are rejected.
     size = str(call.params.get("size") or "1K")
     body: dict[str, Any] = {
@@ -106,6 +109,14 @@ def _body(call: Invocation) -> dict[str, Any]:
         "sequential_image_generation": "disabled",
         "watermark": False,
     }
+    references = call.params.get("reference_images")
+    if references:
+        if not isinstance(references, list) or len(references) > 14:
+            raise AdapterError("seedream supports at most 14 reference images")
+        if call.model != "doubao-seedream-4-0-250828":
+            raise AdapterError("this seedream model does not support reference images")
+        images = [image_data_url(uri, call, store) for uri in references]
+        body["image"] = images[0] if len(images) == 1 else images
     return body
 
 

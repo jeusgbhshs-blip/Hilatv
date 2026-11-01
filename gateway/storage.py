@@ -49,25 +49,35 @@ def read_asset_bytes(
         raise StorageError("invalid media reference")
     parsed = urlparse(uri)
     if parsed.scheme in {"oss", "s3"}:
+        if parsed.query or parsed.fragment:
+            raise StorageError("media object reference must not contain query credentials")
         parse_object_uri(uri)
         if store is None:
             raise StorageError("media object store is not configured")
         if parsed.netloc != store.bucket:
             raise StorageError("media object belongs to another bucket")
         limited = getattr(store, "get_limited", None)
-        data = limited(uri, max_bytes=max_bytes) if limited else store.get(uri)
+        try:
+            data = limited(uri, max_bytes=max_bytes) if limited else store.get(uri)
+        except httpx.HTTPError as exc:
+            raise StorageError("media object could not be read") from exc
     elif parsed.scheme in {"", "file"}:
         if parsed.netloc or parsed.query or parsed.fragment:
             raise StorageError("invalid local media reference")
         path = Path(unquote(parsed.path) if parsed.scheme else uri)
         if not path.is_absolute():
             raise StorageError("local media path must be absolute")
-        resolved = path.resolve()
-        roots = [Path(root).resolve() for root in allowed_roots]
+        try:
+            resolved = path.resolve()
+            roots = [Path(root).resolve() for root in allowed_roots]
+        except (OSError, RuntimeError) as exc:
+            raise StorageError("media path cannot be resolved") from exc
         if not any(resolved != root and resolved.is_relative_to(root) for root in roots):
             raise StorageError("media is outside the authorized project")
         try:
-            fd = os.open(resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            fd = os.open(
+                resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+            )
             with os.fdopen(fd, "rb") as handle:
                 info = os.fstat(handle.fileno())
                 if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:

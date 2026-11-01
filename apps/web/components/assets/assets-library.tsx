@@ -26,6 +26,48 @@ function sizeLabel(size: number): string {
   return `${Math.max(1, Math.round(size / 1024))} KB`;
 }
 
+function AssetImage({ assetId, filename }: { assetId: string; filename: string }) {
+  const [url, setUrl] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    let objectUrl: string | null = null;
+    setUrl(null);
+    setFailed(false);
+    async function preview() {
+      try {
+        const response = await apiFetch(`/v1/assets/${assetId}/file`, { signal: controller.signal });
+        if (!response.ok) throw new Error("预览读取失败");
+        const blob = await response.blob();
+        if (!blob.type.startsWith("image/") || !blob.size) throw new Error("图片内容无效");
+        if (controller.signal.aborted) return;
+        objectUrl = URL.createObjectURL(blob);
+        setUrl(objectUrl);
+      } catch {
+        if (!controller.signal.aborted) setFailed(true);
+      }
+    }
+    void preview();
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [assetId, retry]);
+
+  if (url) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return <img src={url} alt={filename} className="aspect-video w-full rounded-sm bg-stage object-contain" />;
+  }
+  return (
+    <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-sm bg-stage text-caption text-text-3">
+      <span role="status">{failed ? "图片预览没有载入" : "正在载入预览"}</span>
+      {failed ? <button type="button" className="min-h-11 rounded-sm px-3 text-text-1 hover:bg-hover" onClick={() => setRetry((value) => value + 1)}>重试预览</button> : null}
+    </div>
+  );
+}
+
 /** 企业素材库：按类型上传、查看、删除。mock 存储在本地，不用真实客户图片。 */
 export function AssetsLibrary() {
   const [kind, setKind] = useState<Kind>("product_image");
@@ -33,22 +75,31 @@ export function AssetsLibrary() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const kindRef = useRef(kind);
+  const requestRef = useRef(0);
 
   async function load(next: Kind) {
+    if (kindRef.current !== next) return;
+    const request = ++requestRef.current;
     setRows(null);
     try {
       const response = await apiFetch(`/v1/assets?kind=${next}`);
       if (!response.ok) throw new Error(await errorMessage(response));
       const body = (await response.json()) as { assets?: Asset[] };
-      setRows(body.assets ?? []);
+      if (requestRef.current === request) setRows(body.assets ?? []);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "没有拿到素材");
-      setRows([]);
+      if (requestRef.current === request) {
+        setError(caught instanceof Error ? caught.message : "没有拿到素材");
+        setRows([]);
+      }
     }
   }
 
   useEffect(() => {
+    kindRef.current = kind;
+    setError(null);
     void load(kind);
+    return () => { requestRef.current += 1; };
   }, [kind]);
 
   async function upload(file: File) {
@@ -142,12 +193,7 @@ export function AssetsLibrary() {
           {rows.map((row) => (
             <li key={row.asset_id} className="rounded-lg border border-border bg-surface p-3">
               {row.kind === "product_image" ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={`/v1/assets/${row.asset_id}/file`}
-                  alt={row.filename}
-                  className="aspect-video w-full rounded-sm bg-stage object-contain"
-                />
+                <AssetImage assetId={row.asset_id} filename={row.filename} />
               ) : (
                 <div className="flex aspect-video w-full items-center justify-center rounded-sm bg-stage text-caption text-text-3">
                   {TABS.find((item) => item.kind === row.kind)?.label}
