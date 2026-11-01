@@ -6,6 +6,7 @@
  */
 
 import { apiFetch, errorMessage } from "./api";
+import { generationSettings, settingsKey } from "./generation-settings";
 import {
   adaptLegacyCanvas,
   buildSelectBody,
@@ -70,6 +71,7 @@ export function createCanvasClient(
   const store = new CanvasMockStore(memory, projectId);
   let last: CanvasSnapshot | null = null;
   let filmSubmission: { operation_id: string; draft_revision: number } | null = null;
+  let filmInputKey: string | null = null;
   const tabKey = "hilatv.canvas.draft-tab";
   let tabId = "local";
   if (typeof window !== "undefined") {
@@ -455,13 +457,19 @@ export function createCanvasClient(
         status: string; sentence: string; draft_revision: number;
         attachments?: unknown[]; brand_kit?: unknown; brand_id?: string | null;
         concept_selection?: string | null; skip_storyboard?: boolean;
+        generation_settings?: unknown;
         submission_operation_id?: string;
       };
+      const settings = generationSettings(saved.generation_settings);
+      const inputKey = JSON.stringify([saved.sentence.trim(), settings]);
       if (saved.status !== "draft" && saved.status !== "submitting" && saved.status !== "running") {
         throw new CanvasRequestError(409, "项目已有结果，请继续改稿或新建项目");
       }
       if (saved.status !== "draft" && sentence.trim() && sentence.trim() !== saved.sentence.trim()) {
         throw new CanvasRequestError(409, "原任务已经提交，新增文字尚未用于生成。请先查看原任务，再改稿或新建项目。");
+      }
+      if ((last?.generation_settings && settingsKey(last.generation_settings) !== settingsKey(settings)) || (saved.status !== "draft" && filmInputKey !== null && filmInputKey !== inputKey)) {
+        throw new CanvasRequestError(409, "生成设置已发生变化，请重新读取并核对原任务后再继续");
       }
       if (saved.status !== "draft" && !filmSubmission) {
         if (!saved.submission_operation_id) throw new CanvasRequestError(409, "项目已经提交，请查看项目进度");
@@ -477,16 +485,18 @@ export function createCanvasClient(
             attachments: saved.attachments || [], brand_kit: saved.brand_kit || null,
             brand_id: saved.brand_id || null, concept_selection: saved.concept_selection || null,
             skip_storyboard: saved.skip_storyboard === true,
+            generation_settings: settings,
           });
           if (!updated.ok) throw new CanvasRequestError(updated.status, await errorMessage(updated));
           const body = await updated.json() as { draft_revision: number };
           saved.draft_revision = body.draft_revision;
-          if (last) last = { ...last, sentence: sentence.trim(), draft_revision: body.draft_revision };
+          if (last) last = { ...last, sentence: sentence.trim(), draft_revision: body.draft_revision, generation_settings: settings };
         }
         if (!filmSubmission || filmSubmission.draft_revision !== saved.draft_revision) {
           filmSubmission = { operation_id: crypto.randomUUID(), draft_revision: saved.draft_revision };
         }
       }
+      filmInputKey = JSON.stringify([sentence.trim() || saved.sentence.trim(), settings]);
       const submitted = await sendJson(canvasPath(projectId, "/film/start"), "POST", filmSubmission);
       if (!submitted.ok) throw new CanvasRequestError(submitted.status, await errorMessage(submitted));
       const result = await submitted.json() as { submission_state?: string; message?: string };

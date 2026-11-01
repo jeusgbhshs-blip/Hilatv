@@ -12,6 +12,9 @@ test("aspect, language, and duration each load that cut", async ({ page }) => {
   await expect(page.getByLabel("文件", { exact: true })).toHaveValue("master");
   await expect(page.getByLabel("比例")).toBeDisabled();
   await expect(page.getByRole("button", { name: "保存预览", exact: true })).toBeVisible();
+  await expect(player).toHaveAttribute("data-orientation", "portrait");
+  await expect(page.getByTestId("generation-target")).toHaveText("主画幅 · 9:16；目标时长 · 30 秒");
+  await expect(page.getByTestId("actual-media")).toContainText("720 × 1280 · 18.4 秒");
   const wide = page.waitForRequest((request) => new URL(request.url()).pathname === `/v1/projects/${PROJECT}/versions/wide/preview`);
   await page.getByLabel("文件", { exact: true }).selectOption("export");
   await wide;
@@ -32,7 +35,6 @@ test("aspect, language, and duration each load that cut", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "模拟成片，可预览" })).toBeVisible();
   await expect(page.getByRole("button", { name: "保存预览", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "下载成片", exact: true })).toHaveCount(0);
-
   await page.getByLabel("比例").selectOption("16:9");
   const english = page.waitForRequest((request) => request.url().includes("/versions/english/preview"));
   await page.getByLabel("语种").selectOption("en");
@@ -56,6 +58,12 @@ test("aspect, language, and duration each load that cut", async ({ page }) => {
   await expect(player).toHaveAttribute("data-aspect", "master");
   await expect(page.getByRole("button", { name: "保存预览", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "下载成片", exact: true })).toHaveCount(0);
+  await expect(page.getByLabel("导出画幅", { exact: true })).toHaveValue("9:16");
+  await page.getByLabel("导出画幅", { exact: true }).selectOption("21:9");
+  const exportRequest = page.waitForRequest((request) => request.method() === "POST" && new URL(request.url()).pathname === `/v1/projects/${PROJECT}/deliveries`);
+  await page.getByRole("button", { name: "导出其他版本", exact: true }).click();
+  expect((await exportRequest).postDataJSON()).toEqual({ aspect_ratios: ["21:9"], languages: ["zh"] });
+  await expect(page.getByText("版本已导出，可在文件中选择导出文件预览。", { exact: true })).toBeVisible();
 });
 
 async function stubFilm(page: Page) {
@@ -73,6 +81,7 @@ async function stubFilm(page: Page) {
   await page.route(`**/v1/projects/${PROJECT}/preview`, fulfillMp4);
   await page.route(`**/v1/projects/${PROJECT}/revisions`, (route) => route.fulfill({ json: { versions: [] } }));
   await page.route(`**/v1/projects/${PROJECT}/versions`, (route) => route.fulfill({ json: { versions } }));
+  await page.route(`**/v1/projects/${PROJECT}/deliveries`, (route) => route.fulfill({ json: { versions } }));
   await page.route(`**/v1/projects/${PROJECT}`, (route) => {
     if (route.request().method() !== "GET") return route.fallback();
     return route.fulfill({
@@ -80,6 +89,9 @@ async function stubFilm(page: Page) {
         status: "completed", sentence: "柱塞泵宣传片", shots: [{ shot_id: "S01", order: 1, purpose: "产品" }],
         preview_available: true, preview_path: `/v1/projects/${PROJECT}/preview`, media_hash: "mock-master-hash",
         delivery_status: "preview", quality_pass: false, media_provenance: "mock", download_path: null,
+        generation_settings: { aspect_ratio: "9:16", duration_s: 30 },
+        resolved_generation_settings: { aspect_ratio: "9:16", duration_s: 30, language: "zh" },
+        width: 720, height: 1280, duration_s: 18.4,
       },
     });
   });

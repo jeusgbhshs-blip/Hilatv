@@ -94,6 +94,7 @@ export function GenerationSettingsPicker({ value, disabled = false, onChange }: 
         <Button type="button" variant="ghost" className="size-11 shrink-0 p-0" aria-label="关闭生成设置" onClick={() => setOpen(null)}><X aria-hidden="true" className="size-4" /></Button>
       </div>
       <p id={`${id}-hint`} className="mt-2 text-small text-text-2">选择后自动保存。明确选择会优先于输入文字；自动则由内容决定。</p>
+      {open === "ratio" ? <p className="mt-2 text-caption text-text-3">参考图片比例不同时，会保留完整画面并补边适配。</p> : null}
       {open === "ratio" ? <fieldset className="mt-4">
         <legend className="sr-only">画面比例</legend>
         {ratioOption(null)}

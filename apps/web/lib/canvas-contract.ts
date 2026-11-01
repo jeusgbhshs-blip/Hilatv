@@ -5,6 +5,7 @@
  */
 
 import { verdictLabel, type Verdict } from "./expert";
+import type { GenerationSettings } from "./generation-settings";
 
 export type { Verdict };
 
@@ -201,6 +202,7 @@ export type CanvasSnapshot = {
   /** 项目状态：draft / running / needs_human_review / completed。 */
   status?: string;
   draft_revision?: number;
+  generation_settings?: GenerationSettings;
   /** 现有 POST /expert/timeline 的正文。入点出点不在这里。 */
   server_timeline?: ServerTimeline;
 };

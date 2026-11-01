@@ -227,7 +227,7 @@ describe("project transport must not replace a failed project with a demo", () =
     const client = createCanvasClient("real-project", memory());
     await client.load();
     request.mockResolvedValueOnce(Response.json(canvas));
-    request.mockResolvedValueOnce(Response.json({ status: "draft", sentence: "old", draft_revision: 1, attachments: [{ kind: "url", uri: "https://example.test/" }], concept_selection: "direction-a", skip_storyboard: false }));
+    request.mockResolvedValueOnce(Response.json({ status: "draft", sentence: "old", draft_revision: 1, attachments: [{ kind: "url", uri: "https://example.test/" }], concept_selection: "direction-a", skip_storyboard: false, generation_settings: { aspect_ratio: "9:16", duration_s: 30 } }));
     request.mockResolvedValueOnce(Response.json({ draft_revision: 2 }));
     request.mockResolvedValueOnce(Response.json({ submission_state: "unknown_external_result", message: "等待确认原提交" }));
     await expect(client.startFilm("new input")).rejects.toThrow("等待确认");
@@ -236,13 +236,38 @@ describe("project transport must not replace a failed project with a demo", () =
     expect(firstBody.draft_revision).toBe(2);
     expect(firstBody).not.toHaveProperty("sentence");
     const saved = request.mock.calls.find(([path]) => path.endsWith("/draft"))!;
-    expect(JSON.parse(String(saved[1]?.body))).toMatchObject({ sentence: "new input", concept_selection: "direction-a", skip_storyboard: false, attachments: [{ kind: "url", uri: "https://example.test/" }] });
+    expect(JSON.parse(String(saved[1]?.body))).toMatchObject({ sentence: "new input", concept_selection: "direction-a", skip_storyboard: false, attachments: [{ kind: "url", uri: "https://example.test/" }], generation_settings: { aspect_ratio: "9:16", duration_s: 30 } });
     request.mockResolvedValueOnce(Response.json({ ...canvas, status: "submitting", draft_revision: 2 }));
-    request.mockResolvedValueOnce(Response.json({ status: "submitting", sentence: "new input", draft_revision: 2 }));
+    request.mockResolvedValueOnce(Response.json({ status: "submitting", sentence: "new input", draft_revision: 2, generation_settings: { aspect_ratio: "9:16", duration_s: 30 } }));
     request.mockResolvedValueOnce(Response.json({ submission_state: "submitted" }));
     await client.startFilm("new input");
     const submissions = request.mock.calls.filter(([path]) => path.endsWith("/film/start"));
     expect(JSON.parse(String(submissions[1][1]?.body))).toEqual(firstBody);
+  });
+
+  it("refuses to start when the saved project settings differ from the canvas snapshot", async () => {
+    const canvas = { ...seedCanvas("real-project"), status: "draft", draft_revision: 1, generation_settings: { aspect_ratio: "9:16", duration_s: 30 } };
+    request.mockResolvedValueOnce(Response.json(canvas));
+    const client = createCanvasClient("real-project", memory()); await client.load();
+    request.mockResolvedValueOnce(Response.json(canvas));
+    request.mockResolvedValueOnce(Response.json({ status: "draft", sentence: canvas.sentence, draft_revision: 1, generation_settings: { aspect_ratio: "16:9", duration_s: 60 } }));
+    await expect(client.startFilm(canvas.sentence)).rejects.toMatchObject({ status: 409 });
+    expect(request.mock.calls.some(([path]) => path.endsWith("/draft") || path.endsWith("/film/start"))).toBe(false);
+  });
+
+  it("does not reuse an unknown submission after settings change even if the sentence and revision match", async () => {
+    const canvas = { ...seedCanvas("real-project"), status: "draft", draft_revision: 1, generation_settings: { aspect_ratio: "9:16", duration_s: 30 } };
+    request.mockResolvedValueOnce(Response.json(canvas));
+    const client = createCanvasClient("real-project", memory()); await client.load();
+    request.mockResolvedValueOnce(Response.json(canvas));
+    request.mockResolvedValueOnce(Response.json({ status: "draft", sentence: canvas.sentence, draft_revision: 1, generation_settings: canvas.generation_settings }));
+    request.mockResolvedValueOnce(Response.json({ submission_state: "unknown_external_result" }));
+    await expect(client.startFilm(canvas.sentence)).rejects.toMatchObject({ status: 409 });
+    const changed = { ...canvas, status: "submitting", generation_settings: { aspect_ratio: "4:3", duration_s: 60 } };
+    request.mockResolvedValueOnce(Response.json(changed));
+    request.mockResolvedValueOnce(Response.json({ status: "submitting", sentence: canvas.sentence, draft_revision: 1, generation_settings: changed.generation_settings }));
+    await expect(client.startFilm(canvas.sentence)).rejects.toThrow("生成设置已发生变化");
+    expect(request.mock.calls.filter(([path]) => path.endsWith("/film/start"))).toHaveLength(1);
   });
 
 });

@@ -3,10 +3,17 @@ import { describe, it } from "node:test";
 
 import {
   aspectLabel,
+  ASPECT_RATIOS,
   defaultChoice,
+  currentExportLanguage,
+  defaultExportAspect,
+  deliveryRequest,
   downloadName,
   durationLabel,
   languageLabel,
+  generationTargetSummary,
+  mediaMetadata,
+  mediaOrientation,
   pickVersion,
   readVersions,
   reconcile,
@@ -88,5 +95,46 @@ describe("version preview evidence", () => {
     assert.equal(parsed.media_provenance, "mock");
     assert.equal(readVersions([{ ...VERSIONS[0], preview_path: "//external.test/preview" }])[0].preview_path, null);
     assert.equal(readVersions([{ ...VERSIONS[0], download_path: "//external.test/download" }]).length, 0);
+  });
+});
+
+describe("generation target, actual media and explicit exports", () => {
+  it("never presents the requested ratio or target duration as actual media geometry", () => {
+    const snapshot = { generation_settings: { aspect_ratio: "9:16", duration_s: 30 }, width: 1920, height: 1080, duration_s: 18.4 };
+    assert.equal(generationTargetSummary(snapshot), "主画幅 · 9:16；目标时长 · 30 秒");
+    assert.deepEqual(mediaMetadata(snapshot), { width: 1920, height: 1080, duration_s: 18.4 });
+    assert.equal(mediaOrientation(mediaMetadata(snapshot)), "landscape");
+    assert.equal(defaultExportAspect(snapshot), "9:16");
+  });
+  it("uses resolved automatic targets without inventing file dimensions", () => {
+    const snapshot = { generation_settings: { aspect_ratio: null, duration_s: null }, resolved_generation_settings: { aspect_ratio: "4:3", duration_s: 60, language: "en" } };
+    assert.equal(generationTargetSummary(snapshot), "主画幅 · 4:3；目标时长 · 60 秒");
+    assert.deepEqual(mediaMetadata(snapshot), { width: null, height: null, duration_s: null });
+    assert.equal(mediaOrientation(mediaMetadata(snapshot)), "unknown");
+    assert.equal(defaultExportAspect(snapshot), "4:3");
+  });
+  it("uses decoded or probed portrait and square dimensions rather than assuming every file is 16:9", () => {
+    assert.equal(mediaOrientation(mediaMetadata({ width: 720, height: 1280, duration_s: 18.4 })), "portrait");
+    assert.equal(mediaOrientation(mediaMetadata({ width: 1080, height: 1080 })), "square");
+    assert.equal(defaultExportAspect({ width: 720, height: 1280 }), "9:16");
+    assert.equal(defaultExportAspect({ width: 854, height: 480 }), "16:9");
+    assert.equal(mediaOrientation(mediaMetadata({ width: 0, height: 1280 })), "unknown");
+    assert.equal(mediaMetadata({ width: NaN, height: 1080, duration_s: Infinity }).duration_s, null);
+  });
+  it("exports only the explicitly selected ratio and one existing language for all nine supported frames", () => {
+    for (const ratio of ASPECT_RATIOS) {
+      assert.deepEqual(deliveryRequest(ratio, "zh"), { aspect_ratios: [ratio], languages: ["zh"] });
+      assert.ok(aspectLabel(ratio).startsWith(ratio));
+    }
+    assert.deepEqual(deliveryRequest("21:9", "en"), { aspect_ratios: ["21:9"], languages: ["en"] });
+    assert.equal(currentExportLanguage({ resolved_generation_settings: { language: "en" } }, "zh"), "en");
+    assert.equal(currentExportLanguage({}, "en"), "en");
+    assert.equal(currentExportLanguage({}), "zh");
+    assert.throws(() => deliveryRequest("10:1", "zh"));
+    assert.throws(() => deliveryRequest("16:9", ""));
+    assert.throws(() => deliveryRequest("16:9", "zh,en"));
+  });
+  it("rejects exported rows with invalid dimensions", () => {
+    assert.deepEqual(readVersions([{ ...VERSIONS[0], width: 0 }, { ...VERSIONS[0], height: -1 }]), []);
   });
 });

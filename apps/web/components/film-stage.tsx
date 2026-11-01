@@ -17,10 +17,17 @@ import { filmConclusion, PROJECT_COPY } from "@/lib/status-copy";
 import { cn } from "@/lib/utils";
 import {
   aspectLabel,
+  ASPECT_RATIOS,
   defaultChoice,
+  currentExportLanguage,
+  defaultExportAspect,
+  deliveryRequest,
   downloadName,
   durationLabel,
   languageLabel,
+  generationTargetSummary,
+  mediaMetadata,
+  mediaOrientation,
   pickVersion,
   readVersions,
   reconcile,
@@ -29,6 +36,7 @@ import {
   uniqueLanguages,
   type FilmVersion,
   type VersionChoice,
+  type MediaMetadata,
 } from "@/lib/versions";
 
 type EditVersion = {
@@ -50,6 +58,8 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const [fileKind, setFileKind] = useState("master");
   const [choice, setChoice] = useState<VersionChoice>({ aspect: "", language: "", duration: null });
   const [exporting, setExporting] = useState(false);
+  const [exportAspect, setExportAspect] = useState<string | null>(null);
+  const [decodedMedia, setDecodedMedia] = useState<{ src: string; value: MediaMetadata } | null>(null);
   const [downloading, setDownloading] = useState(false);
   const downloadingRef = useRef(false);
   const mountedRef = useRef(false);
@@ -110,8 +120,10 @@ export function FilmStage({ projectId }: { projectId: string }) {
     : ready ? snapshot?.preview_path : null;
   const downloadPath = formalReady ? delivery?.download_path : mediaPath;
   const mediaHash = selected?.media_hash ?? snapshot?.media_hash;
+  const exportRatio = exportAspect || defaultExportAspect(snapshot);
+  const exportLanguage = currentExportLanguage(snapshot, selected?.language);
 
-  useEffect(() => { setFileKind("master"); }, [snapshot?.media_hash]);
+  useEffect(() => { setFileKind("master"); setExportAspect(null); }, [snapshot?.media_hash]);
 
   useEffect(() => {
     if (!ready) return;
@@ -233,16 +245,13 @@ export function FilmStage({ projectId }: { projectId: string }) {
       const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/deliveries`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          aspect_ratios: ["16:9", "9:16", "1:1"],
-          languages: ["zh", "en"],
-        }),
+        body: JSON.stringify(deliveryRequest(exportRatio, exportLanguage)),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const found = readVersions(await response.json());
       setVersions(found);
       setVersionNote("版本已导出，可在文件中选择导出文件预览。");
-      if (found.length > 0) setChoice((current) => current.aspect ? reconcile(found, current) : defaultChoice(found));
+      if (found.length > 0) setChoice(reconcile(found, { aspect: exportRatio, language: exportLanguage, duration: null }));
     } catch (caught) {
       setVersionNote(caught instanceof Error ? caught.message : "导出没有成功");
     } finally {
@@ -327,7 +336,10 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const aspects = uniqueAspects(versions);
   const languages = uniqueLanguages(versions, choice.aspect);
   const durations = uniqueDurations(versions, choice.aspect, choice.language);
-  const portrait = selected ? selected.height > selected.width : false;
+  const probed = mediaMetadata(selected ?? snapshot);
+  const decoded = decodedMedia?.src === src ? decodedMedia.value : mediaMetadata();
+  const actual = { width: probed.width ?? decoded.width, height: probed.height ?? decoded.height, duration_s: probed.duration_s ?? decoded.duration_s };
+  const orientation = mediaOrientation(actual);
   const notice = conceptNotice(snapshot);
   const conclusion = filmConclusion(
     readError ? { ...snapshot, delivery_status: "needs_verification", quality_pass: undefined } : snapshot,
@@ -356,6 +368,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
         {snapshot?.sentence ? (
           <p className="mt-2 break-words text-body text-text-2">{snapshot.sentence}</p>
         ) : null}
+        <p data-testid="generation-target" className="mt-2 text-small text-text-2">{generationTargetSummary(snapshot)}</p>
         {notice ? (
           <p
             role="status"
@@ -379,14 +392,20 @@ export function FilmStage({ projectId }: { projectId: string }) {
             <video
               data-testid="film-player"
               data-aspect={selected?.aspect_ratio ?? "master"}
+              data-orientation={orientation}
               className={
-                portrait
-                  ? "mx-auto block aspect-9/16 max-h-160 bg-stage object-contain"
-                  : "block aspect-video w-full bg-stage object-contain"
+                orientation === "portrait"
+                  ? "mx-auto block h-auto w-auto max-h-160 max-w-full bg-stage object-contain"
+                  : "block h-auto max-h-160 w-full bg-stage object-contain"
               }
               controls
               playsInline
               src={src ?? undefined}
+              onLoadedMetadata={(event) => {
+                const video = event.currentTarget;
+                if (!src || video.currentSrc !== src) return;
+                setDecodedMedia({ src, value: mediaMetadata({ width: video.videoWidth, height: video.videoHeight, duration_s: video.duration }) });
+              }}
               onError={() => setMediaError("这条预览未能播放，请重新载入")}
               aria-label="成片播放器"
             />
@@ -395,6 +414,9 @@ export function FilmStage({ projectId }: { projectId: string }) {
             </span>
           </div>
           {!src && !mediaError ? <p className="mt-2 text-small text-text-2">{mediaPath ? PROJECT_COPY.loadingFilm : "此版本暂时没有可播放的预览"}</p> : null}
+          <p data-testid="actual-media" className="mt-2 text-caption text-text-2">
+            当前{selected ? "导出文件" : "母版"}：{actual.width !== null && actual.height !== null ? `${actual.width} × ${actual.height}` : "正在读取实际画面尺寸"}{actual.duration_s !== null ? ` · ${durationLabel(actual.duration_s)}` : ""}
+          </p>
           {!selected && shots.length > 0 ? (
             <div className="mt-4">
               <h2 className="text-small text-text-2">时间轴</h2>
@@ -471,6 +493,10 @@ export function FilmStage({ projectId }: { projectId: string }) {
                 options={durations.map((item) => ({ value: String(item), label: durationLabel(item) }))}
                 onChange={(value) => choose({ duration: Number(value) })}
               />
+              <VersionSelect id="export-aspect" label="导出画幅" value={exportRatio} disabled={exporting}
+                options={ASPECT_RATIOS.map((ratio) => ({ value: ratio, label: aspectLabel(ratio) }))}
+                onChange={setExportAspect} />
+              <p className="text-caption text-text-3">导出语种：{languageLabel(exportLanguage)}（当前语种）。每次只导出所选画幅。</p>
               <Button
                   type="button"
                   variant="secondary"

@@ -1,5 +1,53 @@
 /** Choose one exported film from aspect, language, and duration. */
 
+export const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "4:5", "21:9"] as const;
+export type MediaMetadata = { width: number | null; height: number | null; duration_s: number | null };
+export type ProjectMediaSettings = {
+  generation_settings?: { aspect_ratio?: string | null; duration_s?: number | null };
+  resolved_generation_settings?: { aspect_ratio?: string | null; duration_s?: number | null; language?: string | null };
+  width?: number | null; height?: number | null; duration_s?: number | null;
+};
+
+function positiveNumber(value: unknown): value is number { return typeof value === "number" && Number.isFinite(value) && value > 0; }
+
+/** Only server-probed or decoded values count as actual media dimensions. */
+export function mediaMetadata(value?: Partial<MediaMetadata> | null): MediaMetadata {
+  const dimensions = positiveNumber(value?.width) && positiveNumber(value?.height);
+  return { width: dimensions ? value!.width! : null, height: dimensions ? value!.height! : null, duration_s: positiveNumber(value?.duration_s) ? value.duration_s : null };
+}
+
+export function mediaOrientation(value: MediaMetadata): "portrait" | "landscape" | "square" | "unknown" {
+  if (value.width === null || value.height === null) return "unknown";
+  return value.width === value.height ? "square" : value.height > value.width ? "portrait" : "landscape";
+}
+
+export function generationTargetSummary(value: ProjectMediaSettings | null): string {
+  const ratio = value?.generation_settings?.aspect_ratio || value?.resolved_generation_settings?.aspect_ratio;
+  const duration = value?.generation_settings?.duration_s ?? value?.resolved_generation_settings?.duration_s;
+  return `主画幅 · ${ratio || "自动"}；目标时长 · ${positiveNumber(duration) ? `${duration} 秒` : "自动"}`;
+}
+
+export function defaultExportAspect(value: ProjectMediaSettings | null): typeof ASPECT_RATIOS[number] {
+  const configured = value?.generation_settings?.aspect_ratio || value?.resolved_generation_settings?.aspect_ratio;
+  if (ASPECT_RATIOS.includes(configured as typeof ASPECT_RATIOS[number])) return configured as typeof ASPECT_RATIOS[number];
+  const actual = mediaMetadata(value);
+  return ASPECT_RATIOS.find((ratio) => {
+    const [width, height] = ratio.split(":").map(Number);
+    return actual.width !== null && actual.height !== null && Math.abs(actual.width / actual.height - width / height) < 0.01;
+  }) || "16:9";
+}
+
+export function currentExportLanguage(value: ProjectMediaSettings | null, selectedLanguage?: string): string {
+  return value?.resolved_generation_settings?.language || selectedLanguage || "zh";
+}
+
+/** Export one chosen frame in the existing language, never speculative variants. */
+export function deliveryRequest(aspect: string, language: string): { aspect_ratios: string[]; languages: string[] } {
+  if (!ASPECT_RATIOS.includes(aspect as typeof ASPECT_RATIOS[number])) throw new Error("请选择可用的导出画幅");
+  if (!/^[a-zA-Z]{2,3}(?:-[a-zA-Z0-9]{2,8})*$/.test(language)) throw new Error("当前语种尚未确认，请重新读取项目");
+  return { aspect_ratios: [aspect], languages: [language] };
+}
+
 export type FilmVersion = {
   version_id: string;
   aspect_ratio: string;
@@ -29,6 +77,12 @@ const ASPECT_LABELS: Record<string, string> = {
   "16:9": "16:9 横屏",
   "9:16": "9:16 竖屏",
   "1:1": "1:1 方形",
+  "4:3": "4:3 横屏",
+  "3:4": "3:4 竖屏",
+  "3:2": "3:2 横屏",
+  "2:3": "2:3 竖屏",
+  "4:5": "4:5 竖屏",
+  "21:9": "21:9 宽屏",
 };
 
 const LANGUAGE_LABELS: Record<string, string> = {
@@ -57,7 +111,7 @@ export function readVersions(body: unknown): FilmVersion[] {
     if (typeof aspect !== "string" || !aspect) continue;
     if (typeof language !== "string" || !language) continue;
     if (!Number.isFinite(duration) || duration <= 0) continue;
-    if (!Number.isFinite(width) || !Number.isFinite(height)) continue;
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) continue;
     if (typeof download !== "string" || (!download.startsWith("/") || download.startsWith("//"))) continue;
     versions.push({
       version_id: versionId,

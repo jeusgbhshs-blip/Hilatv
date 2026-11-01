@@ -1,4 +1,5 @@
-export const ASPECT_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3", "4:5", "21:9"] as const;
+import { ASPECT_RATIOS } from "./versions";
+export { ASPECT_RATIOS };
 export type AspectRatio = typeof ASPECT_RATIOS[number];
 export type GenerationSettings = { aspect_ratio: AspectRatio | null; duration_s: number | null };
 

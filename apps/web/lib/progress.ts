@@ -1,5 +1,7 @@
 /** Fold WebSocket events and the project snapshot into the progress page. */
 
+import type { GenerationSettings } from "./generation-settings";
+
 export const PHASES = ["理解需求", "选方案", "看分镜", "生成中", "成片"] as const;
 
 export type Phase = (typeof PHASES)[number];
@@ -37,6 +39,12 @@ export type AttachmentView = {
 };
 
 export type ProjectSnapshot = {
+  generation_settings?: GenerationSettings;
+  resolved_generation_settings?: { aspect_ratio?: string | null; duration_s?: number | null; language?: string | null };
+  /** Current-file ffprobe metadata, distinct from the requested target. */
+  width?: number | null;
+  height?: number | null;
+  duration_s?: number | null;
   status?: string;
   phase?: string | null;
   message?: string | null;

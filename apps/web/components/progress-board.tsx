@@ -26,6 +26,7 @@ import {
   type ShotSummary,
 } from "@/lib/progress";
 import { PROJECT_COPY, SHOT_STATUS, shotStatus, STAGES } from "@/lib/status-copy";
+import { generationTargetSummary } from "@/lib/versions";
 
 export function ProgressBoard({ projectId }: { projectId: string }) {
   const [snapshot, setSnapshot] = useState<ProjectSnapshot | null>(null);
@@ -143,6 +144,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         {snapshot?.sentence ? (
           <p className="mt-2 break-words text-body text-text-2">{snapshot.sentence}</p>
         ) : null}
+        {snapshot ? <p data-testid="generation-target" className="mt-2 text-small text-text-2">{generationTargetSummary(snapshot)}</p> : null}
       </div>
 
       <Card className="grid gap-3 p-4 md:p-5">
