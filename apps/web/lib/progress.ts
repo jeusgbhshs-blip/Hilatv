@@ -53,6 +53,11 @@ export type ProjectSnapshot = {
   quality_pass?: boolean;
   delivery_status?: string;
   media_provenance?: string;
+  preview_available?: boolean;
+  preview_path?: string | null;
+  download_path?: string | null;
+  media_hash?: string | null;
+  delivery_reasons?: string[];
   revision_notice?: string | null;
 };
 

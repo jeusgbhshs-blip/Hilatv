@@ -75,3 +75,18 @@ function version(id: string, aspect: string, language: string, duration: number)
     share_path: null,
   };
 }
+
+
+describe("version preview evidence", () => {
+  it("retains the selected file gate and rejects external preview URLs", () => {
+    const [parsed] = readVersions([{ ...VERSIONS[0], preview_path: "/v1/projects/p/versions/wide-zh/preview", preview_available: true, media_hash: "file-hash", delivery_status: "needs_verification", quality_pass: false, media_provenance: "mock" }]);
+    assert.equal(parsed.preview_available, true);
+    assert.equal(parsed.preview_path, "/v1/projects/p/versions/wide-zh/preview");
+    assert.equal(parsed.media_hash, "file-hash");
+    assert.equal(parsed.delivery_status, "needs_verification");
+    assert.equal(parsed.quality_pass, false);
+    assert.equal(parsed.media_provenance, "mock");
+    assert.equal(readVersions([{ ...VERSIONS[0], preview_path: "//external.test/preview" }])[0].preview_path, null);
+    assert.equal(readVersions([{ ...VERSIONS[0], download_path: "//external.test/download" }]).length, 0);
+  });
+});

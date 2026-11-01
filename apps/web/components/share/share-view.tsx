@@ -12,6 +12,7 @@ type ShareBody = {
   ai_label: boolean;
   download_allowed: boolean;
   has_film: boolean;
+  preview_message?: string | null;
 };
 
 /** 公开只读页：不需要登录，只能看，不能改。 */
@@ -67,7 +68,7 @@ export function ShareView({ token }: { token: string }) {
               {body.ai_label ? "本片含 AI 生成内容（AI生成标识不可关闭）" : ""}
             </p>
             <p className="mt-2 text-caption text-text-3">
-              {body.download_allowed ? "可以下载成片（由项目负责人提供）。" : "分享者设置了禁止下载。"}
+              {body.preview_message || (body.download_allowed ? "可以下载成片（由项目负责人提供）。" : "此分享暂不提供成片下载。")}
             </p>
           </>
         )}

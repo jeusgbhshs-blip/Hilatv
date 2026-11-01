@@ -92,20 +92,21 @@ export function filmConclusion(value: {
   quality_pass?: boolean;
   delivery_status?: string;
   media_provenance?: string;
-} | null, version?: { qa_status?: string; quality_pass?: boolean } | null): {
+} | null, version?: { qa_status?: string; quality_pass?: boolean; delivery_status?: string; media_provenance?: string } | null): {
   title: string; detail: string; tone: Tone;
 } {
-  const source = value?.media_provenance;
+  const current = version ?? value;
+  const source = current?.media_provenance;
   if (source === "mock" || source === "mixed") {
     return { title: "模拟成片，可预览", detail: "这版包含模拟素材，请完成真实生成和审核后再交付。", tone: "warning" };
   }
-  if (version && (version.quality_pass !== true || version.qa_status !== "passed")) {
+  if (version && (version.quality_pass !== true || version.delivery_status !== "ready" || source !== "live")) {
     return { title: "已生成，待核验", detail: "当前导出版本尚未通过完整审核，请先检查画面与声音。", tone: "warning" };
   }
-  if (value?.quality_pass === false) {
+  if (current?.quality_pass === false) {
     return { title: "已生成，待处理", detail: "当前版本尚未通过质检，请查看问题并修改。", tone: "warning" };
   }
-  if (value?.delivery_status === "ready" && value.quality_pass === true && source === "live") {
+  if (current?.delivery_status === "ready" && current.quality_pass === true && source === "live") {
     return { title: "成片已通过审核", detail: "当前版本已完成审核，可以按授权交付。", tone: "success" };
   }
   return { title: "已生成，待核验", detail: "审核或素材来源证据尚不完整，可先预览和继续修改。", tone: "warning" };

@@ -46,3 +46,15 @@ describe("truthful film and progress conclusions", () => {
     assert.equal(filmConclusion({ quality_pass: true, delivery_status: "ready", media_provenance: "live" }, { qa_status: "needs_review" }).tone, "warning");
   });
 });
+
+
+describe("selected file readiness", () => {
+  const released = { quality_pass: true, delivery_status: "ready", media_provenance: "live" };
+  it("never inherits the master approval or provenance for another export", () => {
+    assert.equal(filmConclusion(released, { quality_pass: true, qa_status: "passed" }).tone, "warning");
+    assert.equal(filmConclusion(released, { ...released, qa_status: "passed", media_provenance: "mock" }).title, "模拟成片，可预览");
+    assert.equal(filmConclusion(released, { ...released, qa_status: "passed", delivery_status: "needs_verification" }).tone, "warning");
+    assert.equal(filmConclusion({ media_provenance: "mock" }, { ...released, qa_status: "passed" }).tone, "success");
+    assert.equal(filmConclusion(released, { ...released, qa_status: "needs_review" }).tone, "success");
+  });
+});

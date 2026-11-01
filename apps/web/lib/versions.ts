@@ -9,6 +9,12 @@ export type FilmVersion = {
   height: number;
   download_path: string;
   share_path?: string | null;
+  preview_path?: string | null;
+  preview_available?: boolean;
+  media_hash?: string | null;
+  delivery_status?: string;
+  quality_pass?: boolean;
+  media_provenance?: string;
   qa_status?: string;
   subject_box_source?: string;
 };
@@ -52,7 +58,7 @@ export function readVersions(body: unknown): FilmVersion[] {
     if (typeof language !== "string" || !language) continue;
     if (!Number.isFinite(duration) || duration <= 0) continue;
     if (!Number.isFinite(width) || !Number.isFinite(height)) continue;
-    if (typeof download !== "string" || !download.startsWith("/")) continue;
+    if (typeof download !== "string" || (!download.startsWith("/") || download.startsWith("//"))) continue;
     versions.push({
       version_id: versionId,
       aspect_ratio: aspect,
@@ -62,6 +68,12 @@ export function readVersions(body: unknown): FilmVersion[] {
       height,
       download_path: download,
       share_path: typeof record.share_path === "string" ? record.share_path : null,
+      preview_path: typeof record.preview_path === "string" && record.preview_path.startsWith("/") && !record.preview_path.startsWith("//") ? record.preview_path : null,
+      preview_available: record.preview_available === true,
+      media_hash: typeof record.media_hash === "string" ? record.media_hash : null,
+      delivery_status: typeof record.delivery_status === "string" ? record.delivery_status : undefined,
+      quality_pass: record.quality_pass === true,
+      media_provenance: typeof record.media_provenance === "string" ? record.media_provenance : undefined,
       qa_status: typeof record.qa_status === "string" ? record.qa_status : undefined,
       subject_box_source:
         typeof record.subject_box_source === "string" ? record.subject_box_source : undefined,
