@@ -8,20 +8,19 @@ music level, so the ducking ratio stays put.
 from __future__ import annotations
 
 import array
-import math
 from dataclasses import dataclass
 from pathlib import Path
 
 from gateway.media_bytes import CLICK_SAMPLES, MUSIC_RATE, beat_sample_index, render_beat_pcm
+from workers.media.audio import AudioError
 from workers.nodes.n12_music.library import render_sfx
-from workers.nodes.n12_music.measure import integrated_lufs, write_wav
+from workers.nodes.n12_music.measure import integrated_lufs, speech_regions, write_wav
 
 DUCK_DB = 11.0
 DUCK_GAIN = 10 ** (-DUCK_DB / 20)
 NARRATION_LUFS = -16.0
 MASTER_LUFS = -14.0
 RAMP_S = 0.01
-NARRATION_HZ = 440.0
 
 
 @dataclass(frozen=True)
@@ -33,6 +32,7 @@ class MixFiles:
     mix: Path
     sample_rate: int
     duration_s: float
+    narration_regions: tuple[Region, ...]
 
 
 @dataclass(frozen=True)
@@ -47,12 +47,18 @@ def build_mix(
     n_samples: int,
     bpm: float,
     seed: int,
-    regions: list[Region],
     effects: list[tuple[str, int]],
+    narration: array.array,
+    music: array.array | None = None,
+    mock_music: bool = False,
     sample_rate: int = MUSIC_RATE,
 ) -> MixFiles:
-    narration = _narration(n_samples, regions, sample_rate)
+    if len(narration) != n_samples:
+        raise AudioError("narration must cover the aligned timeline")
+    if music is None and not mock_music:
+        raise AudioError("a real music asset or an explicit mock result is required")
     narration = _scale_to(narration, NARRATION_LUFS, work / "_narration_probe.wav", sample_rate)
+    regions = [Region(start, end) for start, end in speech_regions(narration, sample_rate)]
     sfx = _sfx_bed(n_samples, effects, sample_rate)
     envelope = _envelope(n_samples, regions, sample_rate)
     pad_amp = _solve_pad(
@@ -64,14 +70,9 @@ def build_mix(
         seed=seed,
         sample_rate=sample_rate,
         probe=work / "_mix_probe.wav",
+        music=music,
     )
-    bed = render_beat_pcm(
-        n_samples=n_samples,
-        bpm=bpm,
-        pad_amp=pad_amp,
-        seed=seed,
-        sample_rate=sample_rate,
-    )
+    bed = _music_bed(music, n_samples, bpm, pad_amp, seed, sample_rate)
     ducked = _apply(bed, envelope)
     mixed = _add(narration, ducked, sfx)
     files = MixFiles(
@@ -82,6 +83,7 @@ def build_mix(
         mix=work / "mix.wav",
         sample_rate=sample_rate,
         duration_s=n_samples / sample_rate,
+        narration_regions=tuple(regions),
     )
     write_wav(files.narration, narration, sample_rate)
     write_wav(files.music_bed, bed, sample_rate)
@@ -91,15 +93,14 @@ def build_mix(
     return files
 
 
-def _narration(n_samples: int, regions: list[Region], sample_rate: int) -> array.array:
-    samples = array.array("h", [0] * n_samples)
-    amp = 6000
-    for region in regions:
-        start = max(0, int(round(region.start_s * sample_rate)))
-        end = min(n_samples, int(round(region.end_s * sample_rate)))
-        for index in range(start, end):
-            samples[index] = int(amp * math.sin(2 * math.pi * NARRATION_HZ * index / sample_rate))
-    return samples
+def _music_bed(
+    source: array.array | None, count: int, bpm: float, amp: int, seed: int, rate: int
+) -> array.array:
+    if source is None:
+        return render_beat_pcm(n_samples=count, bpm=bpm, pad_amp=amp, seed=seed, sample_rate=rate)
+    if len(source) < count:
+        raise AudioError("music audio is shorter than the aligned timeline")
+    return _gain(source[:count], amp / 8000)
 
 
 def _sfx_bed(n_samples: int, effects: list[tuple[str, int]], sample_rate: int) -> array.array:
@@ -142,14 +143,13 @@ def _solve_pad(
     seed: int,
     sample_rate: int,
     probe: Path,
+    music: array.array | None = None,
 ) -> int:
     amp = 8000
     best_amp = amp
     best_error = 1_000.0
     for _ in range(6):
-        bed = render_beat_pcm(
-            n_samples=n_samples, bpm=bpm, pad_amp=amp, seed=seed, sample_rate=sample_rate
-        )
+        bed = _music_bed(music, n_samples, bpm, amp, seed, sample_rate)
         mixed = _add(narration, _apply(bed, envelope), sfx)
         write_wav(probe, mixed, sample_rate)
         measured = integrated_lufs(probe)

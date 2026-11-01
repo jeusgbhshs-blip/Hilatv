@@ -593,6 +593,8 @@ def _take(shot_id: str, text: str, duration: float) -> dict[str, Any]:
         "loudness_dbfs": -16.0,
         "clipped": False,
         "role": "body",
+        "provenance": "mock",
+        "seed": 0,
     }
 
 

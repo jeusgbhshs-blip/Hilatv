@@ -7,6 +7,7 @@ text stays on the shot; this node only moves its in/out marks.
 
 from __future__ import annotations
 
+import os
 import time
 import uuid
 from typing import Any, NoReturn
@@ -14,8 +15,8 @@ from typing import Any, NoReturn
 from pydantic import ValidationError
 
 from gateway.media_bytes import render_wav
-from gateway.storage import StorageError, object_store_from_env
 from workers.logging import log_event
+from workers.media.audio import AudioError, audio_bytes, decode_audio, wav_bytes
 from workers.nodes.n06_voiceover.audio import FRAME_S, analyze_wav, character_error_rate
 from workers.nodes.n06_voiceover.lexicon import load_lexicon, matching_terms
 from workers.nodes.n06_voiceover.prosody import DEFAULT_SPEED, DEFAULT_VOICE, plan_prosody
@@ -33,6 +34,7 @@ from workers.nodes.n06_voiceover.timing import (
     boosted_speed,
     fit_durations,
 )
+from workers.qa.settings import project_dir
 from workers.schemas.asset import Asset, AssetKind
 from workers.schemas.script import OnScreenText, Script, Shot
 
@@ -198,11 +200,14 @@ def _execute(
             duration_s=duration_s,
             timestamps=item["timestamps"],
             transcript=item["transcript"],
+            heard_check=item["heard_check"],
             cer=item["cer"],
             loudness_dbfs=item["loudness_dbfs"],
             clipped=item["clipped"],
             lexicon=item["lexicon"],
             role=plans[shot.shot_id].role,
+            provenance=item["provenance"],
+            seed=0,
         )
         shots.append(updated)
         takes.append(take)
@@ -346,6 +351,8 @@ def _speak_shot(
         pause_s=pause_s,
         seed=0,
         language=language,
+        gateway=gateway,
+        allow_mock=spoken.get("mock") is True,
     )
     level = analyze_wav(wav)
     if level.clipped:
@@ -392,11 +399,25 @@ def _speak_shot(
         "uri": uri,
         "timestamps": _stamps(spoken.get("timestamps")),
         "transcript": transcript,
+        "heard_check": (
+            "verified"
+            if heard.get("mock") is False
+            else "not_verified_in_mock"
+            if heard.get("mock") is True
+            else "not_verified"
+        ),
         "cer": round(cer, 6),
         "loudness_dbfs": level.loudness_dbfs,
         "clipped": level.clipped,
         "lexicon": [item["text"] for item in terms],
         "asset": asset,
+        "provenance": (
+            "mock"
+            if spoken.get("mock") is True or uri.startswith("mock://")
+            else "live"
+            if spoken.get("mock") is False
+            else "unknown"
+        ),
     }
 
 
@@ -479,23 +500,26 @@ def load_take(
     pause_s: float,
     seed: int | None,
     language: str | None = None,
+    gateway: Any = None,
+    allow_mock: bool | None = None,
 ) -> bytes:
     """Bytes for the loudness check. ``mock://`` is rebuilt with the same timing."""
 
-    if uri.startswith(("oss://", "s3://")):
-        store = object_store_from_env()
-        if store is None:
-            raise QAError(f"voiceover audio is not readable: {uri}")
-        try:
-            return store.get(uri)
-        except StorageError as exc:
-            raise QAError(f"voiceover audio is not readable: {uri}") from exc
     if uri.startswith("mock://"):
+        permitted = (
+            os.getenv("HILATV_LIVE", "0").strip() != "1" if allow_mock is None else allow_mock
+        )
+        if not permitted:
+            raise QAError("mock voiceover requires an explicit mock result", retryable=False)
         data, _stamps, _duration = render_wav(
             text, seed, speed=speed, pause_s=pause_s, language=language
         )
         return data
-    raise QAError(f"unsupported audio uri: {uri}")
+    try:
+        data = audio_bytes(uri, allowed_roots=[project_dir()], gateway=gateway)
+        return wav_bytes(decode_audio(data))
+    except AudioError as exc:
+        raise QAError(f"voiceover audio is not readable: {exc}", retryable=False) from exc
 
 
 def _engine_duration(spoken: dict[str, Any], pause_s: float) -> float:

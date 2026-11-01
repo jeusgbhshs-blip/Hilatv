@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from workers.media.audio import AudioProvenance
 from workers.nodes.n06_voiceover.schema import ShotVoiceover
 from workers.nodes.n13_subtitle.schema import SubtitleCue
 from workers.nodes.n14_packaging.schema import PackageElement
@@ -38,6 +39,10 @@ class AudioTrack(BaseModel):
     duration_s: float = Field(gt=0)
     source: str = ""
     license: str = ""
+    provenance: AudioProvenance = "unknown"
+    narration_path: str | None = None
+    music_path: str | None = None
+    sfx_path: str | None = None
 
 
 class TrackLicense(BaseModel):
@@ -105,6 +110,7 @@ class AudioClip(BaseModel):
     path: str
     start_s: float
     duration_s: float
+    provenance: AudioProvenance = "unknown"
 
 
 class OverlayItem(BaseModel):
@@ -132,3 +138,4 @@ class Timeline(BaseModel):
     overlays: list[OverlayItem]
     work_dir: str
     produce_ids: dict[str, str] = Field(default_factory=dict)
+    audio_provenance: AudioProvenance = "unknown"

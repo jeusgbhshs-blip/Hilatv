@@ -8,16 +8,25 @@ Sound effects are picked from the same test library by shot wording.
 
 from __future__ import annotations
 
+import array
 import hashlib
 import os
 import uuid
 from pathlib import Path
 from typing import Any
 
-from gateway.media_bytes import MUSIC_RATE, beat_sample_index, speech_timestamps
+from gateway.media_bytes import MUSIC_RATE, beat_sample_index
 from workers.logging import log_event
+from workers.media.audio import (
+    AudioError,
+    AudioProvenance,
+    audio_bytes,
+    combine_provenance,
+    decode_audio,
+)
 from workers.media.ffmpeg import RenderError
-from workers.nodes.n06_voiceover.schema import ShotVoiceover
+from workers.nodes.n06_voiceover.node import load_take
+from workers.nodes.n06_voiceover.qa import QAError as VoiceError
 from workers.nodes.n12_music.align import boundaries_for
 from workers.nodes.n12_music.library import (
     EVIDENCE_REF,
@@ -119,10 +128,10 @@ def _execute(
     deadline.check()
     mood = _mood(payload)
     track = select_track(mood)
-    takes = {item.shot_id: item for item in payload.voiceovers}
     durations = [float(shot.duration_s) for shot in payload.script.shots]
+    voice_pcm, voice_sources = _load_voices(payload, gateway)
     minimums = [
-        _voice_s(shot, takes.get(shot.shot_id), payload.script.language)
+        len(voice_pcm[shot.shot_id]) / MUSIC_RATE if shot.shot_id in voice_pcm else 0.0
         for shot in payload.script.shots
     ]
     marks = boundaries_for(durations, minimums, track)
@@ -147,14 +156,40 @@ def _execute(
         raise QAError("music response has no source or license", retryable=False)
     _reject_test_library_when_live(spoken, source, license_name)
     work = _work_dir(payload.work_dir, request.project_id)
-    cuts, regions, placed = _layout(payload.script.shots, marks, minimums, track.bpm)
-    files = build_mix(
-        work=work,
-        n_samples=n_samples,
-        bpm=track.bpm,
-        seed=seed,
-        regions=regions,
-        effects=[(kind, start) for kind, start, _shot_id in placed],
+    cuts, _regions, placed = _layout(payload.script.shots, marks, minimums, track.bpm)
+    mock_music = spoken.get("mock") is True
+    if placed and os.getenv("HILATV_LIVE", "0").strip() == "1" and not mock_music:
+        raise QAError("live sound effects require a licensed audio source", retryable=False)
+    try:
+        music = (
+            None
+            if mock_music
+            else decode_audio(
+                audio_bytes(
+                    str(spoken.get("uri") or ""), allowed_roots=[project_dir()], gateway=gateway
+                )
+            )
+        )
+        narration = _place_voices(voice_pcm, cuts, n_samples)
+        files = build_mix(
+            work=work,
+            n_samples=n_samples,
+            bpm=track.bpm,
+            seed=seed,
+            effects=[(kind, start) for kind, start, _shot_id in placed],
+            narration=narration,
+            music=music,
+            mock_music=mock_music,
+        )
+    except AudioError as exc:
+        raise QAError(str(exc), retryable=False) from exc
+    provenance = combine_provenance(
+        [
+            *voice_sources,
+            "mock" if mock_music else "live" if spoken.get("mock") is False else "unknown",
+            # These procedural effects are the explicitly internal-only test library.
+            *(["mock"] if placed else []),
+        ]
     )
     records = _records(
         cuts,
@@ -176,6 +211,10 @@ def _execute(
         duration_s=round(files.duration_s, 6),
         source=source,
         license=license_name,
+        provenance=provenance,
+        narration_path=str(files.narration),
+        music_path=str(files.music_ducked),
+        sfx_path=str(files.sfx),
     )
     aligned = _aligned_script(payload.script, cuts)
     log_event(
@@ -198,7 +237,8 @@ def _execute(
             "cuts": [item.model_dump(mode="json") for item in cuts],
             "cut_times_s": _cut_times(cuts),
             "narration_regions": [
-                {"start_s": region.start_s, "end_s": region.end_s} for region in regions
+                {"start_s": region.start_s, "end_s": region.end_s}
+                for region in files.narration_regions
             ],
             "segments": [item.model_dump(mode="json") for item in records],
             "licensing_summary": summary.model_dump(mode="json"),
@@ -212,6 +252,8 @@ def _execute(
             "mood": mood,
             "bpm": track.bpm,
             "prompt": prompt,
+            "audio_provenance": provenance,
+            "has_narration": bool(voice_pcm),
         },
     )
 
@@ -374,12 +416,57 @@ def _cut_times(cuts: list[CutPoint]) -> list[float]:
     return times
 
 
-def _voice_s(shot: Shot, take: ShotVoiceover | None, language: str) -> float:
-    if not shot.voiceover.strip():
-        return 0.0
-    if take is not None and take.audio_s > 0:
-        return float(take.audio_s)
-    return float(speech_timestamps(shot.voiceover, language=language)[1])
+def _load_voices(
+    payload: N12Input, gateway: Any
+) -> tuple[dict[str, array.array], list[AudioProvenance]]:
+    takes = {item.shot_id: item for item in payload.voiceovers}
+    if len(takes) != len(payload.voiceovers):
+        raise QAError("voiceover shot ids must be unique", retryable=False)
+    found = {}
+    sources = []
+    for shot in payload.script.shots:
+        if not shot.voiceover.strip():
+            continue
+        take = takes.get(shot.shot_id)
+        if take is None:
+            raise QAError(f"{shot.shot_id} is missing a voiceover asset", retryable=False)
+        try:
+            data = load_take(
+                take.uri,
+                text=shot.voiceover,
+                speed=take.speed,
+                pause_s=take.pause_s,
+                seed=take.seed,
+                language=payload.script.language,
+                gateway=gateway,
+                allow_mock=True if take.provenance == "mock" else None,
+            )
+            samples = decode_audio(data)
+        except (AudioError, VoiceError) as exc:
+            raise QAError(
+                f"{shot.shot_id} voiceover is unreadable: {exc}", retryable=False
+            ) from exc
+        if abs(len(samples) / MUSIC_RATE - take.audio_s) > 1 / 30 + 0.001:
+            raise QAError(f"{shot.shot_id} audio duration does not match its take", retryable=False)
+        if not any(samples):
+            raise QAError(f"{shot.shot_id} voiceover is silent", retryable=False)
+        found[shot.shot_id] = samples
+        sources.append("mock" if take.uri.startswith("mock://") else take.provenance)
+    return found, sources
+
+
+def _place_voices(voices: dict[str, array.array], cuts: list[CutPoint], count: int) -> array.array:
+    narration = array.array("h", [0] * count)
+    for cut in cuts:
+        samples = voices.get(cut.shot_id)
+        if samples is None:
+            continue
+        start = round(cut.start_s * MUSIC_RATE)
+        end = start + len(samples)
+        if end > round(cut.end_s * MUSIC_RATE) + 1 or end > count:
+            raise AudioError(f"{cut.shot_id} narration exceeds the aligned shot")
+        narration[start:end] = samples
+    return narration
 
 
 def _rights() -> dict[str, str]:
@@ -391,14 +478,14 @@ def _rights() -> dict[str, str]:
 
 
 def _reject_test_library_when_live(spoken: dict[str, Any], source: str, license_name: str) -> None:
-    """A live run must not ship the synthesized CC0 test library as the licence."""
+    """Explicit mock fallback may finish a preview, never masquerade as live."""
 
     if os.getenv("HILATV_LIVE", "0").strip() != "1":
         return
-    mock = bool(spoken.get("mock"))
+    if spoken.get("mock") is True:
+        return
     test_source = source.startswith("hilatv-test-")
-    test_license = license_name == "CC0-1.0"
-    if mock or test_source or test_license:
+    if test_source:
         raise QAError(
             "live mode cannot deliver the mock test-library licence",
             retryable=False,

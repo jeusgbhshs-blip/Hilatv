@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from workers.media.audio import AudioProvenance
 from workers.nodes.n06_voiceover.schema import ShotVoiceover
 from workers.schemas.brief import Brief
 from workers.schemas.script import Script
@@ -55,6 +56,10 @@ class AudioTrack(BaseModel):
     duration_s: float = Field(gt=0)
     source: str = Field(min_length=1)
     license: str = Field(min_length=1)
+    provenance: AudioProvenance = "unknown"
+    narration_path: str | None = None
+    music_path: str | None = None
+    sfx_path: str | None = None
 
 
 class LicenseRecord(BaseModel):

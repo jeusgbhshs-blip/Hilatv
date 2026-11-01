@@ -6,6 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from workers.media.audio import AudioProvenance
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
 from workers.schemas.script import Script
@@ -62,3 +63,6 @@ class ShotVoiceover(BaseModel):
     clipped: bool
     lexicon: list[str] = Field(default_factory=list)
     role: str = Field(min_length=1)
+    # Preserve the generation source even after mock bytes are stored in OSS.
+    provenance: AudioProvenance = "unknown"
+    seed: int | None = 0

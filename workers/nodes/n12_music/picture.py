@@ -9,6 +9,7 @@ from __future__ import annotations
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import median
 
 from workers.media.ffmpeg import RenderError, probe
 from workers.nodes.n12_music.beats import detect_onsets, max_error_ms
@@ -90,19 +91,32 @@ def _frames(path: Path) -> tuple[list[bytes], float]:
 def _steps(frames: list[bytes]) -> list[float]:
     steps: list[float] = []
     for index in range(1, len(frames)):
-        total = 0
-        for left, right in zip(frames[index - 1], frames[index], strict=True):
-            total += abs(left - right)
-        steps.append(total / len(frames[index]))
+        # A subtitle or a corner badge changes a few regions, not the scene.
+        # Median spatial blocks keep such local pops out of the cut clock.
+        totals = [0] * 18
+        for pixel in range(_WIDTH * _HEIGHT):
+            row, column = divmod(pixel, _WIDTH)
+            block = (row // 18) * 6 + column // 16
+            base = pixel * 3
+            totals[block] += sum(
+                abs(frames[index - 1][base + channel] - frames[index][base + channel])
+                for channel in range(3)
+            )
+        steps.append(median(totals) / (16 * 18 * 3))
     return steps
 
 
 def _cut_times(steps: list[float], fps: float) -> list[float]:
     if not steps:
         return []
-    peak = max(steps)
-    median = sorted(steps)[len(steps) // 2]
-    threshold = max(_STEP_FLOOR, median * 6, peak * 0.35)
+    noise = median(steps)
+    floor = max(_STEP_FLOOR, noise * 6)
+    candidates = [value for value in steps if value >= floor]
+    # One bright outro must not suppress every lower-contrast scene change.
+    # Use the typical candidate contrast while retaining the absolute/noise
+    # floor and relative rejection of small pops in high-contrast footage.
+    contrast = median(candidates) if candidates else 0.0
+    threshold = max(floor, contrast * 0.35)
     found: list[float] = []
     for index, value in enumerate(steps, start=1):
         if value < threshold:

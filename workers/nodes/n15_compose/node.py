@@ -6,7 +6,6 @@ when no picture file was supplied, so a model never paints those words.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import uuid
@@ -15,8 +14,15 @@ from typing import Any
 
 from PIL import Image
 
-from gateway.media_bytes import render_wav
 from workers.logging import log_event
+from workers.media.audio import (
+    SAMPLE_RATE,
+    AudioError,
+    audio_bytes,
+    combine_provenance,
+    decode_audio,
+    wav_bytes,
+)
 from workers.media.ffmpeg import RenderError, encode_plate, run_ffmpeg
 from workers.media.packaging import (
     FPS,
@@ -27,6 +33,8 @@ from workers.media.packaging import (
     quantize_s,
 )
 from workers.media.raster import render_overlay, save_png
+from workers.nodes.n06_voiceover.node import load_take
+from workers.nodes.n06_voiceover.qa import QAError as VoiceError
 from workers.nodes.n15_compose.align import apply_aligned_script
 from workers.nodes.n15_compose.graph import command
 from workers.nodes.n15_compose.qa import QAError, check
@@ -69,13 +77,12 @@ def run(
         raise QAError(str(exc), retryable=False) from exc
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
-    _ = gateway
     deadline = Deadline(timeout_s, node=NODE)
     last_error: Exception | None = None
     for attempt in range(1, max_attempts + 1):
         try:
             deadline.check()
-            result = _execute(request, attempt=attempt)
+            result = _execute(request, attempt=attempt, gateway=gateway)
             check(result)
         except QAError as exc:
             if not exc.retryable:
@@ -116,7 +123,7 @@ def render_timeline(timeline: Timeline, dest: Path, *, variant: str = "master") 
     return filter_complex(timeline, variant)
 
 
-def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
+def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> NodeResult:
     payload = N15Input.model_validate(request.payload)
     log_event(
         "node_started",
@@ -134,7 +141,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     intro_s = 0.0 if payload.intro_s <= 0 else quantize_s(payload.intro_s)
     outro_s = quantize_s(payload.outro_s or float(outro_spec()["duration_s"]))
     payload = apply_aligned_script(payload, intro_s=intro_s)
-    timeline = _timeline(payload, work, width, height, intro_s, outro_s)
+    timeline = _timeline(payload, work, width, height, intro_s, outro_s, gateway=gateway)
     path = work / "timeline.json"
     body = json.dumps(timeline.model_dump(mode="json"), ensure_ascii=False, indent=2)
     path.write_text(body + "\n", encoding="utf-8")
@@ -179,6 +186,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
             "height": height,
             "fps": FPS,
             "placeholder_shots": [clip.clip_id for clip in timeline.clips if clip.placeholder],
+            "audio_provenance": timeline.audio_provenance,
             **_license_payload(payload),
         },
     )
@@ -191,6 +199,8 @@ def _timeline(
     height: int,
     intro_s: float,
     outro_s: float,
+    *,
+    gateway: Any = None,
 ) -> Timeline:
     shots = list(payload.script.shots)
     supplied = {item.shot_id: item for item in payload.shot_clips}
@@ -262,7 +272,7 @@ def _timeline(
         for card in cards:
             card_rows.append((card, cursor))
         cursor += duration
-    audio = _audio(payload, work, intro_s)
+    audio = _audio(payload, work, intro_s, gateway=gateway)
     overlays = _overlays(payload, work, width, height, intro_s)
     overlays.extend(_motion_cards(card_rows, work, width, height))
     return Timeline(
@@ -276,6 +286,7 @@ def _timeline(
         produce_ids={name: uuid.uuid4().hex for name in ("master", "nosub", "novo")},
         overlays=overlays,
         work_dir=str(work),
+        audio_provenance=combine_provenance([clip.provenance for clip in audio]),
     )
 
 
@@ -391,42 +402,76 @@ def _license_payload(payload: N15Input) -> dict[str, Any]:
     }
 
 
-def _audio(payload: N15Input, work: Path, intro_s: float) -> list[AudioClip]:
+def _audio(
+    payload: N15Input, work: Path, intro_s: float, *, gateway: Any = None
+) -> list[AudioClip]:
     track = payload.audio_track
     if track is not None:
+        try:
+            samples = decode_audio(audio_bytes(track.path, allowed_roots=[project_dir()]))
+        except AudioError as exc:
+            raise QAError(f"audio track is unreadable: {exc}", retryable=False) from exc
+        measured = len(samples) / SAMPLE_RATE
+        if measured + 1 / FPS + 0.001 < track.duration_s:
+            raise QAError("audio track is shorter than its declared duration", retryable=False)
         start = intro_s if track.start_s is None else track.start_s
         return [
             AudioClip(
                 path=track.path,
                 start_s=round(start, 3),
                 duration_s=round(track.duration_s, 3),
+                provenance=(
+                    combine_provenance(
+                        [track.provenance if track.provenance != "unknown" else "mock", "mock"]
+                    )
+                    if track.source.startswith("hilatv-test-")
+                    else track.provenance
+                ),
             )
         ]
     takes = {item.shot_id: item for item in payload.voiceovers}
+    if len(takes) != len(payload.voiceovers):
+        raise QAError("voiceover shot ids must be unique", retryable=False)
     clips: list[AudioClip] = []
     offset = intro_s
     language = payload.script.language
-    for shot in payload.script.shots:
+    for index, shot in enumerate(payload.script.shots):
         take = takes.get(shot.shot_id)
-        if take is None or not shot.voiceover.strip():
+        if not shot.voiceover.strip():
             offset += float(shot.duration_s)
             continue
-        dest = work / "audio" / f"{shot.shot_id}.wav"
+        if take is None:
+            raise QAError(f"{shot.shot_id} is missing a voiceover asset", retryable=False)
+        dest = work / "audio" / f"{index}.wav"
         dest.parent.mkdir(parents=True, exist_ok=True)
-        seed = int(hashlib.sha256(shot.shot_id.encode()).hexdigest()[:6], 16)
-        data, _stamps, duration = render_wav(
-            shot.voiceover,
-            seed,
-            speed=take.speed,
-            pause_s=take.pause_s,
-            language=language,
-        )
-        dest.write_bytes(data)
+        try:
+            data = load_take(
+                take.uri,
+                text=shot.voiceover,
+                speed=take.speed,
+                pause_s=take.pause_s,
+                seed=take.seed,
+                language=language,
+                gateway=gateway,
+                allow_mock=True if take.provenance == "mock" else None,
+            )
+            samples = decode_audio(data)
+        except (AudioError, VoiceError) as exc:
+            raise QAError(
+                f"{shot.shot_id} voiceover is unreadable: {exc}", retryable=False
+            ) from exc
+        duration = len(samples) / SAMPLE_RATE
+        if abs(duration - take.audio_s) > 1 / FPS + 0.001:
+            raise QAError(f"{shot.shot_id} audio duration does not match its take", retryable=False)
+        if duration > shot.duration_s + 1 / FPS:
+            raise QAError(f"{shot.shot_id} audio exceeds its shot", retryable=False)
+        dest.write_bytes(wav_bytes(samples))
         clips.append(
             AudioClip(
                 path=str(dest),
                 start_s=round(offset, 3),
-                duration_s=round(min(float(duration), float(shot.duration_s)), 3),
+                duration_s=duration,
+                provenance="mock" if take.uri.startswith("mock://") else take.provenance,
             )
         )
         offset += float(shot.duration_s)

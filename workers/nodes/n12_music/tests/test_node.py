@@ -60,8 +60,9 @@ def test_mock_music_echoes_the_test_library_license() -> None:
     assert wav.startswith(b"RIFF")
 
 
-def test_live_mode_rejects_the_test_library(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+@pytest.mark.parametrize("mock", [True, False])
+def test_live_mode_retains_explicit_mock_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mock: bool
 ) -> None:
     monkeypatch.setenv("HILATV_LIVE", "1")
     monkeypatch.setenv("HILATV_PROJECT_DIR", str(tmp_path))
@@ -70,7 +71,7 @@ def test_live_mode_rejects_the_test_library(
         def music(self, prompt: str, **kwargs: Any) -> dict[str, Any]:
             del prompt, kwargs
             return {
-                "mock": True,
+                "mock": mock,
                 "source": "hilatv-test-library/steady",
                 "license": "CC0-1.0",
                 "bpm": 90,
@@ -79,15 +80,16 @@ def test_live_mode_rejects_the_test_library(
 
     from workers.nodes.n12_music.accept import fixture
 
-    with pytest.raises(QAError, match="test-library"):
-        run(
-            {
-                "project_id": "live-block",
-                "payload": {**fixture(), "work_dir": str(tmp_path / "n12")},
-            },
-            gateway=_LiveMock(),
-            max_attempts=1,
-        )
+    request = {
+        "project_id": "live-block",
+        "payload": {**fixture(), "work_dir": str(tmp_path / "n12")},
+    }
+    if not mock:
+        with pytest.raises(QAError, match="test-library"):
+            run(request, gateway=_LiveMock(), max_attempts=1)
+        return
+    result = run(request, gateway=_LiveMock(), max_attempts=1)
+    assert result.payload["audio_provenance"] == "mock"
 
 
 def test_work_dir_must_stay_inside_the_project(
