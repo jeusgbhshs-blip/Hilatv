@@ -327,7 +327,9 @@ def decode_wav(data: bytes) -> float:
         raise AdapterError("wav could not be decoded") from exc
 
 
-def render_mp4(seed: int | None, *, duration_s: float = 1.0) -> bytes:
+def render_mp4(
+    seed: int | None, *, duration_s: float = 1.0, width: int = MOCK_WIDTH, height: int = MOCK_HEIGHT
+) -> bytes:
     """One silent H.264 frame sequence. ffmpeg's color source draws no glyphs."""
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
@@ -346,7 +348,7 @@ def render_mp4(seed: int | None, *, duration_s: float = 1.0) -> bytes:
                 "-f",
                 "lavfi",
                 "-i",
-                f"color=c={color}:s={MOCK_WIDTH}x{MOCK_HEIGHT}:d={duration}:r=25",
+                f"color=c={color}:s={width}x{height}:d={duration}:r=25",
                 "-c:v",
                 "libx264",
                 "-pix_fmt",

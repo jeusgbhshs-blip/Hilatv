@@ -101,6 +101,9 @@ def _execute(
     deadline = Deadline(timeout_s)
     payload = N4Input.model_validate(request.payload)
     brief = payload.brief
+    duration = brief.duration_s if payload.story_duration_s is None else payload.story_duration_s
+    if duration > brief.duration_s:
+        raise QAError("story duration cannot exceed the requested whole film")
     facts = collect_facts(brief, payload.brand_kit)
     log_event(
         "node_started",
@@ -113,8 +116,9 @@ def _execute(
         brief=brief,
         facts=facts,
         hook_units=hook_unit_limit("zh"),
-        target=int(round(target_units(brief.duration_s, "zh"))),
+        target=int(round(target_units(duration, "zh"))),
         feedback=feedback,
+        duration_s=duration,
     )
     if NO_DRAWN_TEXT not in draft_prompt:
         raise QAError("script prompt is missing the no-text constraint")
@@ -136,6 +140,7 @@ def _execute(
             facts=facts,
             language="zh",
             draft=zh_draft,
+            duration_s=duration,
         )
     except (ComposeError, ValidationError) as exc:
         raise QAError(f"chinese master failed: {exc}") from exc
@@ -153,8 +158,9 @@ def _execute(
             facts=facts,
             language=language,
             master=master,
-            target=int(round(target_units(brief.duration_s, language))),
+            target=int(round(target_units(duration, language))),
             feedback=feedback,
+            duration_s=duration,
         )
         prompts.append(local_prompt)
         deadline.check()
@@ -176,6 +182,7 @@ def _execute(
                     facts=facts,
                     language=language,
                     draft=local_draft,
+                    duration_s=duration,
                 )
             )
         except (ComposeError, ValidationError) as exc:
@@ -215,6 +222,7 @@ def _execute(
         node=NODE,
         ok=True,
         payload={
+            "story_duration_s": payload.story_duration_s,
             "script": primary.model_dump(mode="json"),
             "master": master.model_dump(mode="json"),
             "variants": [item.model_dump(mode="json") for item in variants],

@@ -23,6 +23,7 @@ from gateway.adapters.http_json import (
     price_media,
     request_json,
 )
+from gateway.aspects import SEEDANCE_NATIVE_RATIOS, ratio_parts
 from gateway.constants import ARK_BASE_URL
 from gateway.errors import AdapterError
 from gateway.image_inputs import image_data_url
@@ -70,6 +71,7 @@ class SeedanceAdapter:
         return bool(self._key().strip())
 
     def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
+        _provider_ratio(call)
         # Estimate the normalized output without reading/encoding input frames.
         params = {
             "duration_s": _duration(call),
@@ -119,6 +121,9 @@ class SeedanceAdapter:
                     "prompt": call.prompt,
                     "negative_prompt": call.negative_prompt,
                     "seed": call.seed,
+                    "requested_ratio": str(call.params.get("ratio") or "16:9"),
+                    "provider_ratio": _provider_ratio(call),
+                    "reference_fit": "contain",
                 }
         return receipt
 
@@ -165,7 +170,7 @@ def _submit_body(call: Invocation, store: ObjectStore | None = None) -> dict[str
         "model": call.model,
         "content": [{"type": "text", "text": call.prompt}],
         "resolution": str(call.params.get("resolution") or "720p"),
-        "ratio": str(call.params.get("ratio") or "16:9"),
+        "ratio": _provider_ratio(call),
         "duration": _duration(call),
         "camera_fixed": bool(call.params.get("camera_fixed") or False),
         "watermark": False,
@@ -204,7 +209,16 @@ def _submit_body(call: Invocation, store: ObjectStore | None = None) -> dict[str
 
 
 def _frame_url(uri: object, call: Invocation, store: ObjectStore | None) -> str:
-    return image_data_url(uri, call, store, min_side=300, max_side=6000, aspect_range=(0.4, 2.5))
+    ratio = str(call.params.get("ratio") or "16:9")
+    return image_data_url(
+        uri,
+        call,
+        store,
+        min_side=300,
+        max_side=6000,
+        aspect_range=(0.4, 2.5),
+        fit_ratio=None if ratio == "adaptive" else ratio,
+    )
 
 
 def _duration(call: Invocation) -> int:
@@ -249,3 +263,19 @@ def _decimal(value: object) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def _provider_ratio(call: Invocation) -> str:
+    ratio = str(call.params.get("ratio") or "16:9")
+    if ratio in SEEDANCE_NATIVE_RATIOS:
+        return ratio
+    if ratio != "adaptive":
+        ratio_parts(ratio)
+    # The supported 1.0 I2V route may preserve its first frame with adaptive.
+    # Frame normalization binds that actual input to the requested target shape.
+    if call.params.get("image_url") and call.model in {
+        "doubao-seedance-1-0-pro-250528",
+        "doubao-seedance-1-0-pro-fast-251015",
+    }:
+        return "adaptive"
+    raise AdapterError("the selected video ratio requires a supported first-frame input")

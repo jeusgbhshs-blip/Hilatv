@@ -109,17 +109,19 @@ def plan_shots(
     brand: BrandKit | None,
     *,
     hints: StoryboardHint | None = None,
+    duration_s: float | None = None,
 ) -> Script:
     if not script.sections:
         raise PlanError("script has no sections")
+    duration = brief.duration_s if duration_s is None else duration_s
     language = script.language
     clips = _clips_from_sections(script)
-    minimum, maximum, lo, hi = shot_bounds(brief.duration_s, promo=is_promo(brief))
+    minimum, maximum, lo, hi = shot_bounds(duration, promo=is_promo(brief))
     count = min(maximum, max(minimum, len(clips)))
     clips = _fit_count(clips, count, language)
     _apply_people(clips, brief, brand)
     sizes = _assign_sizes(clips)
-    durations = _allocate(brief.duration_s, len(clips), lo, hi)
+    durations = _allocate(duration, len(clips), lo, hi)
     presets = load_presets()
     _assign_cameras(clips, sizes, presets, hints)
     shots = [

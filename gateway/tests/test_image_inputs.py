@@ -39,6 +39,11 @@ def _pixel(url):
         return image.getpixel((0, 0))
 
 
+def _center_pixel(url):
+    with Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))) as image:
+        return image.getpixel((image.width // 2, image.height // 2))
+
+
 def test_seedream_reference_and_seedance_first_last_are_real_bytes():
     store = MemoryObjectStore()
     first = store.put("first.png", render_png(1, width=320, height=320), "image/png")
@@ -48,8 +53,8 @@ def test_seedream_reference_and_seedance_first_last_are_real_bytes():
     video = _submit_body(_call("video", image_url=first, last_frame_url=last), store)
     frames = video["content"][1:]
     assert [frame["role"] for frame in frames] == ["first_frame", "last_frame"]
-    assert _pixel(frames[0]["image_url"]["url"]) == _pixel(image["image"][0])
-    assert _pixel(frames[1]["image_url"]["url"]) == _pixel(image["image"][1])
+    assert _center_pixel(frames[0]["image_url"]["url"]) == _pixel(image["image"][0])
+    assert _center_pixel(frames[1]["image_url"]["url"]) == _pixel(image["image"][1])
     assert video["watermark"] is False
 
 

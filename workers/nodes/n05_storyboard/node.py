@@ -89,12 +89,17 @@ def _execute(
         shot_id=request.shot_id,
         attempt=attempt,
     )
+    duration = (
+        payload.brief.duration_s if payload.story_duration_s is None else payload.story_duration_s
+    )
+    if duration > payload.brief.duration_s:
+        raise QAError("story duration cannot exceed the requested whole film")
     presets = load_presets()
-    _min, _max, lo, hi = shot_bounds(payload.brief.duration_s, promo=is_promo(payload.brief))
+    _min, _max, lo, hi = shot_bounds(duration, promo=is_promo(payload.brief))
     prompt = render_storyboard(
         script=payload.script,
         presets=presets,
-        duration_s=payload.brief.duration_s,
+        duration_s=duration,
         min_s=lo,
         max_s=hi,
         feedback=feedback,
@@ -112,7 +117,9 @@ def _execute(
         deadline=deadline,
     )
     try:
-        script = plan_shots(payload.script, payload.brief, payload.brand_kit, hints=hint)
+        script = plan_shots(
+            payload.script, payload.brief, payload.brand_kit, hints=hint, duration_s=duration
+        )
     except (PlanError, ValidationError) as exc:
         raise QAError(f"storyboard failed: {exc}") from exc
     log_event(
@@ -122,13 +129,14 @@ def _execute(
         shot_id=request.shot_id,
         attempt=attempt,
         shots=len(script.shots),
-        duration_s=payload.brief.duration_s,
+        duration_s=duration,
     )
     return NodeResult(
         project_id=request.project_id,
         node=NODE,
         ok=True,
         payload={
+            "story_duration_s": payload.story_duration_s,
             "script": script.model_dump(mode="json"),
             "shots": [shot.model_dump(mode="json") for shot in script.shots],
             "brief": payload.brief.model_dump(mode="json"),

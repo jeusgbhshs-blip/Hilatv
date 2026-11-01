@@ -256,6 +256,8 @@ def _shot(
                     "prompt_model": intended,
                     "image_url": opening.uri,
                     "frame": "video",
+                    "ratio": ratio,
+                    "generation_source_uri": str(output["uri"]),
                     **window,
                 },
                 uri=uri,

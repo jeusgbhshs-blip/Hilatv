@@ -5,7 +5,7 @@ from __future__ import annotations
 from workers.nodes.n05_storyboard.modes import select_generation_mode
 from workers.nodes.n05_storyboard.plan import NO_DRAWN, is_promo, shot_bounds
 from workers.nodes.n05_storyboard.presets import load_presets
-from workers.nodes.n05_storyboard.schema import NodeResult
+from workers.nodes.n05_storyboard.schema import N5Input, NodeResult
 from workers.qa.copycheck import banned_for, banned_hits, invented_numbers
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
@@ -25,22 +25,31 @@ def check(result: NodeResult) -> Script:
         raise QAError("n05_storyboard result is not ok")
     brief, brand = _context(result)
     script = _script(result.payload.get("script"))
-    audit_storyboard(script, brief, brand)
+    try:
+        duration = N5Input.model_validate(result.payload).story_duration_s
+    except Exception as exc:
+        raise QAError("invalid story duration") from exc
+    if duration is not None and duration > brief.duration_s:
+        raise QAError("story duration cannot exceed the requested whole film")
+    audit_storyboard(script, brief, brand, duration_s=duration)
     return script
 
 
-def audit_storyboard(script: Script, brief: Brief, brand: BrandKit | None) -> None:
+def audit_storyboard(
+    script: Script, brief: Brief, brand: BrandKit | None, *, duration_s: float | None = None
+) -> None:
+    duration = brief.duration_s if duration_s is None else duration_s
     shots = script.shots
     if not shots:
         raise QAError("storyboard has no shots")
     for shot in shots:
         Shot.model_validate(shot.model_dump(mode="json"))
     total = sum(shot.duration_s for shot in shots)
-    if brief.duration_s <= 0 or abs(total - brief.duration_s) / brief.duration_s > 0.05:
-        raise QAError(f"duration {total} is outside 5% of {brief.duration_s}")
-    if len(shots) > brief.duration_s / 2:
+    if duration <= 0 or abs(total - duration) / duration > 0.05:
+        raise QAError(f"duration {total} is outside 5% of {duration}")
+    if len(shots) > duration / 2:
         raise QAError("too many shots for the duration")
-    _, _, lo, hi = _bounds(brief)
+    _, _, lo, hi = shot_bounds(duration, promo=is_promo(brief))
     orders = [shot.order for shot in shots]
     if orders != list(range(1, len(shots) + 1)):
         raise QAError("shot order is not contiguous")

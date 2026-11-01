@@ -199,7 +199,11 @@ def _shot(
                 node=NODE,
                 shot_id=shot.shot_id,
                 attempt=attempt,
-                params={"frame": frame, "reference_images": payload.reference_images},
+                params={
+                    "frame": frame,
+                    "reference_images": payload.reference_images,
+                    "ratio": payload.brief.aspect_ratios[0] if payload.brief else "16:9",
+                },
             )
             uri = output.get("uri") if isinstance(output, dict) else None
             if not isinstance(uri, str) or not uri:
@@ -225,6 +229,8 @@ def _shot(
                         "prompt": prompt,
                         "negative_prompt": negative,
                         "frame": frame,
+                        "ratio": payload.brief.aspect_ratios[0] if payload.brief else "16:9",
+                        "generation_source_uri": uri,
                         "prompt_model": intended,
                         "shot_type": family,
                         "motion_strength": motion_strength(

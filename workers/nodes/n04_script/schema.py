@@ -30,6 +30,8 @@ class N4Input(BaseModel):
 
     brief: Brief
     brand_kit: BrandKit | None = None
+    # The brief keeps the requested whole-film duration; narration/story gets this budget.
+    story_duration_s: float | None = Field(default=None, gt=0, le=180, allow_inf_nan=False)
 
 
 class ScriptDraft(BaseModel):

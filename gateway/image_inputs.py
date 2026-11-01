@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import base64
 import io
+import math
 import os
 import re
 import tempfile
 from pathlib import Path
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
+from gateway.aspects import ratio_parts
 from gateway.errors import AdapterError, StorageError
 from gateway.models import Invocation
 from gateway.storage import ObjectStore, read_asset_bytes
@@ -45,6 +47,7 @@ def image_data_url(
     min_side: int = 15,
     max_side: int | None = None,
     aspect_range: tuple[float, float] = (1 / 16, 16),
+    fit_ratio: str | None = None,
 ) -> str:
     if not isinstance(uri, str) or not uri.strip():
         raise AdapterError("reference image is missing")
@@ -71,10 +74,31 @@ def image_data_url(
             # Both providers accept PNG. Normalizing also strips metadata and
             # prevents an image filename or client MIME claim from deciding type.
             encoded = io.BytesIO()
-            image.convert("RGBA" if "A" in image.getbands() else "RGB").save(encoded, "PNG")
+            frame = image.convert("RGBA" if "A" in image.getbands() else "RGB")
+            if fit_ratio is not None:
+                frame = _fit_frame(frame, fit_ratio, max_side=max_side)
+            frame.save(encoded, "PNG")
             payload = encoded.getvalue()
     except (OSError, ValueError, UnidentifiedImageError, Image.DecompressionBombError) as exc:
         raise AdapterError("reference image is not decodable") from exc
     if len(payload) > MAX_IMAGE_BYTES:
         raise AdapterError("reference image exceeds provider size limit")
     return "data:image/png;base64," + base64.b64encode(payload).decode("ascii")
+
+
+def _fit_frame(image: Image.Image, ratio: str, *, max_side: int | None) -> Image.Image:
+    """Keep all reference pixels; add neutral padding instead of provider center-cropping."""
+    a, b = ratio_parts(ratio)
+    if image.width * b == image.height * a:
+        return image
+    unit = max(2, math.ceil(max(image.width / a, image.height / b) / 2) * 2)
+    if max_side is not None:
+        unit = min(unit, int(max_side / max(a, b) / 2) * 2)
+    if unit < 2:
+        raise AdapterError("reference image cannot fit the selected frame ratio")
+    size = (a * unit, b * unit)
+    frame = Image.new("RGB", size, (0, 0, 0))
+    fitted = ImageOps.contain(image, size, Image.Resampling.LANCZOS)
+    pos = ((size[0] - fitted.width) // 2, (size[1] - fitted.height) // 2)
+    frame.paste(fitted, pos, fitted.getchannel("A") if "A" in fitted.getbands() else None)
+    return frame

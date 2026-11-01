@@ -10,6 +10,7 @@ import os
 from decimal import Decimal
 from typing import Any
 
+from gateway.aspects import mock_dimensions
 from gateway.constants import TASKS
 from gateway.errors import AdapterError
 from gateway.media_bytes import (
@@ -149,8 +150,13 @@ def _unstructured(call: Invocation) -> dict[str, object]:
 
 def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
     digest = _digest(call)
+    width, height = (
+        mock_dimensions(call.params)
+        if call.task in {"image", "video"}
+        else (MOCK_WIDTH, MOCK_HEIGHT)
+    )
     if call.task == "image":
-        data = render_png(call.seed)
+        data = render_png(call.seed, width=width, height=height)
         uri = store.put(f"gateway/image/{digest}.png", data, "image/png")
         return _attach_bytes(
             call,
@@ -159,8 +165,8 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
                 "task": "image",
                 "uri": uri,
                 "mime_type": "image/png",
-                "width": MOCK_WIDTH,
-                "height": MOCK_HEIGHT,
+                "width": width,
+                "height": height,
                 "prompt": call.prompt,
                 "negative_prompt": call.negative_prompt,
                 "seed": call.seed,
@@ -168,7 +174,7 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
         )
     if call.task == "video":
         seconds = _video_seconds(call)
-        data = render_mp4(call.seed, duration_s=seconds)
+        data = render_mp4(call.seed, duration_s=seconds, width=width, height=height)
         uri = store.put(f"gateway/video/{digest}.mp4", data, "video/mp4")
         return _attach_bytes(
             call,
@@ -177,8 +183,8 @@ def _stored_media(call: Invocation, store: ObjectStore) -> dict[str, Any]:
                 "task": "video",
                 "uri": uri,
                 "mime_type": "video/mp4",
-                "width": MOCK_WIDTH,
-                "height": MOCK_HEIGHT,
+                "width": width,
+                "height": height,
                 "duration_s": seconds,
                 "prompt": call.prompt,
                 "negative_prompt": call.negative_prompt,
@@ -299,13 +305,18 @@ def _attach_bytes(call: Invocation, fields: dict[str, Any]) -> dict[str, Any]:
 
     if not call.params.get("materialize"):
         return fields
+    width, height = (
+        mock_dimensions(call.params)
+        if call.task in {"image", "video"}
+        else (MOCK_WIDTH, MOCK_HEIGHT)
+    )
     if call.task == "image":
-        data = render_png(call.seed)
+        data = render_png(call.seed, width=width, height=height)
         fields["png_b64"] = base64.b64encode(data).decode("ascii")
-        fields["width"] = MOCK_WIDTH
-        fields["height"] = MOCK_HEIGHT
+        fields["width"] = width
+        fields["height"] = height
     elif call.task == "video":
-        data = render_mp4(call.seed, duration_s=_video_seconds(call))
+        data = render_mp4(call.seed, duration_s=_video_seconds(call), width=width, height=height)
         fields["mp4_b64"] = base64.b64encode(data).decode("ascii")
     return fields
 
@@ -317,6 +328,9 @@ def _digest(call: Invocation) -> str:
             "prompt": call.prompt,
             "seed": call.seed,
             "voice": call.params.get("voice"),
+            "ratio": call.params.get("ratio"),
+            "size": call.params.get("size"),
+            "resolution": call.params.get("resolution"),
             "duration_s": call.params.get("duration_s"),
             "speed": call.params.get("speed"),
             "pause_s": call.params.get("pause_s"),

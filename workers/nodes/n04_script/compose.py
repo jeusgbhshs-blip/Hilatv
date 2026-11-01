@@ -73,9 +73,11 @@ def compose_script(
     facts: SourceFacts,
     language: str,
     draft: ScriptDraft | None = None,
+    duration_s: float | None = None,
 ) -> Script:
-    spoken = _spoken(facts, language, brief.duration_s, draft)
-    _assert_spoken(spoken, facts, language, brief.duration_s)
+    duration = brief.duration_s if duration_s is None else duration_s
+    spoken = _spoken(facts, language, duration, draft)
+    _assert_spoken(spoken, facts, language, duration)
     sections = [
         ScriptSection(kind=kind, text=text, shot_ids=[])
         for kind, text in spoken.parts()
@@ -93,7 +95,7 @@ def compose_script(
 def _spoken(
     facts: SourceFacts,
     language: str,
-    duration_s: int,
+    duration_s: float,
     draft: ScriptDraft | None,
 ) -> SpokenDraft:
     target = target_units(duration_s, language)
@@ -284,7 +286,9 @@ def _total(spoken: SpokenDraft, language: str) -> int:
     return sum(count_units(text, language) for _, text in spoken.parts())
 
 
-def _assert_spoken(spoken: SpokenDraft, facts: SourceFacts, language: str, duration_s: int) -> None:
+def _assert_spoken(
+    spoken: SpokenDraft, facts: SourceFacts, language: str, duration_s: float
+) -> None:
     blob = "".join(text for _, text in spoken.parts())
     if banned_hits(blob, facts.banned):
         raise ComposeError("banned words remain in the script")

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from workers.nodes.n04_script.schema import NodeResult
+from workers.nodes.n04_script.schema import N4Input, NodeResult
 from workers.qa.copycheck import (
     HOOK_SECONDS,
     banned_for,
@@ -29,18 +29,24 @@ def check(result: NodeResult) -> Script:
     if not result.ok:
         raise QAError("n04_script result is not ok")
     brief, brand = _context(result)
+    try:
+        duration = N4Input.model_validate(result.payload).story_duration_s
+    except Exception as exc:
+        raise QAError("invalid story duration") from exc
+    if duration is not None and duration > brief.duration_s:
+        raise QAError("story duration cannot exceed the requested whole film")
     primary = _script(result.payload.get("script"), "script")
     master = _script(result.payload.get("master"), "master")
     variants = result.payload.get("variants")
     if not isinstance(variants, list) or not variants:
         raise QAError("n04_script payload is missing variants")
     parsed = [_script(item, "variant") for item in variants]
-    audit_script(primary, brief, brand)
-    audit_script(master, brief, brand)
+    audit_script(primary, brief, brand, duration_s=duration)
+    audit_script(master, brief, brand, duration_s=duration)
     if master.language.split("-", 1)[0].lower() != "zh":
         raise QAError("master script must be Chinese")
     for script in parsed:
-        audit_script(script, brief, brand)
+        audit_script(script, brief, brand, duration_s=duration)
     languages = [script.language for script in parsed]
     if languages != list(brief.languages):
         raise QAError("variants do not follow brief.languages")
@@ -49,7 +55,9 @@ def check(result: NodeResult) -> Script:
     return primary
 
 
-def audit_script(script: Script, brief: Brief, brand: BrandKit | None) -> None:
+def audit_script(
+    script: Script, brief: Brief, brand: BrandKit | None, *, duration_s: float | None = None
+) -> None:
     banned = banned_for(brand)
     allowed = _allowed(brief, brand)
     kinds = [section.kind for section in script.sections]
@@ -89,7 +97,7 @@ def audit_script(script: Script, brief: Brief, brand: BrandKit | None) -> None:
     if spoken_seconds(hook.text, script.language) > HOOK_SECONDS + 1e-9:
         raise QAError("hook is not inside the first 3 seconds")
     total = sum(count_units(section.text, script.language) for section in script.sections)
-    target = target_units(brief.duration_s, script.language)
+    target = target_units(brief.duration_s if duration_s is None else duration_s, script.language)
     if not within_target(total, target):
         raise QAError(f"word count {total} is outside 5% of {target:.2f}")
     sources = _point_sources(brief, brand)

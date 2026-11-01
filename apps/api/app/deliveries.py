@@ -330,6 +330,14 @@ def _payload(project_id: str, snapshot: dict[str, Any], body: DeliverBody) -> di
         "brief": brief,
         "brand_kit": brand,
         "master_path": master,
+        "picture_path": saved.get("clean_picture_path")
+        or (saved.get("exports") or {}).get("clean_picture"),
+        "source_timeline": saved.get("timeline"),
+        "target_duration_s": (saved.get("timeline") or {}).get("duration_s")
+        if isinstance(snapshot.get("generation_settings"), dict)
+        else None,
+        "intro_s": saved.get("intro_s") or 0,
+        "outro_s": saved.get("outro_s"),
         "subject_tracks": tracks or [],
         "work_dir": str(work),
     }

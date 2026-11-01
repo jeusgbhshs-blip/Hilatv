@@ -21,6 +21,7 @@ from gateway.adapters.http_json import (
     price_media,
     request_json,
 )
+from gateway.aspects import image_size_for_ratio
 from gateway.constants import ARK_BASE_URL
 from gateway.errors import AdapterError
 from gateway.image_inputs import image_data_url
@@ -60,7 +61,7 @@ class SeedreamAdapter:
             return None
         # Budget admission must not download/encode private references. Only
         # output cardinality/size affect this adapter's verified price bound.
-        params = {"n": 1, "size": str(call.params.get("size") or "1K")}
+        params = {"n": 1, "size": _request_size(call)}
         return pricing.upper_bound(call.model, call.prompt, task=call.task, params=params)
 
     def invoke(self, call: Invocation) -> AdapterResult:
@@ -117,7 +118,7 @@ def _body(call: Invocation, store: ObjectStore | None = None) -> dict[str, Any]:
     if call.params.get("image_url") or call.params.get("last_frame_url"):
         raise AdapterError("seedream requires reference_images, not video frame roles")
     # Seedream's documented size modes include "1K". Pixel sizes below ~0.9MP are rejected.
-    size = str(call.params.get("size") or "1K")
+    size = _request_size(call)
     body: dict[str, Any] = {
         "model": call.model,
         "prompt": call.prompt,
@@ -169,3 +170,14 @@ def _decimal(value: object) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def _request_size(call: Invocation) -> str:
+    ratio = call.params.get("ratio")
+    if ratio is None:
+        return str(call.params.get("size") or "1K")
+    size = image_size_for_ratio(ratio)
+    provided = call.params.get("size")
+    if provided is not None and str(provided) != size:
+        raise AdapterError("image size conflicts with the selected frame ratio")
+    return size

@@ -160,6 +160,40 @@ def timeline_fields(state: dict[str, Any]) -> dict[str, Any]:
     return fields
 
 
+def production_clock(payload: dict[str, Any]) -> dict[str, float]:
+    """New requests budget the whole film; old Temporal histories keep their clock."""
+    request = _request(payload)
+    raw_settings = request.get("generation_settings")
+    if not isinstance(raw_settings, dict):
+        return {}
+    from workers.media.timing import duration_budget
+    from workers.schemas.generation import generation_settings
+
+    settings = generation_settings(raw_settings)
+    brief = _state(payload).get("brief") or {}
+    total = settings.duration_s if settings.duration_s is not None else brief.get("duration_s")
+    if total is None:
+        return {}
+    budget = duration_budget(float(total), intro_s=0)
+    return {
+        "target_duration_s": budget.total_s,
+        "intro_s": budget.intro_s,
+        "outro_s": budget.outro_s,
+    }
+
+
+def story_clock(payload: dict[str, Any]) -> dict[str, float]:
+    clock = production_clock(payload)
+    if not clock:
+        return {}
+    from workers.media.timing import duration_budget
+
+    budget = duration_budget(
+        clock["target_duration_s"], intro_s=clock["intro_s"], outro_s=clock["outro_s"]
+    )
+    return {"story_duration_s": budget.body_s}
+
+
 def _count(payload: dict[str, Any], key: str) -> int:
     raw = _request(payload).get(key) or 3
     try:
@@ -191,6 +225,7 @@ def n01_brief(payload: dict[str, Any]) -> dict[str, Any]:
             "project_id": project_id,
             "payload": {
                 "raw_input": request["sentence"],
+                "generation_settings": request.get("generation_settings") or {},
                 "attachments": request.get("attachments") or [],
                 "brand_kit": request.get("brand_kit"),
             },
@@ -198,7 +233,16 @@ def n01_brief(payload: dict[str, Any]) -> dict[str, Any]:
         },
         "n01_brief",
     )
-    return _finish(project_id, "n01_brief", {"brief": result.payload["brief"]}, attempt)
+    brief = result.payload["brief"]
+    update_snapshot(
+        project_id,
+        resolved_generation_settings={
+            "aspect_ratio": brief["aspect_ratios"][0],
+            "duration_s": brief["duration_s"],
+            "language": brief["languages"][0],
+        },
+    )
+    return _finish(project_id, "n01_brief", {"brief": brief}, attempt)
 
 
 @activity.defn(name="n02_brand_kit")
@@ -250,6 +294,7 @@ def n03_concept(payload: dict[str, Any]) -> dict[str, Any]:
         "n03_concept",
     )
     concept = result.payload["concept"]
+    update_snapshot(project_id, concept_preview_invalidated=False)
     if concept.get("auto"):
         message = f"已自动选定：{concept['selection']}"
     else:
@@ -272,12 +317,14 @@ def n04_script(payload: dict[str, Any]) -> dict[str, Any]:
             "payload": {
                 "brief": _require_dict(state, "brief"),
                 "brand_kit": state.get("brand_kit"),
+                **story_clock(payload),
             },
             "attempt": attempt,
         },
         "n04_script",
     )
     patch = {
+        "production_clock": production_clock(payload),
         "script": result.payload["script"],
         "brief": result.payload.get("brief") or state.get("brief"),
         "brand_kit": result.payload.get("brand_kit", state.get("brand_kit")),
@@ -300,6 +347,7 @@ def n05_storyboard(payload: dict[str, Any]) -> dict[str, Any]:
                 "brief": _require_dict(state, "brief"),
                 "script": _require_dict(state, "script"),
                 "brand_kit": state.get("brand_kit"),
+                **story_clock(payload),
             },
             "attempt": attempt,
         },
@@ -340,6 +388,7 @@ def n06_voiceover(payload: dict[str, Any]) -> dict[str, Any]:
                 "script": apply_saved_narration(project_id, _require_dict(state, "script")),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
+                **production_clock(payload),
                 "enterprise_id": _request(payload).get("enterprise_id"),
             },
             "attempt": attempt,
@@ -526,6 +575,7 @@ def n12_music(payload: dict[str, Any]) -> dict[str, Any]:
                 "script": _require_dict(state, "script"),
                 "voiceovers": state.get("voiceovers") or [],
                 "brief": state.get("brief"),
+                **production_clock(payload),
                 "mood": str(brief.get("style") or ""),
                 "work_dir": _work(payload, "n12"),
             },
@@ -576,6 +626,7 @@ def n14_packaging(payload: dict[str, Any]) -> dict[str, Any]:
                 "script": _require_dict(state, "script"),
                 "brief": state.get("brief"),
                 "brand_kit": state.get("brand_kit"),
+                **production_clock(payload),
                 "work_dir": _work(payload, "n14"),
                 "enterprise_id": _request(payload).get("enterprise_id"),
             },
@@ -642,12 +693,20 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
         )
     from workers.nodes.n15_compose.node import run
 
+    clock = production_clock(payload)
+    if clock and any(
+        abs(float(state.get(key) or 0) - clock[key]) > 1 / 30 for key in ("intro_s", "outro_s")
+    ):
+        raise ApplicationError(
+            "片头片尾与已确认的总时长预算不一致，请重新生成包装", non_retryable=True
+        )
     result = _call(
         run,
         {
             "project_id": project_id,
             "payload": {
                 "script": _require_dict(state, "script"),
+                **({"target_duration_s": clock["target_duration_s"]} if clock else {}),
                 "voiceovers": state.get("voiceovers") or [],
                 "cues": state.get("cues") or [],
                 "elements": state.get("elements") or [],
@@ -674,6 +733,7 @@ def n15_compose(payload: dict[str, Any]) -> dict[str, Any]:
     patch = {
         "deliverable": deliverable,
         "exports": exports,
+        "clean_picture_path": exports.get("clean_picture"),
         "timeline_path": result.payload.get("timeline_path"),
         "elapsed_s": elapsed,
         "timeline": result.payload.get("timeline"),

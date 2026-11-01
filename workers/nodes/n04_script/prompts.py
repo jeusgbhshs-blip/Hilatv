@@ -32,6 +32,7 @@ def render_draft(
     hook_units: int,
     target: int,
     feedback: str = "",
+    duration_s: float | None = None,
 ) -> str:
     return (
         _ENV.get_template("draft_script.j2")
@@ -39,7 +40,7 @@ def render_draft(
             hook_seconds=3,
             hook_units=hook_units,
             target_units=target,
-            duration_s=brief.duration_s,
+            duration_s=brief.duration_s if duration_s is None else duration_s,
             company=facts.company or "无",
             product=facts.product_name or "无",
             points="\n".join(facts.points) or "无",
@@ -63,6 +64,7 @@ def render_localize(
     master: Script,
     target: int,
     feedback: str = "",
+    duration_s: float | None = None,
 ) -> str:
     master_text = "\n".join(section.text for section in master.sections)
     return (
@@ -71,7 +73,7 @@ def render_localize(
             language=language,
             hook_seconds=3,
             target_units=target,
-            duration_s=brief.duration_s,
+            duration_s=brief.duration_s if duration_s is None else duration_s,
             master_text=master_text,
             points="\n".join(facts.points) or "无",
             proof=facts.proof,
