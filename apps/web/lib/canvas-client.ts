@@ -8,7 +8,6 @@
 import { apiFetch, errorMessage } from "./api";
 import {
   adaptLegacyCanvas,
-  buildRerunBody,
   buildSelectBody,
   emptyOverlay,
   isLegacyCanvas,
@@ -50,7 +49,7 @@ export type CanvasClient = {
   saveTimeline(body: TimelineWrite): Promise<CanvasSnapshot>;
   uploadImage(file: File): Promise<{ upload_id: string; thumbnail_url: string }>;
   buildStoryboard(sentence: string): Promise<CanvasSnapshot>;
-  generateNode(nodeId: string, body?: { prompt?: string; count?: number }): Promise<CanvasSnapshot>;
+  generateNode(nodeId: string, body?: { prompt?: string; count?: number; operation_id?: string }): Promise<CanvasSnapshot>;
   startFilm(sentence: string): Promise<void>;
   releaseFilm(): Promise<void>;
 };
@@ -70,6 +69,7 @@ export function createCanvasClient(
   const memory = storage ?? browserStorage();
   const store = new CanvasMockStore(memory, projectId);
   let last: CanvasSnapshot | null = null;
+  let filmSubmission: { operation_id: string; draft_revision: number } | null = null;
   const tabKey = "hilatv.canvas.draft-tab";
   let tabId = "local";
   if (typeof window !== "undefined") {
@@ -123,6 +123,11 @@ export function createCanvasClient(
     if (normalized) {
       if (last && normalized.layout_version < last.layout_version) return null;
       return withPending({ ...normalized, project_id: projectId, origin: "api" });
+    }
+    if (isLegacyCanvas(body)) {
+      const legacy = adaptLegacyCanvas(body, emptyOverlay());
+      if (last && legacy.layout_version < last.layout_version) return null;
+      return withPending(legacy);
     }
     return null;
   }
@@ -329,38 +334,18 @@ export function createCanvasClient(
       const current = last ?? (await this.load());
       const shot = shotById(current, shotId);
       const data = shot ? asShot(shot) : null;
-      const selected = data?.candidates.find((item) => item.candidate_id === data.selected_candidate_id);
-      const suffix = body?.prompt_suffix ?? data?.prompt_suffix ?? "";
-      const narration = body?.narration ?? data?.narration ?? "";
-      if (current.origin === "api") {
-        const response = await sendJson(
-          canvasPath(projectId, `/shots/${encodeURIComponent(shotId)}/regenerate`),
-          "POST",
-          { prompt_suffix: suffix, narration },
-        );
-        if (!MISSING_ROUTE.has(response.status)) {
-          if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
-          const parsed = (await response.json()) as { canvas?: unknown };
-          const remote = contractWith(parsed.canvas);
-          if (remote) return remember(remote);
-          const reloaded = await loadFromApi();
-          if (reloaded) return remember(reloaded);
-          throw new CanvasRequestError(502, "重做之后没有拿到画布");
-        }
-      }
-      const payload = buildRerunBody(shotId, selected, suffix);
-      if (current.origin === "api") {
-        const response = await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/rerun`, payload);
-        if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
-        const parsed = (await response.json()) as { canvas?: unknown };
-        if (parsed.canvas && isLegacyCanvas(parsed.canvas)) return remember(adaptLegacyCanvas(parsed.canvas, emptyOverlay()));
-        const remote = contractWith(parsed.canvas);
-        if (remote) return remember(remote);
-        const reloaded = await loadFromApi();
-        if (reloaded) return remember(reloaded);
-        throw new CanvasRequestError(502, "重跑之后没有拿到画布");
-      }
-      return remember(markMock(store.regenerate(shotId, body)));
+      if (current.origin !== "api") return remember(markMock(store.regenerate(shotId, body)));
+      const response = await sendJson(
+        canvasPath(projectId, `/shots/${encodeURIComponent(shotId)}/regenerate`), "POST", {
+          prompt_suffix: body?.prompt_suffix ?? data?.prompt_suffix ?? "",
+          narration: body?.narration ?? data?.narration ?? "",
+          operation_id: body?.operation_id || crypto.randomUUID(),
+        },
+      );
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      const parsed = await response.json() as { canvas?: unknown };
+      const remote = contractWith(parsed.canvas);
+      return remember(remote || await loadFromApi());
     },
 
     async replaceReference(shotId, body) {
@@ -396,7 +381,6 @@ export function createCanvasClient(
         const response = await postJson(`/v1/projects/${encodeURIComponent(projectId)}/expert/select`, payload);
         if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
         const parsed = (await response.json()) as { canvas?: unknown };
-        if (parsed.canvas && isLegacyCanvas(parsed.canvas)) return remember(adaptLegacyCanvas(parsed.canvas, emptyOverlay()));
         const remote = contractWith(parsed.canvas);
         if (remote) return remember(remote);
         throw new CanvasRequestError(502, "选用之后没有拿到画布");
@@ -451,7 +435,7 @@ export function createCanvasClient(
       const response = await sendJson(
         canvasPath(projectId, `/canvas/nodes/${encodeURIComponent(nodeId)}/generate`),
         "POST",
-        { ...body },
+        { ...body, operation_id: body?.operation_id || crypto.randomUUID() },
       );
       if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
       const parsed = (await response.json()) as { canvas?: unknown };
@@ -465,11 +449,50 @@ export function createCanvasClient(
     async startFilm(sentence) {
       await this.flushNodeData({ includeLayout: false });
       if (options.demo) throw new CanvasRequestError(422, "演示画布不会启动生成，请新建项目");
-      const response = await sendJson(`/v1/projects/${encodeURIComponent(projectId)}/film/start`, "POST", {
-        sentence,
-      });
+      const response = await apiFetch(canvasPath(projectId, ""));
       if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
-      await response.json().catch(() => null);
+      const saved = await response.json() as {
+        status: string; sentence: string; draft_revision: number;
+        attachments?: unknown[]; brand_kit?: unknown; brand_id?: string | null;
+        concept_selection?: string | null; skip_storyboard?: boolean;
+        submission_operation_id?: string;
+      };
+      if (saved.status !== "draft" && saved.status !== "submitting" && saved.status !== "running") {
+        throw new CanvasRequestError(409, "项目已有结果，请继续改稿或新建项目");
+      }
+      if (saved.status !== "draft" && sentence.trim() && sentence.trim() !== saved.sentence.trim()) {
+        throw new CanvasRequestError(409, "原任务已经提交，新增文字尚未用于生成。请先查看原任务，再改稿或新建项目。");
+      }
+      if (saved.status !== "draft" && !filmSubmission) {
+        if (!saved.submission_operation_id) throw new CanvasRequestError(409, "项目已经提交，请查看项目进度");
+        filmSubmission = { operation_id: saved.submission_operation_id, draft_revision: saved.draft_revision };
+      }
+      if (saved.status === "draft") {
+        if (last?.draft_revision !== undefined && last.draft_revision !== saved.draft_revision) {
+          throw new CanvasRequestError(409, "草稿已有新的保存记录，请重新读取并核对后再生成");
+        }
+        if (sentence.trim() && sentence.trim() !== saved.sentence.trim()) {
+          const updated = await sendJson(canvasPath(projectId, "/draft"), "PUT", {
+            draft_revision: saved.draft_revision, sentence: sentence.trim(),
+            attachments: saved.attachments || [], brand_kit: saved.brand_kit || null,
+            brand_id: saved.brand_id || null, concept_selection: saved.concept_selection || null,
+            skip_storyboard: saved.skip_storyboard === true,
+          });
+          if (!updated.ok) throw new CanvasRequestError(updated.status, await errorMessage(updated));
+          const body = await updated.json() as { draft_revision: number };
+          saved.draft_revision = body.draft_revision;
+          if (last) last = { ...last, sentence: sentence.trim(), draft_revision: body.draft_revision };
+        }
+        if (!filmSubmission || filmSubmission.draft_revision !== saved.draft_revision) {
+          filmSubmission = { operation_id: crypto.randomUUID(), draft_revision: saved.draft_revision };
+        }
+      }
+      const submitted = await sendJson(canvasPath(projectId, "/film/start"), "POST", filmSubmission);
+      if (!submitted.ok) throw new CanvasRequestError(submitted.status, await errorMessage(submitted));
+      const result = await submitted.json() as { submission_state?: string; message?: string };
+      if (result.submission_state !== "submitted") {
+        throw new CanvasRequestError(409, result.message || "提交结果待确认，输入已保留。再次提交会检查同一次任务。");
+      }
     },
 
     async releaseFilm() {

@@ -115,6 +115,14 @@ const ariaLabelConfig = {
 
 export function CanvasStage({ projectId }: { projectId: string }) {
   const clientRef = useRef<CanvasClient | null>(null);
+  const mountedRef = useRef(true);
+  const generationLocks = useRef(new Set<string>());
+  const filmSubmittingRef = useRef(false);
+  const [filmSubmitting, setFilmSubmitting] = useState(false);
+  const [retryGeneration, setRetryGeneration] = useState<{ operationId: string; label: string; task: (client: CanvasClient) => Promise<CanvasSnapshot> } | null>(null);
+  const [retryBusy, setRetryBusy] = useState(false);
+  const retryBusyRef = useRef(false);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const docRef = useRef<CanvasSnapshot | null>(null);
   const nodesRef = useRef<Node<FlowData>[]>([]);
   const viewportRef = useRef<CanvasViewport>({ x: 0, y: 0, zoom: 1 });
@@ -170,6 +178,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       const run = queueRef.current.then(async () => {
         try {
           const next = await task();
+          if (!mountedRef.current) return next;
           versionRef.current = next.layout_version;
           docRef.current = next;
           setDoc(next);
@@ -177,6 +186,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           if (mode === "adopt") syncFlow(next);
           return next;
         } catch (error) {
+          if (!mountedRef.current) throw error;
           const message = error instanceof CanvasRequestError ? error.message : "没有保存成功";
           setNoticeTone("danger");
           setNotice(message);
@@ -255,6 +265,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         ),
         viewport: snapshot.viewport,
       });
+      try { setAgentText(window.localStorage.getItem(`hilatv.agent-draft.${projectId}`) || snapshot.sentence || ""); } catch { setAgentText(snapshot.sentence || ""); }
       setReady(true);
       if (snapshot.pending_edits) void enqueue(() => client.flushNodeData(), "adopt").catch(() => undefined);
     }).catch((error: unknown) => {
@@ -437,23 +448,42 @@ export function CanvasStage({ projectId }: { projectId: string }) {
     [syncFlow],
   );
 
+  const attemptGeneration = useCallback(async (request: { operationId: string; label: string; task: (client: CanvasClient) => Promise<CanvasSnapshot> }) => {
+    const client = clientRef.current;
+    if (!client || !mountedRef.current) return;
+    try {
+      await enqueue(() => request.task(client), "adopt");
+      if (mountedRef.current) setRetryGeneration((previous) => previous?.operationId === request.operationId ? null : previous);
+    } catch {
+      if (mountedRef.current) setRetryGeneration(request);
+    }
+  }, [enqueue]);
+
   const actions = useMemo<CanvasActions>(() => {
     return {
       doc: doc ?? emptyDoc(projectId),
       startFilm: async (sentence: string) => {
         const client = clientRef.current;
-        if (!client) return;
-        await client.startFilm(sentence);
+        if (!client || filmSubmittingRef.current) return;
+        filmSubmittingRef.current = true;
+        setFilmSubmitting(true);
+        try { await client.startFilm(sentence); }
+        catch (error) { if (mountedRef.current) { setNoticeTone("danger"); setNotice(error instanceof Error ? error.message : "提交未成功，输入已保留"); } return; }
+        finally { filmSubmittingRef.current = false; if (mountedRef.current) setFilmSubmitting(false); }
+        if (!mountedRef.current) return;
+        try { window.localStorage.removeItem(`hilatv.agent-draft.${projectId}`); } catch { /* A successful submission remains on the server. */ }
         setAgentOpen(false);
         setFilmRunning(true);
         setNoticeTone("neutral");
-        setNotice("AI 开始出片，约 1–2 分钟");
+        setNotice("生成任务已提交，正在准备成片");
         beginPolling(client);
       },
       releaseFilm: async () => {
         const client = clientRef.current;
         if (!client) return;
-        await client.releaseFilm();
+        try { await client.releaseFilm(); }
+        catch (error) { if (mountedRef.current) { setNoticeTone("danger"); setNotice(error instanceof Error ? error.message : "未能继续，原项目已保留"); } return; }
+        if (!mountedRef.current) return;
         setFilmRunning(true);
         setNoticeTone("neutral");
         setNotice("已放行，正在合成成片");
@@ -543,7 +573,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
           .then(() => {
             setToolboxOpen(false);
             setNoticeTone("neutral");
-        setNotice(`已套用组合：${group.name}`);
+            setNotice(`已套用组合：${group.name}`);
           })
           .catch(() => undefined);
       },
@@ -552,8 +582,11 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       },
       generateNode: async (nodeId: string, body?: { prompt?: string; count?: number }) => {
         const client = clientRef.current;
-        if (!client) return;
-        await enqueue(() => client.generateNode(nodeId, body), "adopt").catch(() => undefined);
+        if (!client || generationLocks.current.has(nodeId)) return;
+        generationLocks.current.add(nodeId);
+        const request = { ...body, operation_id: crypto.randomUUID() };
+        try { await attemptGeneration({ operationId: request.operation_id, label: "这个节点", task: (transport) => transport.generateNode(nodeId, request) }); }
+        finally { generationLocks.current.delete(nodeId); }
       },
       storyboard: async (sentence: string) => {
         const client = clientRef.current;
@@ -570,19 +603,17 @@ export function CanvasStage({ projectId }: { projectId: string }) {
       choosingId,
       setChoosing,
       regenerate: (shotId: string, copy?: RegenerateWrite) => {
-        const client = clientRef.current;
-        if (!client) return;
+        const lockKey = `shot:${shotId}`;
+        if (generationLocks.current.has(lockKey)) return;
+        generationLocks.current.add(lockKey);
+        const node = docRef.current?.nodes.find((item) => asShot(item)?.shot_id === shotId);
+        const shot = node ? asShot(node) : null;
+        const request = { narration: copy?.narration ?? shot?.narration ?? "", prompt_suffix: copy?.prompt_suffix ?? shot?.prompt_suffix ?? "", operation_id: crypto.randomUUID() };
         busyRef.current = shotId;
         setBusyShot(shotId);
         if (docRef.current) setEdges(docRef.current.edges.map((edge) => toFlowEdge(edge, shotId)));
-        void enqueue(async () => {
-          try {
-            return await client.regenerate(shotId, copy);
-          } finally {
-            busyRef.current = null;
-            setBusyShot(null);
-          }
-        }, "adopt").catch(() => undefined);
+        void attemptGeneration({ operationId: request.operation_id, label: "这一镜", task: (transport) => transport.regenerate(shotId, request) })
+          .finally(() => { generationLocks.current.delete(lockKey); busyRef.current = null; if (mountedRef.current) setBusyShot(null); });
       },
       editWords: (shotId: string) => {
         setSelectedIds([shotId]);
@@ -643,7 +674,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         });
       },
     };
-  }, [beginPolling, choosingId, doc, enqueue, groups.length, projectId, run, selectedIds]);
+  }, [attemptGeneration, beginPolling, choosingId, doc, enqueue, groups.length, projectId, run, selectedIds]);
 
   function create(
     kind: "brief" | "ref_image" | "image" | "video" | "script" | "audio",
@@ -726,6 +757,14 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         <p data-testid="layout-version" className="sr-only">
           {doc.layout_version}
         </p>
+        {retryGeneration ? (
+          <button type="button" disabled={retryBusy} className="hilatv-canvas-back" title="沿用上一次输入与任务编号；生成新候选会另开任务" onClick={() => {
+            if (retryBusyRef.current) return;
+            retryBusyRef.current = true;
+            setRetryBusy(true);
+            void attemptGeneration(retryGeneration).finally(() => { retryBusyRef.current = false; if (mountedRef.current) setRetryBusy(false); });
+          }}>{retryBusy ? "正在检查上次提交" : `重试${retryGeneration.label}的上次提交`}</button>
+        ) : null}
         {notice ? (
           <p role={noticeTone === "danger" ? "alert" : "status"} data-tone={noticeTone} data-testid="canvas-notice" className="hilatv-canvas-notice px-3 py-2 text-caption">
             {notice}
@@ -746,7 +785,12 @@ export function CanvasStage({ projectId }: { projectId: string }) {
                   <textarea
                     id="canvas-agent"
                     value={agentText}
-                    onChange={(event) => setAgentText(event.target.value)}
+                    disabled={filmSubmitting}
+                    onChange={(event) => {
+                      setAgentText(event.target.value);
+                      try { window.localStorage.setItem(`hilatv.agent-draft.${projectId}`, event.target.value); }
+                      catch { setNoticeTone("danger"); setNotice("输入尚未备份，请提交或复制后再离开"); }
+                    }}
                     placeholder="例如：给高压球阀做一条 15 秒产品宣传片，面向采购，风格稳重"
                     className="min-h-24 rounded-sm border border-border bg-raised px-2 py-2 text-small text-text-1"
                   />
@@ -754,10 +798,10 @@ export function CanvasStage({ projectId }: { projectId: string }) {
                     <button
                       type="button"
                       className="inline-flex min-h-10 items-center rounded-full border border-blue px-4 text-small text-text-1 hover:bg-blue-soft disabled:cursor-not-allowed disabled:text-text-disabled"
-                      disabled={!agentText.trim()}
+                      disabled={filmSubmitting || !agentText.trim()}
                       onClick={() => void actions.startFilm(agentText)}
                     >
-                      开始出片
+                      {filmSubmitting ? "正在提交" : "开始出片"}
                     </button>
                     <button
                       type="button"

@@ -178,4 +178,71 @@ describe("project transport must not replace a failed project with a demo", () =
     expect(request.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0);
   });
 
+  it("uses new identities for new generation requests and preserves an explicit retry identity", async () => {
+    const canvas = seedCanvas("real-project");
+    request.mockResolvedValueOnce(Response.json(canvas));
+    const client = createCanvasClient("real-project", memory());
+    await client.load();
+    for (let index = 0; index < 3; index += 1) {
+      request.mockResolvedValueOnce(Response.json(canvas));
+      request.mockResolvedValueOnce(Response.json({ canvas }));
+      await client.generateNode("image-1", index === 2 ? { operation_id: "same-operation", prompt: "same input" } : { prompt: "a fresh candidate" });
+    }
+    const writes = request.mock.calls.filter(([path]) => path.endsWith("/generate"));
+    const ids = writes.map(([, init]) => JSON.parse(String(init?.body)).operation_id);
+    expect(ids[0]).not.toBe(ids[1]);
+    expect(ids[0]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(ids[2]).toBe("same-operation");
+  });
+
+  it("reloads the current canvas when a successful retry replays an older revision", async () => {
+    const initial = seedCanvas("real-project");
+    initial.layout_version = 10;
+    const stale = { ...seedCanvas("real-project"), layout_version: 2, sentence: "old input" };
+    const current = { ...initial, sentence: "current input" };
+    request.mockResolvedValueOnce(Response.json(initial));
+    const client = createCanvasClient("real-project", memory());
+    await client.load();
+    request.mockResolvedValueOnce(Response.json(current));
+    request.mockResolvedValueOnce(Response.json({ replayed: true, canvas: stale }));
+    request.mockResolvedValueOnce(Response.json(current));
+    const result = await client.generateNode("image-1", { operation_id: "prior-operation" });
+    expect(result.layout_version).toBe(10);
+    expect(result.sentence).toBe("current input");
+  });
+
+  it("does not reinterpret a missing shot as a different legacy rerun", async () => {
+    request.mockResolvedValueOnce(Response.json(seedCanvas("real-project")));
+    const client = createCanvasClient("real-project", memory());
+    await client.load();
+    request.mockResolvedValueOnce(Response.json(seedCanvas("real-project")));
+    request.mockResolvedValueOnce(new Response("", { status: 404 }));
+    await expect(client.regenerate("shot-1")).rejects.toMatchObject({ status: 404 });
+    expect(request.mock.calls.some(([path]) => path.includes("/expert/rerun"))).toBe(false);
+  });
+
+  it("saves modern project input before one stable film submission and retains unknown attempts", async () => {
+    const canvas = { ...seedCanvas("real-project"), status: "draft", draft_revision: 1 };
+    request.mockResolvedValueOnce(Response.json(canvas));
+    const client = createCanvasClient("real-project", memory());
+    await client.load();
+    request.mockResolvedValueOnce(Response.json(canvas));
+    request.mockResolvedValueOnce(Response.json({ status: "draft", sentence: "old", draft_revision: 1, attachments: [{ kind: "url", uri: "https://example.test/" }], concept_selection: "direction-a", skip_storyboard: false }));
+    request.mockResolvedValueOnce(Response.json({ draft_revision: 2 }));
+    request.mockResolvedValueOnce(Response.json({ submission_state: "unknown_external_result", message: "等待确认原提交" }));
+    await expect(client.startFilm("new input")).rejects.toThrow("等待确认");
+    const first = request.mock.calls.find(([path]) => path.endsWith("/film/start"))!;
+    const firstBody = JSON.parse(String(first[1]?.body));
+    expect(firstBody.draft_revision).toBe(2);
+    expect(firstBody).not.toHaveProperty("sentence");
+    const saved = request.mock.calls.find(([path]) => path.endsWith("/draft"))!;
+    expect(JSON.parse(String(saved[1]?.body))).toMatchObject({ sentence: "new input", concept_selection: "direction-a", skip_storyboard: false, attachments: [{ kind: "url", uri: "https://example.test/" }] });
+    request.mockResolvedValueOnce(Response.json({ ...canvas, status: "submitting", draft_revision: 2 }));
+    request.mockResolvedValueOnce(Response.json({ status: "submitting", sentence: "new input", draft_revision: 2 }));
+    request.mockResolvedValueOnce(Response.json({ submission_state: "submitted" }));
+    await client.startFilm("new input");
+    const submissions = request.mock.calls.filter(([path]) => path.endsWith("/film/start"));
+    expect(JSON.parse(String(submissions[1][1]?.body))).toEqual(firstBody);
+  });
+
 });

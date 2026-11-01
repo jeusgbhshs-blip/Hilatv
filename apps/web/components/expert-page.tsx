@@ -11,5 +11,5 @@ const ExpertCanvas = dynamic(
 );
 
 export function ExpertPage({ projectId }: { projectId: string }) {
-  return <ExpertCanvas projectId={projectId} />;
+  return <ExpertCanvas key={projectId} projectId={projectId} />;
 }

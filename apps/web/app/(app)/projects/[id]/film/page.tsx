@@ -8,5 +8,5 @@ export const metadata: Metadata = {
 
 export default async function FilmPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return <FilmStage projectId={id} />;
+  return <FilmStage key={id} projectId={id} />;
 }

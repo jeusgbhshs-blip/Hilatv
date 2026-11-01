@@ -200,6 +200,7 @@ export type CanvasSnapshot = {
   pending_edits?: boolean;
   /** 项目状态：draft / running / needs_human_review / completed。 */
   status?: string;
+  draft_revision?: number;
   /** 现有 POST /expert/timeline 的正文。入点出点不在这里。 */
   server_timeline?: ServerTimeline;
 };
@@ -238,6 +239,7 @@ export type CreateEdgeWrite = {
 };
 
 export type RegenerateWrite = {
+  operation_id?: string;
   narration?: string;
   prompt_suffix?: string;
 };
