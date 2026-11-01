@@ -59,7 +59,7 @@ export function StageStepper({
           );
         })}
       </ol>
-      <Progress className="mt-1.5 md:hidden" value={complete ? 1 : (current + 1) / STAGES.length} />
+      <Progress className="mt-1.5 md:hidden" value={complete ? 1 : (current + 1) / STAGES.length} label="创作阶段" valueText={`第 ${current + 1}/${STAGES.length} 阶段：${STAGES[current]}`} />
     </div>
   );
 }

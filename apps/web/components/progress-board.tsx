@@ -211,6 +211,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
         </div>
       ) : null}
 
+      {status === "needs_human_review" ? <p role="status" className="text-small text-text-2">确认后会继续生成；完成后仍需核验画面、声音和素材授权。</p> : null}
       <div className="flex flex-wrap gap-3">
         <Button asChild variant="secondary" size="lg" className="w-full sm:w-auto">
           <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
@@ -235,7 +236,7 @@ export function ProgressBoard({ projectId }: { projectId: string }) {
               })();
             }}
           >
-            放行并成片
+            确认并继续
           </Button>
         ) : null}
         {status === "completed" ? (

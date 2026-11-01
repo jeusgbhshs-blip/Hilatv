@@ -21,7 +21,7 @@ type ProjectRow = {
 const LAST_PROJECT_KEY = "hilatv.lastProject";
 
 const STATUS_COPY: Record<string, string> = {
-  draft: "空白画布",
+  draft: "草稿",
   running: "生成中",
   completed: "已完成",
   needs_human_review: "待人工复核",
