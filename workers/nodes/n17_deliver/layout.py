@@ -5,6 +5,7 @@ Every glyph is a PNG. The reframe graph does not draw text.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 from PIL import Image
@@ -171,8 +172,26 @@ def _ai_mark(width: int, height: int, safe: Insets) -> Image.Image:
     need = minimum_glyph_px(short)
     room_w = max(8, int((1 - safe.left - safe.right) * width) - 2)
     room_h = max(8, int((1 - safe.top - safe.bottom) * height) - 2)
+    # An em size is not the ink height. At 1280x960 the previous largest
+    # candidate was font=48, whose actual glyph ink is only 46 pixels. Find an
+    # adequate starting em from measured pixels before trying safe-area fits.
+    largest = max(need, 36)
+    while largest <= max(room_w, room_h):
+        probe = render_overlay(
+            ai_label_text(),
+            weight="bold",
+            font_size=largest,
+            fill="#FFFFFF",
+            background="#111111",
+            padding=4,
+            radius=4,
+        )
+        ink = glyph_ink_height(probe)
+        if ink >= need + 1:
+            break
+        largest = max(largest + 1, math.ceil(largest * (need + 1) / max(ink, 1)))
     chosen: Image.Image | None = None
-    for size in range(max(need, 36), need - 1, -1):
+    for size in range(min(largest, max(room_w, room_h)), need - 1, -1):
         image = render_overlay(
             ai_label_text(),
             weight="bold",

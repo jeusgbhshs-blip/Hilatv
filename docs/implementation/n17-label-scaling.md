@@ -1,0 +1,9 @@
+# N17 AI-label scaling at real export sizes
+
+The browser's 720×1280, 15-second source failed when exported at 1280×960 (4:3). The 5% rule requires at least 48 pixels of actual glyph ink at that output size. `_ai_mark` started its downward font search at 48 em pixels, whose rendered Noto glyph ink is only 46 pixels. No candidate could pass, although the platform safe rectangle had ample room. The small 320-pixel fixtures had hidden this because their preferred 36-pixel font already exceeded the required ink height.
+
+The search now measures actual raster ink and grows the initial em size until it provides the required ink height, with one pixel of margin for encoding. It then performs the existing safe-area fit search. The final 5% ink test and safe rectangle limits remain unchanged. An impossible safe rectangle continues to fail; the implementation never shrinks below the rule to obtain a successful export.
+
+Dedicated tests cover all nine aspect ratios at 1280 and 3840 long edges and an impossible safe rectangle. A standalone original dark-color 720×1280 source is encoded for 15 seconds and actually exported to 1280×960. Its finished MP4 is decoded; the AI-label crop must retain at least 48 pixels of actual light glyph ink. The actual file dimensions, whole-film duration, playability and mock/needs-review provenance are also checked. No running project or original browser asset is modified, and every gateway is an offline fake with zero budget.
+
+Dedicated result: **20 passed**. Full N17 plus generation-media result: **58 passed**, with no skips, in 31.05 seconds. The corrected 1280×960 mark has 50 pixels of measured raster ink; the encoded output independently satisfies the original 48-pixel minimum. Ruff check/format and whitespace checks pass. This patch changes only N17 layout, its dedicated tests and this document; no SPEC limit, HTTP route, workflow or model-adapter behavior changes.
