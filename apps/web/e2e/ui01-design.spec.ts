@@ -75,6 +75,28 @@ async function useTheme(page: Page, mode: string) {
 }
 
 async function stubApi(page: Page) {
+  // Concept generation now saves a project draft before requesting directions.
+  let draft: Record<string, unknown> = {
+    project_id: PROJECT, status: "draft", draft_revision: 1, sentence: "", attachments: [],
+    skip_storyboard: false, concept_selection: null,
+    preview_available: false, preview_path: null, download_path: null,
+    delivery_status: "unavailable", quality_pass: false, media_provenance: "unknown",
+  };
+  await page.route("**/v1/projects/drafts", async (route) => {
+    const fields = route.request().postDataJSON() as Record<string, unknown>;
+    draft = { ...draft, ...fields, project_id: PROJECT, draft_revision: 1 };
+    await route.fulfill({ status: 201, json: { project_id: PROJECT, draft_revision: 1, status: "draft", snapshot: draft } });
+  });
+  await page.route(`**/v1/projects/${PROJECT}/draft`, async (route) => {
+    const fields = route.request().postDataJSON() as Record<string, unknown>;
+    if (fields.draft_revision !== draft.draft_revision) {
+      await route.fulfill({ status: 409, json: { detail: { code: "draft_conflict", message: "草稿版本冲突", draft_revision: draft.draft_revision, snapshot: draft } } });
+      return;
+    }
+    draft = { ...draft, ...fields, draft_revision: Number(draft.draft_revision) + 1 };
+    await route.fulfill({ json: { project_id: PROJECT, draft_revision: draft.draft_revision, status: "draft", snapshot: draft } });
+  });
+  await page.route(`**/v1/projects/${PROJECT}`, (route) => route.fulfill({ json: draft }));
   await page.routeWebSocket(/\/v1\/projects\/.+\/progress/, () => {
     // Accept and stay quiet: the snapshot below carries the state.
   });
@@ -129,6 +151,13 @@ async function stubApi(page: Page) {
             width: 1920,
             height: 1080,
             download_path: `/v1/projects/${PROJECT}/versions/wide/download`,
+            preview_path: `/v1/projects/${PROJECT}/versions/wide/preview`,
+            preview_available: true,
+            media_hash: "ui01-wide-hash",
+            delivery_status: "ready",
+            quality_pass: true,
+            media_provenance: "live",
+            qa_status: "passed",
             share_path: null,
           },
         ],
@@ -143,7 +172,13 @@ async function stubApi(page: Page) {
   await page.route(`**/v1/projects/${PROJECT}/versions/*/download`, (route) =>
     route.fulfill({ status: 200, contentType: "video/mp4", body: MP4 }),
   );
+  await page.route(`**/v1/projects/${PROJECT}/versions/*/preview`, (route) =>
+    route.fulfill({ status: 200, contentType: "video/mp4", body: MP4 }),
+  );
   await page.route(`**/v1/projects/${PROJECT}/download`, (route) =>
+    route.fulfill({ status: 200, contentType: "video/mp4", body: MP4 }),
+  );
+  await page.route(`**/v1/projects/${PROJECT}/preview`, (route) =>
     route.fulfill({ status: 200, contentType: "video/mp4", body: MP4 }),
   );
 }
@@ -178,6 +213,15 @@ async function stubProject(page: Page, state: "running" | "paused" | "completed"
         ];
   const snapshot = {
     status: state,
+    // Synthetic server evidence: only the completed fixture represents a
+    // reviewed live file. A completed status alone must never enable delivery.
+    preview_available: state === "completed",
+    preview_path: state === "completed" ? `/v1/projects/${PROJECT}/preview` : null,
+    media_hash: state === "completed" ? "ui01-master-hash" : null,
+    delivery_status: state === "completed" ? "ready" : "unavailable",
+    quality_pass: state === "completed",
+    media_provenance: state === "completed" ? "live" : "unknown",
+    download_path: state === "completed" ? `/v1/projects/${PROJECT}/download` : null,
     phase: state === "paused" ? "看分镜" : state === "completed" ? "成片" : "生成中",
     message: state === "paused" ? "分镜已排好，等你确认" : "第 2 镜：正在生成视频",
     elapsed_s: 96,
@@ -265,6 +309,7 @@ for (const theme of THEMES) {
     test(`P1 home ${tag}`, async ({ page }) => {
       await page.setViewportSize({ width, height: width > 400 ? 900 : 812 });
       await useTheme(page, theme);
+      await stubApi(page);
       await page.goto("/");
       await expectTheme(page, theme);
       await expect(page.getByRole("heading", { name: "一句话，拍出你的成片" })).toBeVisible();
@@ -321,6 +366,11 @@ for (const theme of THEMES) {
       await expectTheme(page, theme);
       const player = page.getByTestId("film-player");
       await expect(player).toHaveAttribute("src", /^blob:/);
+      await expect(page.getByLabel("文件", { exact: true })).toHaveValue("master");
+      await expect(player).toHaveAttribute("data-aspect", "master");
+      await expect(page.getByRole("heading", { name: "成片已通过审核" })).toBeVisible();
+      await expect(page.getByRole("button", { name: "下载成片", exact: true })).toBeVisible();
+      await expect(page.getByRole("button", { name: "保存预览", exact: true })).toHaveCount(0);
       await expect
         .poll(async () => player.evaluate((element: HTMLVideoElement) => element.readyState))
         .toBeGreaterThanOrEqual(1);
