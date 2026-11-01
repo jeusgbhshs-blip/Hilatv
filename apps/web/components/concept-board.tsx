@@ -2,7 +2,7 @@
 
 import { Check } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { type FormEvent, useRef, useState } from "react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 
 import { useShellStage } from "@/components/hilatv/shell-stage";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ProjectDraftRecovery } from "@/components/project-draft-recovery";
 import { useProjectDraft } from "@/lib/use-project-draft";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { chooseCard, type DirectionCard } from "@/lib/selection";
@@ -41,13 +42,15 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
   const submitting = useRef(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  useEffect(() => { submitting.current = false; setBusy(false); setError(null); }, [drafts.identity]);
 
   const choice = cards.length ? chooseCard(cards, picked) : null;
   useShellStage("选方案");
 
   async function onGenerate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (submitting.current || !drafts.ready) return;
+    if (submitting.current || !drafts.editable || drafts.conflict) return;
+    const current = drafts.ticket();
     const text = sentence.trim();
     if (!text) {
       setError("先写一句话");
@@ -58,54 +61,57 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
     setError(null);
     try {
       const saved = await drafts.flush();
+      if (!current()) return;
       const response = await apiFetch("/v1/concepts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sentence: text, project_id: saved.project_id, draft_revision: saved.draft_revision }),
       });
+      if (!current()) return;
       if (!response.ok) throw new Error(await errorMessage(response));
       const body = (await response.json()) as ConceptResponse;
+      if (!current()) return;
       if (!Array.isArray(body.concept?.directions) || body.concept.directions.length === 0) throw new Error("没有拿到有效方案，请重试");
       drafts.update({
         cards: body.concept.directions.map((card) => ({ ...card, duration_s: card.duration_s ?? body.concept.duration_s, aspect_ratio: card.aspect_ratio ?? body.concept.aspect_ratio })),
         cards_sentence: text, brand_applied: body.brand_applied === true, concept_selection: "你帮我选",
       });
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "方案没有生成");
+      if (current()) setError(caught instanceof Error ? caught.message : "方案没有生成");
     } finally {
-      submitting.current = false;
-      setBusy(false);
+      if (current()) { submitting.current = false; setBusy(false); }
     }
   }
 
   async function startFilm() {
-    if (!choice || submitting.current || !drafts.ready) return;
+    if (!choice || submitting.current || !drafts.ready || drafts.conflict || drafts.resolving) return;
+    const current = drafts.ticket();
     submitting.current = true;
     setBusy(true);
     setError(null);
     try {
       drafts.update({ concept_selection: choice.id });
       const saved = await drafts.flush();
+      if (!current()) return;
       if (!saved.project_id) throw new Error("草稿尚未确认保存，请重试");
-      const operation = saved.start_operation_id || crypto.randomUUID();
-      drafts.update({ start_operation_id: operation });
-      await drafts.persist({ ...saved, start_operation_id: operation });
-      const response = await apiFetch(`/v1/projects/${encodeURIComponent(saved.project_id)}/film/start`, {
+      const submitted = await drafts.stageSubmission();
+      if (!current()) return;
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(submitted.project_id!)}/film/start`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operation_id: operation, draft_revision: saved.draft_revision }),
+        body: JSON.stringify({ operation_id: submitted.start_operation_id, draft_revision: submitted.draft_revision }),
       });
+      if (!current()) return;
       if (!response.ok) throw new Error(await errorMessage(response));
       const result = await response.json() as { submission_state?: string };
+      if (!current()) return;
       if (result.submission_state !== "submitted") throw new Error("这次提交还在确认中，输入已保留。稍后重试会查询同一次提交。");
-      const next = { ...saved, started: true, start_operation_id: operation };
-      drafts.update(next);
-      await drafts.persist(next);
+      await drafts.confirmSubmission(submitted);
+      if (!current()) return;
       router.push(`/projects/${encodeURIComponent(saved.project_id)}`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "提交没有成功");
+      if (current()) setError(caught instanceof Error ? caught.message : "提交没有成功");
     } finally {
-      submitting.current = false;
-      setBusy(false);
+      if (current()) { submitting.current = false; setBusy(false); }
     }
   }
 
@@ -130,14 +136,14 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
           value={sentence}
           maxLength={4000}
           className="min-h-24"
-          disabled={busy || !drafts.ready}
+          disabled={busy || !drafts.editable}
           onChange={(event) => setSentence(event.target.value)}
         />
         <div>
           <Button
             type="submit"
             variant={cards.length > 0 ? "secondary" : "primary"}
-            disabled={busy || !drafts.ready}
+            disabled={busy || !drafts.editable || Boolean(drafts.conflict)}
             loading={busy && cards.length === 0}
           >
             {busy ? "正在生成方案" : cards.length > 0 ? "重新出方案" : "生成三个方案"}
@@ -145,8 +151,8 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
         </div>
       </form>
 
-      <p role="status" className="mt-3 text-caption text-text-3">{!drafts.ready ? "正在恢复草稿" : drafts.saving ? "正在保存草稿" : drafts.dirty ? "草稿未同步，输入已保留" : drafts.draft.project_id ? "草稿已保存" : "输入后自动保存"}</p>
-      {drafts.error ? <p role="alert" className="mt-2 text-caption text-danger">{drafts.error}<button type="button" className="ml-2 min-h-11 underline" onClick={() => void drafts.flush().catch(() => undefined)}>重新保存</button></p> : null}
+      <p role="status" className="mt-3 text-caption text-text-3">{!drafts.ready ? drafts.error ? "草稿尚未恢复，请重试" : "正在恢复草稿" : drafts.draft.submission_pending ? "提交确认中，请保留此页面" : drafts.conflict ? "请核对两个草稿版本" : drafts.saving ? "正在保存草稿" : drafts.dirty ? "草稿未同步，请等待保存确认" : drafts.draft.project_id ? "草稿已保存" : "输入后自动保存"}</p>
+      <ProjectDraftRecovery drafts={drafts} busy={busy} />
       {error ? (
         <p role="alert" className="mt-4 text-caption text-danger">
           {error}
@@ -196,7 +202,7 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={busy || !drafts.ready}
+                    disabled={busy || !drafts.editable}
                     aria-pressed={selected}
                     className={cn("mt-3 w-full", selected && "border-blue text-blue-text")}
                     onClick={() => setPicked(card.direction_id)}
@@ -212,14 +218,14 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
             <Button
               type="button"
               variant="secondary"
-              disabled={busy || !drafts.ready}
+              disabled={busy || !drafts.editable}
               aria-pressed={Boolean(choice?.auto)}
               className={cn(choice?.auto && "border-blue text-blue-text")}
               onClick={() => setPicked("你帮我选")}
             >
               你帮我选
             </Button>
-            <fieldset disabled={busy || !drafts.ready} className="flex items-center gap-1 rounded-sm bg-hover p-0.75">
+            <fieldset disabled={busy || !drafts.editable} className="flex items-center gap-1 rounded-sm bg-hover p-0.75">
               <legend className="sr-only">分镜</legend>
               <label
                 className={cn(
@@ -257,7 +263,7 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
             ) : (
               <span className="sm:flex-1" />
             )}
-            <Button type="button" onClick={startFilm} disabled={busy || !choice} loading={busy}>
+            <Button type="button" onClick={startFilm} disabled={busy || !choice || !drafts.ready || Boolean(drafts.conflict) || drafts.resolving || drafts.draft.started || Boolean(drafts.draft.submission_pending && !drafts.draft.start_operation_id)} loading={busy}>
               用这个方向开始
             </Button>
           </div>

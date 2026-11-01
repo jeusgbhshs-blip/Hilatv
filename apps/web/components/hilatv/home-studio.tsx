@@ -23,6 +23,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { ProjectDraftRecovery } from "@/components/project-draft-recovery";
 import { useProjectDraft } from "@/lib/use-project-draft";
 import { isCompositionEnter, type DraftFile, type DraftLink } from "@/lib/project-draft";
 import { apiFetch, errorMessage } from "@/lib/api";
@@ -125,6 +126,14 @@ export function HomeStudio() {
   filesRef.current = files;
 
   useEffect(() => {
+    submitting.current = false;
+    composing.current = false;
+    setBusy(false);
+    setError(null);
+    setLinkDraft("");
+  }, [drafts.identity]);
+
+  useEffect(() => {
     return () => {
       for (const item of filesRef.current) {
         if (item.preview) URL.revokeObjectURL(item.preview);
@@ -133,7 +142,7 @@ export function HomeStudio() {
   }, []);
 
   function addFiles(list: File[]) {
-    if (submitting.current) return;
+    if (submitting.current || !drafts.editable) return;
     const picked: PickedFile[] = [];
     let rejected = false;
     for (const file of list) {
@@ -155,7 +164,7 @@ export function HomeStudio() {
   }
 
   function removeFile(id: string) {
-    if (submitting.current) return;
+    if (submitting.current || !drafts.editable) return;
     setFiles((current) => {
       const target = current.find((item) => item.id === id);
       if (target?.preview) URL.revokeObjectURL(target.preview);
@@ -164,7 +173,7 @@ export function HomeStudio() {
   }
 
   function addLink(uri = linkDraft.trim()) {
-    if (submitting.current) return;
+    if (submitting.current || !drafts.editable) return;
     if (!uri) return;
     if (!/^https?:\/\//i.test(uri)) {
       setError("链接需要以 http:// 或 https:// 开头");
@@ -178,7 +187,7 @@ export function HomeStudio() {
   }
 
   function applyEntry(entry: HomeEntry) {
-    if (submitting.current) return;
+    if (submitting.current || !drafts.editable) return;
     setEntryId(entry.id);
     setError(null);
     if (entry.destination === "compose") {
@@ -191,7 +200,8 @@ export function HomeStudio() {
   }
 
   async function createProject(text: string, destination: "progress" | "expert" | "concept") {
-    if (submitting.current || !drafts.ready) return;
+    if (submitting.current || !drafts.ready || drafts.conflict || drafts.resolving) return;
+    const current = drafts.ticket();
     if (!text.trim()) { setError("先写一句话"); return; }
     submitting.current = true;
     setBusy(true);
@@ -199,31 +209,31 @@ export function HomeStudio() {
     try {
       drafts.update({ sentence: text });
       const saved = await drafts.flush();
+      if (!current()) return;
       if (!saved.project_id) throw new Error("草稿尚未确认保存，请重试");
       if (destination === "concept") {
         router.push(`/concepts?project=${encodeURIComponent(saved.project_id)}`);
         return;
       }
-      const operation = saved.start_operation_id || crypto.randomUUID();
-      drafts.update({ start_operation_id: operation });
-      await drafts.persist({ ...saved, start_operation_id: operation });
-      const response = await apiFetch(`/v1/projects/${encodeURIComponent(saved.project_id)}/film/start`, {
+      const submitted = await drafts.stageSubmission();
+      if (!current()) return;
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(submitted.project_id!)}/film/start`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operation_id: operation, draft_revision: saved.draft_revision }),
+        body: JSON.stringify({ operation_id: submitted.start_operation_id, draft_revision: submitted.draft_revision }),
       });
+      if (!current()) return;
       if (!response.ok) throw new Error(await errorMessage(response));
       const result = await response.json() as { submission_state?: string };
+      if (!current()) return;
       if (result.submission_state !== "submitted") throw new Error("这次提交还在确认中，输入已保留。稍后重试会查询同一次提交。");
-      const next = { ...saved, start_operation_id: operation, started: true };
-      drafts.update(next);
-      await drafts.persist(next);
+      await drafts.confirmSubmission(submitted);
+      if (!current()) return;
       window.localStorage.setItem("hilatv.lastProject", saved.project_id);
       router.push(`/projects/${encodeURIComponent(saved.project_id)}${destination === "expert" ? "/expert" : ""}`);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "提交没有成功");
+      if (current()) setError(caught instanceof Error ? caught.message : "提交没有成功");
     } finally {
-      submitting.current = false;
-      setBusy(false);
+      if (current()) { submitting.current = false; setBusy(false); }
     }
   }
 
@@ -279,7 +289,7 @@ export function HomeStudio() {
                   maxLength={4000}
                   value={sentence}
                   placeholder=""
-                  disabled={!drafts.ready || busy}
+                  disabled={!drafts.editable || busy}
                   onCompositionStart={() => { composing.current = true; }}
                   onCompositionEnd={() => { composing.current = false; }}
                   onChange={(event) => setSentence(event.target.value)}
@@ -330,7 +340,7 @@ export function HomeStudio() {
                         </span>
                       )}
                       <span className="min-w-0 truncate text-small">{item.file.name}</span>
-                      <Button type="button" variant="ghost" size="sm" onClick={() => removeFile(item.id)}>
+                      <Button type="button" variant="ghost" size="sm" disabled={!drafts.editable || busy} onClick={() => removeFile(item.id)}>
                         移除
                       </Button>
                     </li>
@@ -344,6 +354,7 @@ export function HomeStudio() {
                       <span className="max-w-full break-all">{item.uri}</span>
                       <button
                         type="button"
+                        disabled={!drafts.editable || busy}
                         className="min-h-8 shrink-0 rounded-full px-2 text-text-1 underline"
                         onClick={() => setLinks((current) => current.filter((link) => link.id !== item.id))}
                       >
@@ -364,10 +375,10 @@ export function HomeStudio() {
                   type="submit"
                   size="lg"
                   className="btn-sheen w-full rounded-full px-6 sm:w-auto"
-                  disabled={busy || !drafts.ready}
+                  disabled={busy || !drafts.ready || Boolean(drafts.conflict) || drafts.resolving || drafts.draft.started || Boolean(drafts.draft.submission_pending && !drafts.draft.start_operation_id)}
                   loading={busy}
                 >
-                  {busy ? "正在提交" : "生成"}
+                  {busy ? "正在提交" : drafts.draft.submission_pending ? "查询这次提交" : "生成"}
                 </Button>
               </div>
 
@@ -386,6 +397,7 @@ export function HomeStudio() {
                     >
                       <input
                         type="radio"
+                        disabled={!drafts.editable || busy}
                         name="storyboard-choice"
                         className="accent-text-1"
                         checked={!skipStoryboard}
@@ -401,6 +413,7 @@ export function HomeStudio() {
                     >
                       <input
                         type="radio"
+                        disabled={!drafts.editable || busy}
                         name="storyboard-choice"
                         className="accent-text-1"
                         checked={skipStoryboard}
@@ -414,7 +427,8 @@ export function HomeStudio() {
                 <div
                   data-testid="dropzone"
                   role="button"
-                  tabIndex={0}
+                  tabIndex={!drafts.editable || busy ? -1 : 0}
+                  aria-disabled={!drafts.editable || busy}
                   aria-label="选择图片或 PDF"
                   onKeyDown={(event) => {
                     if (event.key === "Enter" || event.key === " ") {
@@ -422,14 +436,14 @@ export function HomeStudio() {
                       uploadRef.current?.click();
                     }
                   }}
-                  onClick={() => uploadRef.current?.click()}
+                  onClick={() => { if (drafts.editable && !busy) uploadRef.current?.click(); }}
                   className={cn(
                     "flex min-h-11 cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-dashed px-3 py-2 text-small",
                     dragging ? "border-blue bg-blue-soft" : "border-border-strong hover:bg-hover",
                   )}
                 >
                   <ImagePlus aria-hidden="true" className="size-4 text-text-2" />
-                  <span>{dragging ? "松开即可上传" : "拖拽图片到这里，或点击选择"}</span>
+                  <span>{!drafts.editable ? "草稿恢复或确认后即可添加素材" : dragging ? "松开即可上传" : "拖拽图片到这里，或点击选择"}</span>
                   <span className="text-caption text-text-3">PNG、JPG、WEBP、GIF 或 PDF</span>
                 </div>
                 <Label htmlFor="upload" className="sr-only">
@@ -442,6 +456,7 @@ export function HomeStudio() {
                   type="file"
                   accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
                   multiple
+                  disabled={!drafts.editable || busy}
                   onChange={(event) => {
                     addFiles(Array.from(event.target.files ?? []));
                     event.target.value = "";
@@ -456,6 +471,7 @@ export function HomeStudio() {
                     <Input
                       id="source-url"
                       inputMode="url"
+                      disabled={!drafts.editable || busy}
                       placeholder="https://"
                       value={linkDraft}
                       onChange={(event) => setLinkDraft(event.target.value)}
@@ -466,7 +482,7 @@ export function HomeStudio() {
                         }
                       }}
                     />
-                    <Button type="button" variant="secondary" className="sm:w-28" onClick={() => addLink()}>
+                    <Button type="button" variant="secondary" className="sm:w-28" disabled={!drafts.editable || busy} onClick={() => addLink()}>
                       添加链接
                     </Button>
                   </div>
@@ -480,9 +496,9 @@ export function HomeStudio() {
               </p>
             ) : null}
             <p role="status" className="mt-3 text-center text-caption text-text-3">
-              {!drafts.ready ? "正在恢复草稿" : drafts.saving ? "正在保存草稿" : drafts.dirty ? "草稿未同步，输入已保留" : drafts.draft.project_id ? "草稿已保存" : "输入后自动保存"}
+              {!drafts.ready ? drafts.error ? "草稿尚未恢复，请重试" : "正在恢复草稿" : drafts.draft.submission_pending ? "提交确认中，请保留此页面" : drafts.conflict ? "请核对两个草稿版本" : drafts.saving ? "正在保存草稿" : drafts.dirty ? "草稿未同步，请等待保存确认" : drafts.draft.project_id ? "草稿已保存" : "输入后自动保存"}
             </p>
-            {drafts.error ? <p role="alert" className="mt-2 text-center text-caption text-danger">{drafts.error}<button type="button" className="ml-2 min-h-11 underline" onClick={() => void drafts.flush().catch(() => undefined)}>重新保存</button></p> : null}
+            <ProjectDraftRecovery drafts={drafts} busy={busy} />
             <p className="rise rise-d5 mt-3 text-center text-caption text-text-3">
               按 Enter 生成 · 支持拖入图片和链接
             </p>
@@ -490,7 +506,7 @@ export function HomeStudio() {
               画面上的字、Logo、价格和电话由后期叠上去，不会画进画面里。
             </p>
             <p className="mt-2 text-center text-small">
-              <button type="button" disabled={busy || !drafts.ready} className="min-h-11 text-blue-text hover:underline disabled:text-text-disabled" onClick={() => void createProject(sentence, "concept")}>
+              <button type="button" disabled={busy || !drafts.editable || Boolean(drafts.conflict)} className="min-h-11 text-blue-text hover:underline disabled:text-text-disabled" onClick={() => void createProject(sentence, "concept")}>
                 先看三个方案
               </button>
             </p>
