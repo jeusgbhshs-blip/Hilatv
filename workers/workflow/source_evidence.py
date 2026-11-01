@@ -54,6 +54,7 @@ def verified_sources(
                     origin is None
                     or origin.get("status") != "ok"
                     or any(origin.get(key) != row.get(key) for key in ("task", "provider", "model"))
+                    or _request_params(origin) != _request_params(row)
                     or origin["output"] != row["output"]
                     or _cost(row.get("cost_cny")) != 0
                 ):
@@ -217,6 +218,16 @@ def _cost(value: Any) -> Decimal | None:
     except (ValueError, InvalidOperation):
         return None
     return amount if amount.is_finite() and amount >= 0 else None
+
+
+def _request_params(row: Mapping[str, Any]) -> dict[str, Any]:
+    # Only these two fields are added by budget admission after the cache key
+    # is computed. Keep actual prompts/schema/seed and media/image hashes bound.
+    return {
+        key: value
+        for key, value in row["params"].items()
+        if key not in {"budget_reservation_id", "budget_reserved_cny"}
+    }
 
 
 def _rows(value: Any) -> list[Any]:
