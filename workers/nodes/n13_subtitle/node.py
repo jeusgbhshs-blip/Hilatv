@@ -93,7 +93,7 @@ def _execute(request: NodeRequest, *, attempt: int) -> NodeResult:
     script = payload.script
     language = _language(script, payload)
     width, height = _canvas(payload)
-    font = load_font("regular", max(12, round(height * SUBTITLE_FONT_RATIO)))
+    font = load_font("regular", max(12, round(min(width, height) * SUBTITLE_FONT_RATIO)))
     terms = _terms(payload)
     insets = safe_insets(list(payload.brief.platform) if payload.brief else [])
     takes = {item.shot_id: item for item in payload.voiceovers}

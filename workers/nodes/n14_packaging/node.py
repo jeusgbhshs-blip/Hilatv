@@ -11,6 +11,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 from gateway.storage import StorageError, object_store_from_env, read_asset_bytes
 from workers.brand_kit.store import read_asset
 from workers.logging import log_event
@@ -23,7 +25,8 @@ from workers.media.packaging import (
     quantize_s,
     safe_insets,
 )
-from workers.media.raster import render_logo, render_overlay, save_png
+from workers.media.raster import fitting_text, render_logo, render_overlay, save_png
+from workers.media.timing import duration_budget
 from workers.nodes.n14_packaging.qa import QAError, check
 from workers.nodes.n14_packaging.schema import N14Input, NodeRequest, NodeResult, PackageElement
 from workers.nodes.runtime import Deadline
@@ -100,6 +103,28 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> Node
     opening = min(float(intro_spec()["default_s"]), float(intro_spec()["max_s"]))
     intro_s = 0.0 if template == "none" else quantize_s(opening)
     outro_s = quantize_s(float(outro_spec()["duration_s"]))
+    if payload.target_duration_s is not None:
+        budget = duration_budget(
+            payload.target_duration_s,
+            intro_s=0.0 if payload.intro_s is None else payload.intro_s,
+            outro_s=payload.outro_s,
+        )
+        if abs(board_s - budget.body_s) > 1 / 30 + 1e-6:
+            raise QAError(
+                "story duration does not match the reserved whole-film budget", retryable=False
+            )
+        intro_s, outro_s = budget.intro_s, budget.outro_s
+    else:
+        if payload.intro_s is not None:
+            intro_s = 0.0 if payload.intro_s == 0 else quantize_s(payload.intro_s)
+        if payload.outro_s is not None:
+            outro_s = 0.0 if payload.outro_s == 0 else quantize_s(payload.outro_s)
+    if intro_s == 0:
+        template = "none"
+    elif template == "none":
+        if not show_logo or not has_logo:
+            raise QAError("an explicit logo intro requires a real authorized logo", retryable=False)
+        template = "fade"
     total = intro_s + board_s + outro_s
     primary, _secondary, accent = _colors(payload)
     phone = payload.brand_kit.cta.phone.strip() if payload.brand_kit else ""
@@ -124,7 +149,11 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> Node
             "safe_area_ratio": ratio,
             "logo_status": logo_status,
         }
-        logo_spec = {**spec, "max_width": round(width * 0.45), "max_height": round(height * 0.2)}
+        logo_spec = {
+            **spec,
+            "max_width": round(width * min(0.45, 1 - 2 * max(insets.left, insets.right))),
+            "max_height": round(height * 0.2),
+        }
         corner_spec = {**spec, "max_width": round(width * 0.22), "max_height": round(height * 0.09)}
         try:
             logo = render_logo(source, **_render_bounds(logo_spec))
@@ -279,6 +308,7 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> Node
         )
     )
     plan = work / "packaging.json"
+    _fit_elements(elements, width, height, insets)
     plan.write_text(
         json.dumps(
             [item.model_dump(mode="json") for item in elements],
@@ -394,6 +424,39 @@ def _element(
     template = fields.get("template", "")
     ident = str(uuid.uuid5(ASSET_NS, f"{project_id}:{kind}:{text}:{start}:{template}"))
     return PackageElement(element_id=ident, kind=kind, png_path=str(png_path), spec=spec, **fields)
+
+
+def _fit_elements(elements: list[PackageElement], width: int, height: int, insets: Any) -> None:
+    left, right = round(insets.left * width), round((1 - insets.right) * width)
+    top, bottom = round(insets.top * height), round((1 - insets.bottom) * height)
+    for item in elements:
+        if item.text:
+            room_w = right - left
+            if item.anchor == "center":
+                room_w = round(width * (1 - 2 * max(insets.left, insets.right)))
+            try:
+                image, spec = fitting_text(item.spec, room_w, bottom - top)
+            except ValueError as exc:
+                raise QAError(str(exc), retryable=False) from exc
+            save_png(image, Path(item.png_path))
+            item.spec = spec
+            if item.kind == "ai_label":
+                from workers.compliance.label_measure import glyph_ink_height, minimum_glyph_px
+
+                if glyph_ink_height(image) < minimum_glyph_px(min(width, height)):
+                    raise QAError("AI label cannot meet its minimum ink height in the safe area")
+        with Image.open(item.png_path) as image:
+            w, h = image.size
+        if w > right - left or h > bottom - top:
+            raise QAError("brand overlay does not fit the platform safe area", retryable=False)
+        if item.anchor == "center":
+            y = round(item.y_ratio * height - h / 2)
+            y = min(max(y, top), bottom - h)
+            item.y_ratio = (y + h / 2) / height
+        else:
+            x = min(max(round(item.x_ratio * width), left), right - w)
+            y = min(max(round(item.y_ratio * height), top), bottom - h)
+            item.x_ratio, item.y_ratio = x / width, y / height
 
 
 def _intro_template(explicit: str | None, payload: N14Input, board_s: float) -> str:

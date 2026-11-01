@@ -31,8 +31,10 @@ from workers.media.packaging import (
     lut_path,
     outro_spec,
     quantize_s,
+    safe_insets,
 )
-from workers.media.raster import render_overlay, save_png
+from workers.media.raster import fitting_text, render_overlay, save_png
+from workers.media.timing import duration_budget
 from workers.nodes.n06_voiceover.node import load_take
 from workers.nodes.n06_voiceover.qa import QAError as VoiceError
 from workers.nodes.n15_compose.align import apply_aligned_script
@@ -144,7 +146,20 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> Node
     # Zero means no opening card. quantize_s() would turn that into one frame.
     intro_s = 0.0 if payload.intro_s <= 0 else quantize_s(payload.intro_s)
     outro_s = quantize_s(payload.outro_s or float(outro_spec()["duration_s"]))
+    if payload.target_duration_s is not None:
+        exact = duration_budget(
+            payload.target_duration_s, intro_s=payload.intro_s, outro_s=payload.outro_s
+        )
+        intro_s, outro_s = exact.intro_s, exact.outro_s
     payload = apply_aligned_script(payload, intro_s=intro_s)
+    payload = payload.model_copy(update={"intro_s": intro_s, "outro_s": outro_s})
+    if payload.target_duration_s is not None:
+        frames = sum(round(shot.duration_s * FPS) for shot in payload.script.shots)
+        if frames != exact.body_frames:
+            raise QAError(
+                "story duration does not match the explicit whole-film frame budget",
+                retryable=False,
+            )
     timeline = _timeline(payload, work, width, height, intro_s, outro_s, gateway=gateway)
     path = work / "timeline.json"
     body = json.dumps(timeline.model_dump(mode="json"), ensure_ascii=False, indent=2)
@@ -155,6 +170,11 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> Node
         dest = work / f"{variant}.mp4"
         graphs[variant] = render_timeline(timeline, dest, variant=variant)
         exports[variant] = str(dest)
+    # Private unlettered picture source for N17. Reframing a burned master would
+    # retain its old subtitles/Logo and then burn a second, misplaced layer.
+    clean = work / "clean_picture.mp4"
+    graphs["clean_picture"] = render_timeline(timeline, clean, variant="clean_picture")
+    exports["clean_picture"] = str(clean)
     assets = [
         Asset(
             asset_id=str(uuid.uuid5(ASSET_NS, f"{request.project_id}:{name}")),
@@ -193,6 +213,7 @@ def _execute(request: NodeRequest, *, attempt: int, gateway: Any = None) -> Node
             "audio_provenance": timeline.audio_provenance,
             "logo_status": timeline.logo_status,
             "preview_only": timeline.logo_status != "ready",
+            "target_duration_s": payload.target_duration_s,
             **_license_payload(payload),
         },
     )
@@ -240,7 +261,8 @@ def _timeline(
                 False,
             )
         )
-    pieces.append(("outro", outro_s, "cut", (12, 24, 48), None, [], False))
+    if outro_s > 0:
+        pieces.append(("outro", outro_s, "cut", (12, 24, 48), None, [], False))
     colors = [item[3] for item in pieces]
     target = colors[0]
     cursor = 0.0
@@ -294,6 +316,7 @@ def _timeline(
         work_dir=str(work),
         audio_provenance=combine_provenance([clip.provenance for clip in audio]),
         logo_status=payload.logo_status,
+        target_duration_s=payload.target_duration_s,
     )
 
 
@@ -485,7 +508,8 @@ def _audio(
         duration = len(samples) / SAMPLE_RATE
         if abs(duration - take.audio_s) > 1 / FPS + 0.001:
             raise QAError(f"{shot.shot_id} audio duration does not match its take", retryable=False)
-        if duration > shot.duration_s + 1 / FPS:
+        allowance = 1 / SAMPLE_RATE if payload.target_duration_s is not None else 1 / FPS
+        if duration > shot.duration_s + allowance:
             raise QAError(f"{shot.shot_id} audio exceeds its shot", retryable=False)
         dest.write_bytes(wav_bytes(samples))
         clips.append(
@@ -544,7 +568,8 @@ def _validate_narration_mix(payload: N15Input, takes: dict, mix: Any, *, gateway
                 raise QAError(
                     f"{shot.shot_id} audio duration does not match its take", retryable=False
                 )
-            if len(actual) / SAMPLE_RATE > shot.duration_s + 1 / FPS:
+            allowance = 1 / SAMPLE_RATE if payload.target_duration_s is not None else 1 / FPS
+            if len(actual) / SAMPLE_RATE > shot.duration_s + allowance:
                 raise QAError(f"{shot.shot_id} audio exceeds its shot", retryable=False)
             start = round(offset * SAMPLE_RATE)
             if start + len(actual) > count + 1:
@@ -584,7 +609,10 @@ def _overlays(
     intro_s: float,
 ) -> list[OverlayItem]:
     items: list[OverlayItem] = []
-    font_size = max(12, round(height * SUBTITLE_FONT_RATIO))
+    font_size = max(12, round(min(width, height) * SUBTITLE_FONT_RATIO))
+    safe = safe_insets(list(payload.brief.platform) if payload.brief else [])
+    left, right = round(safe.left * width), round((1 - safe.right) * width)
+    top, bottom = round(safe.top * height), round((1 - safe.bottom) * height)
     sub_dir = work / "subtitles"
     for cue in payload.cues:
         highlight = cue.highlights[0].color if cue.highlights else "#F5A623"
@@ -599,20 +627,14 @@ def _overlays(
             "radius": 0,
             "stroke": 2,
         }
-        image = render_overlay(
-            spec["text"],
-            weight="regular",
-            font_size=font_size,
-            fill="#FFFFFF",
-            highlight=highlight,
-            spans=[(int(item[0]), int(item[1])) for item in spec["spans"]],
-            padding=4,
-            stroke=2,
-        )
+        try:
+            image, spec = fitting_text(spec, right - left, bottom - top)
+        except ValueError as exc:
+            raise QAError(str(exc), retryable=False) from exc
         path = sub_dir / f"{cue.cue_id}.png"
         save_png(image, path)
-        x = min(max(0, round(cue.x_ratio * width)), max(0, width - image.width))
-        y = min(max(0, round(cue.y_ratio * height)), max(0, height - image.height))
+        x = min(max(left, round(cue.x_ratio * width)), right - image.width)
+        y = min(max(top, round(cue.y_ratio * height)), bottom - image.height)
         items.append(
             OverlayItem(
                 kind="subtitle",
@@ -698,11 +720,11 @@ def _with_locked_label(
     """Drop a caller-supplied mark and burn the canonical one for the whole film."""
 
     from workers.media.packaging import ai_label_text
-    from workers.media.raster import render_overlay, save_png
+    from workers.media.raster import save_png
 
     kept = [item for item in items if item.kind != "ai_label"]
     board = sum(float(shot.duration_s) for shot in payload.script.shots)
-    end = max(intro_s + board + float(payload.outro_s), 0.04)
+    end = max(intro_s + board + float(payload.outro_s or 0), 0.04)
     for item in kept:
         end = max(end, float(item.end_s))
     text = ai_label_text()
@@ -717,10 +739,21 @@ def _with_locked_label(
         "radius": 4,
         "stroke": 0,
     }
-    image = render_overlay(**spec)
+    safe = safe_insets(list(payload.brief.platform) if payload.brief else [])
+    try:
+        image, spec = fitting_text(
+            spec,
+            round(width * (1 - safe.left - safe.right)),
+            round(height * (1 - safe.top - safe.bottom)),
+        )
+    except ValueError as exc:
+        raise QAError(str(exc), retryable=False) from exc
+    from workers.compliance.label_measure import glyph_ink_height, minimum_glyph_px
+
+    if glyph_ink_height(image) < minimum_glyph_px(min(width, height)):
+        raise QAError("AI label cannot meet its minimum ink height in the safe area")
     path = work / "ai_label.png"
     save_png(image, path)
-    margin = max(8, round(min(width, height) * 0.04))
     kept.append(
         OverlayItem(
             kind="ai_label",
@@ -728,8 +761,8 @@ def _with_locked_label(
             text=text,
             start_s=0.0,
             end_s=round(end, 3),
-            x=margin,
-            y=margin,
+            x=round(safe.left * width),
+            y=round(safe.top * height),
             anchor="topleft",
             spec=spec,
         )

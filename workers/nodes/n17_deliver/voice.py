@@ -24,6 +24,7 @@ def dub(
     project_id: str,
     attempt: int,
     enterprise_id: str | None = None,
+    strict_duration: bool = False,
 ) -> list[ShotVoiceover]:
     from workers.brand_kit.people import ConsentError
     from workers.compliance.consent_gate import assert_voice_allowed, gated_tts
@@ -64,6 +65,8 @@ def dub(
             pause_s=plan.pause_s,
             seed=0,
             language=script.language,
+            gateway=gateway,
+            allow_mock=spoken.get("mock") is True,
         )
         heard = gateway.asr(
             str(spoken.get("uri") or ""),
@@ -96,6 +99,10 @@ def dub(
         audio_s = level.duration_s
         target = float(shot.duration_s)
         if audio_s > target + 0.03:
+            if strict_duration:
+                raise QAError(
+                    f"{shot.shot_id} dub exceeds its planned duration; shorten the script"
+                )
             _fit_wav(wav, dest, audio_s / target, target)
             scale = target / audio_s
             stamps = [
@@ -127,6 +134,11 @@ def dub(
                 loudness_dbfs=level.loudness_dbfs,
                 clipped=False,
                 role=plan.role,
+                provenance="mock"
+                if spoken.get("mock") is True
+                else "live"
+                if spoken.get("mock") is False
+                else "unknown",
             )
         )
     return takes

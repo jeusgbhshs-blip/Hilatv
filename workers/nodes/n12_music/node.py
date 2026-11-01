@@ -12,6 +12,7 @@ import array
 import hashlib
 import os
 import uuid
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -25,9 +26,11 @@ from workers.media.audio import (
     decode_audio,
 )
 from workers.media.ffmpeg import RenderError
+from workers.media.packaging import FPS
+from workers.media.timing import duration_budget
 from workers.nodes.n06_voiceover.node import load_take
 from workers.nodes.n06_voiceover.qa import QAError as VoiceError
-from workers.nodes.n12_music.align import boundaries_for
+from workers.nodes.n12_music.align import boundaries_for, target_boundaries
 from workers.nodes.n12_music.library import (
     EVIDENCE_REF,
     EXPIRES_ON,
@@ -128,15 +131,32 @@ def _execute(
     deadline.check()
     mood = _mood(payload)
     track = select_track(mood)
+    exact = (
+        duration_budget(payload.target_duration_s, intro_s=payload.intro_s, outro_s=payload.outro_s)
+        if payload.target_duration_s is not None
+        else None
+    )
+    if exact:
+        # Request a nearby tempo whose beat lands at the body/outro boundary.
+        # Actual returned music is still decoded and measured by the 80ms QA.
+        beats = max(1, round(exact.body_s * track.bpm / 60))
+        track = replace(track, bpm=beats * 60 / exact.body_s)
     durations = [float(shot.duration_s) for shot in payload.script.shots]
     voice_pcm, voice_sources = _load_voices(payload, gateway)
     minimums = [
         len(voice_pcm[shot.shot_id]) / MUSIC_RATE if shot.shot_id in voice_pcm else 0.0
         for shot in payload.script.shots
     ]
-    marks = boundaries_for(durations, minimums, track)
-    end_beat = marks[-1]
-    n_samples = tail_samples(end_beat, track.bpm)
+    if exact:
+        try:
+            frames = target_boundaries(durations, minimums, track, exact.body_frames)
+        except ValueError as exc:
+            raise QAError(str(exc), retryable=False) from exc
+        marks = [round(frame * MUSIC_RATE / FPS) for frame in frames]
+        n_samples = round((exact.body_s + exact.outro_s) * MUSIC_RATE)
+    else:
+        marks = boundaries_for(durations, minimums, track)
+        n_samples = tail_samples(marks[-1], track.bpm)
     duration_s = n_samples / MUSIC_RATE
     prompt = render_music_prompt(mood=mood, duration_s=duration_s, bpm=track.bpm)
     seed = _seed(request.project_id)
@@ -156,7 +176,9 @@ def _execute(
         raise QAError("music response has no source or license", retryable=False)
     _reject_test_library_when_live(spoken, source, license_name)
     work = _work_dir(payload.work_dir, request.project_id)
-    cuts, _regions, placed = _layout(payload.script.shots, marks, minimums, track.bpm)
+    cuts, _regions, placed = _layout(
+        payload.script.shots, marks, minimums, track.bpm, sample_marks=exact is not None
+    )
     mock_music = spoken.get("mock") is True
     if placed and os.getenv("HILATV_LIVE", "0").strip() == "1" and not mock_music:
         raise QAError("live sound effects require a licensed audio source", retryable=False)
@@ -199,6 +221,7 @@ def _execute(
         license_name=license_name,
         bed_uri=files.music_bed.resolve().as_uri(),
         work=work,
+        music_duration_s=files.duration_s if exact else None,
     )
     reason = incomplete_reason(records)
     if reason:
@@ -236,7 +259,9 @@ def _execute(
             "script": payload.script.model_dump(mode="json"),
             "aligned_script": aligned.model_dump(mode="json"),
             "cuts": [item.model_dump(mode="json") for item in cuts],
-            "cut_times_s": _cut_times(cuts),
+            "cut_times_s": _cut_times(cuts)[:-1]
+            if exact and exact.outro_frames == 0
+            else _cut_times(cuts),
             "narration_regions": [
                 {"start_s": region.start_s, "end_s": region.end_s}
                 for region in files.narration_regions
@@ -255,6 +280,9 @@ def _execute(
             "prompt": prompt,
             "audio_provenance": provenance,
             "has_narration": bool(voice_pcm),
+            "target_duration_s": payload.target_duration_s,
+            "intro_s": payload.intro_s,
+            "outro_s": payload.outro_s,
         },
     )
 
@@ -300,14 +328,18 @@ def _layout(
     marks: list[int],
     voice_s: list[float],
     bpm: float,
+    *,
+    sample_marks: bool = False,
 ) -> tuple[list[CutPoint], list[Region], list[tuple[str, int, str]]]:
     cuts: list[CutPoint] = []
     regions: list[Region] = []
     placed: list[tuple[str, int, str]] = []
     pairs = zip(shots, marks[:-1], marks[1:], voice_s, strict=True)
     for shot, start_beat, end_beat, spoken in pairs:
-        start = beat_sample_index(start_beat, bpm) / MUSIC_RATE
-        end = beat_sample_index(end_beat, bpm) / MUSIC_RATE
+        start_sample = start_beat if sample_marks else beat_sample_index(start_beat, bpm)
+        end_sample = end_beat if sample_marks else beat_sample_index(end_beat, bpm)
+        start = start_sample / MUSIC_RATE
+        end = end_sample / MUSIC_RATE
         cuts.append(CutPoint(shot_id=shot.shot_id, start_s=start, end_s=end))
         if spoken > 0 and shot.voiceover.strip():
             voice_end = min(end, start + spoken)
@@ -315,8 +347,6 @@ def _layout(
                 regions.append(Region(start, voice_end))
         kind = match_sfx(shot)
         if kind is not None:
-            start_sample = beat_sample_index(start_beat, bpm)
-            end_sample = beat_sample_index(end_beat, bpm)
             placed.append(
                 (kind, effect_start(kind, start_sample, end_sample, MUSIC_RATE), shot.shot_id)
             )
@@ -332,6 +362,7 @@ def _records(
     license_name: str,
     bed_uri: str,
     work: Path,
+    music_duration_s: float | None = None,
 ) -> list[LicenseRecord]:
     span = cuts[-1].end_s - cuts[0].start_s if cuts else 0.0
     records = [
@@ -343,7 +374,7 @@ def _records(
             title=track.title,
             uri=bed_uri,
             start_s=cuts[0].start_s if cuts else 0.0,
-            duration_s=round(span, 6),
+            duration_s=round(span if music_duration_s is None else music_duration_s, 6),
             note=LICENSE_NOTE,
             **_rights(),
         )
@@ -403,8 +434,8 @@ def _rescale(cards: list[OnScreenText], old: float, new: float) -> list[OnScreen
     scale = new / old
     resized: list[OnScreenText] = []
     for card in cards:
-        start = round(min(card.in_ * scale, new), 3)
-        end = round(min(max(card.out * scale, start), new), 3)
+        start = min(round(min(card.in_ * scale, new), 3), new)
+        end = min(round(min(max(card.out * scale, start), new), 3), new)
         resized.append(card.model_copy(update={"in_": start, "out": end}))
     return resized
 

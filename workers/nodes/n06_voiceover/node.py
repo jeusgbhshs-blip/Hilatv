@@ -17,6 +17,8 @@ from pydantic import ValidationError
 from gateway.media_bytes import render_wav
 from workers.logging import log_event
 from workers.media.audio import AudioError, audio_bytes, decode_audio, wav_bytes
+from workers.media.packaging import FPS
+from workers.media.timing import allocate_frames, duration_budget
 from workers.nodes.n06_voiceover.audio import FRAME_S, analyze_wav, character_error_rate
 from workers.nodes.n06_voiceover.lexicon import load_lexicon, matching_terms
 from workers.nodes.n06_voiceover.prosody import DEFAULT_SPEED, DEFAULT_VOICE, plan_prosody
@@ -118,7 +120,12 @@ def _execute(
         raise QAError(str(exc), retryable=False) from exc
     plans = plan_prosody(script, base)
     lexicon = load_lexicon()
-    target = float(payload.brief.duration_s) if payload.brief is not None else None
+    exact = (
+        duration_budget(payload.target_duration_s, intro_s=payload.intro_s, outro_s=payload.outro_s)
+        if payload.target_duration_s is not None
+        else None
+    )
+    target = exact.body_s if exact else float(payload.brief.duration_s) if payload.brief else None
     speeds = {shot.shot_id: plans[shot.shot_id].speed for shot in script.shots}
     spoken = _speak_all(
         script,
@@ -134,6 +141,8 @@ def _execute(
         enterprise_id=payload.enterprise_id,
     )
     reserved = sum(shot.duration_s for shot in script.shots if not shot.voiceover.strip())
+    if exact:
+        reserved = sum(1 / FPS for shot in script.shots if not shot.voiceover.strip())
     budget = None if target is None else max(0.0, target - reserved)
     factor = 1.0
     if budget is not None:
@@ -145,6 +154,7 @@ def _execute(
             speeds=speeds,
             request=request,
             attempt=attempt,
+            tolerance=0.0 if exact else DURATION_TOLERANCE,
         )
         if factor > 1:
             spoken = _speak_all(
@@ -166,19 +176,53 @@ def _execute(
                 brief_s=target if target is not None else budget,
                 request=request,
                 attempt=attempt,
+                tolerance=0.0 if exact else DURATION_TOLERANCE,
             )
     fitted = fit_durations(
         [item["audio_s"] for item in spoken],
         target_s=target,
         reserved_s=reserved,
     )
+    exact_frames: dict[str, int] = {}
+    if exact:
+        by_id = {item["shot_id"]: item for item in spoken}
+        try:
+            frames = allocate_frames(
+                [
+                    by_id[shot.shot_id]["audio_s"] if shot.shot_id in by_id else 0
+                    for shot in script.shots
+                ],
+                [float(shot.duration_s) for shot in script.shots],
+                exact.body_frames,
+            )
+        except ValueError as exc:
+            raise QAError(f"trim_copy: {exc}", retryable=False) from exc
+        exact_frames = {
+            shot.shot_id: count for shot, count in zip(script.shots, frames, strict=True)
+        }
+        fitted = [
+            (
+                item["audio_s"],
+                max(0.0, exact_frames[item["shot_id"]] / FPS - item["audio_s"]),
+                exact_frames[item["shot_id"]] / FPS,
+            )
+            for item in spoken
+        ]
     shots: list[Shot] = []
     takes: list[ShotVoiceover] = []
     assets: list[Asset] = []
     spoken_index = 0
     for shot in script.shots:
         if not shot.voiceover.strip():
-            shots.append(shot)
+            duration = exact_frames[shot.shot_id] / FPS if exact else shot.duration_s
+            shots.append(
+                shot.model_copy(
+                    update={
+                        "duration_s": duration,
+                        "on_screen_text": _rescale(shot.on_screen_text, shot.duration_s, duration),
+                    }
+                )
+            )
             continue
         audio_s, hold_s, duration_s = fitted[spoken_index]
         item = spoken[spoken_index]
@@ -257,6 +301,9 @@ def _execute(
             "storyboard_duration_s": board_total,
             "base_speed": base,
             "speed_factor": factor,
+            "target_duration_s": payload.target_duration_s,
+            "intro_s": payload.intro_s,
+            "outro_s": payload.outro_s,
         },
         attempt=attempt,
     )
@@ -430,11 +477,13 @@ def _maybe_speed_up(
     speeds: dict[str, float],
     request: NodeRequest,
     attempt: int,
+    tolerance: float = DURATION_TOLERANCE,
 ) -> float:
     factor = boost_factor(
         [item["audio_s"] for item in spoken],
         [item["pause_s"] for item in spoken],
         target,
+        tolerance=tolerance,
     )
     if factor is None:
         _flag_trim(spoken, target=brief_s, request=request, attempt=attempt)
@@ -461,9 +510,10 @@ def _reject_if_still_long(
     brief_s: float,
     request: NodeRequest,
     attempt: int,
+    tolerance: float = DURATION_TOLERANCE,
 ) -> None:
     total = sum(item["audio_s"] for item in spoken)
-    if total > target * (1 + DURATION_TOLERANCE):
+    if total > target * (1 + tolerance):
         _flag_trim(spoken, target=brief_s, request=request, attempt=attempt)
 
 
@@ -486,7 +536,7 @@ def _flag_trim(
         trim_copy=True,
     )
     raise QAError(
-        f"trim_copy: voiceover {total:.3f}s is more than 5% over brief {target:.3f}s; "
+        f"trim_copy: voiceover {total:.3f}s exceeds the available story budget {target:.3f}s; "
         "N4 should shorten the script",
         retryable=False,
     )
@@ -562,8 +612,8 @@ def _rescale(cards: list[OnScreenText], old: float, new: float) -> list[OnScreen
     scale = new / old
     resized: list[OnScreenText] = []
     for card in cards:
-        start = round(min(card.in_ * scale, new), 3)
-        end = round(min(max(card.out * scale, start), new), 3)
+        start = min(round(min(card.in_ * scale, new), 3), new)
+        end = min(round(min(max(card.out * scale, start), new), 3), new)
         resized.append(card.model_copy(update={"in_": start, "out": end}))
     return resized
 

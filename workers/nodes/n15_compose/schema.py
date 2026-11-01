@@ -85,7 +85,7 @@ class N15Input(BaseModel):
     brand_kit: BrandKit | None = None
     brief: Brief | None = None
     intro_s: float = Field(default=0, ge=0)
-    outro_s: float = Field(default=0, ge=0)
+    outro_s: float | None = Field(default=None, ge=0)
     width: int | None = Field(default=None, ge=16)
     height: int | None = Field(default=None, ge=16)
     work_dir: str | None = None
@@ -93,6 +93,7 @@ class N15Input(BaseModel):
     licenses: list[TrackLicense] = Field(default_factory=list)
     shot_clips: list[ShotClip] = Field(default_factory=list)
     logo_status: LogoStatus = "unknown"
+    target_duration_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
 class VideoClip(BaseModel):
@@ -142,3 +143,4 @@ class Timeline(BaseModel):
     produce_ids: dict[str, str] = Field(default_factory=dict)
     audio_provenance: AudioProvenance = "unknown"
     logo_status: LogoStatus = "unknown"
+    target_duration_s: float | None = None

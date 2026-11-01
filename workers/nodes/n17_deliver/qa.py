@@ -57,6 +57,11 @@ def _version(version: DeliveryVersion, seen_pictures: set[str]) -> None:
         raise QAError(f"{version.aspect_ratio} frame size does not match")
     if abs(float(info["fps"]) - FPS) > 0.2:
         raise QAError(f"{version.aspect_ratio} fps is {info['fps']}")
+    if (
+        version.target_duration_s is not None
+        and abs(float(info["duration_s"]) - version.target_duration_s) > 1 / FPS + 0.001
+    ):
+        raise QAError("export does not match its explicit total duration")
     if not info["audio_codecs"]:
         raise QAError(f"{version.language} export has no audio")
     playable(path)

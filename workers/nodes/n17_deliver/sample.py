@@ -81,6 +81,7 @@ def acceptance_request(
             "brief": brief,
             "brand_kit": brand,
             "master_path": str(master),
+            "picture_path": str(master),
             "subject_tracks": [item.model_dump(mode="json") for item in tracks]
             if with_tracks
             else [],

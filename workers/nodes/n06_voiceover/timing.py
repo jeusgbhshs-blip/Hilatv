@@ -22,6 +22,7 @@ def boost_factor(
     target_s: float,
     *,
     max_boost: float = MAX_SPEED_BOOST,
+    tolerance: float = DURATION_TOLERANCE,
 ) -> float | None:
     """Speed multiplier that pulls a long read back toward ``target_s``.
 
@@ -35,9 +36,9 @@ def boost_factor(
     spoken_sum = sum(spoken)
     pause_sum = sum(max(0.0, pause) for pause in pause_s)
     total = spoken_sum + pause_sum
-    if total <= target_s * (1 + DURATION_TOLERANCE):
+    if total <= target_s * (1 + tolerance):
         return 1.0
-    if pause_sum >= target_s * (1 + DURATION_TOLERANCE) or spoken_sum <= 0:
+    if pause_sum >= target_s * (1 + tolerance) or spoken_sum <= 0:
         return None
     needed = spoken_sum / (target_s - pause_sum)
     if needed <= 1:
@@ -45,7 +46,7 @@ def boost_factor(
     if needed <= max_boost + 1e-9:
         return round(needed, 4)
     fastest = spoken_sum / max_boost + pause_sum
-    if fastest <= target_s * (1 + DURATION_TOLERANCE):
+    if fastest <= target_s * (1 + tolerance):
         return max_boost
     return None
 

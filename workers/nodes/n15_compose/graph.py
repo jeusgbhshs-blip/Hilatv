@@ -9,8 +9,8 @@ _DISSOLVE = {"dissolve", "xfade", "fade", "crossfade"}
 
 def filter_complex(timeline: Timeline, variant: str) -> str:
     overlays = _overlays_for(timeline, variant)
-    audios = [] if variant == "novo" else list(timeline.audio)
-    use_audio = variant != "novo"
+    audios = [] if variant in {"novo", "clean_picture"} else list(timeline.audio)
+    use_audio = variant not in {"novo", "clean_picture"}
     lines: list[str] = []
     labels: list[str] = []
     lut = _quote(timeline.lut_path)
@@ -56,7 +56,13 @@ def filter_complex(timeline: Timeline, variant: str) -> str:
                 f"duration=first:dropout_transition=0:normalize=0[aout]"
             )
     if not overlays:
-        lines.append(f"[{current}]format=yuv420p[vout]")
+        legacy_hold = (
+            f"fps={timeline.fps},tpad=stop_mode=clone:stop_duration={timeline.duration_s:.3f},"
+            f"trim=duration={timeline.duration_s:.3f},"
+            if variant == "clean_picture" and timeline.target_duration_s is None
+            else ""
+        )
+        lines.append(f"[{current}]{legacy_hold}format=yuv420p[vout]")
         return ";".join(lines)
     ov_base = n_video + n_audio + (1 if use_audio else 0)
     for index, overlay in enumerate(overlays):
@@ -74,8 +80,8 @@ def filter_complex(timeline: Timeline, variant: str) -> str:
 
 def command(timeline: Timeline, dest: str, variant: str) -> list[str]:
     overlays = _overlays_for(timeline, variant)
-    audios = [] if variant == "novo" else list(timeline.audio)
-    use_audio = variant != "novo"
+    audios = [] if variant in {"novo", "clean_picture"} else list(timeline.audio)
+    use_audio = variant not in {"novo", "clean_picture"}
     args = ["ffmpeg", "-y", "-loglevel", "error", "-threads", "1"]
     for clip in timeline.clips:
         args += ["-i", clip.path]
@@ -144,6 +150,8 @@ def _aigc_args(timeline: Timeline, variant: str) -> list[str]:
 
 
 def _overlays_for(timeline: Timeline, variant: str) -> list[OverlayItem]:
+    if variant == "clean_picture":
+        return []
     if variant == "nosub":
         return [item for item in timeline.overlays if item.kind != "subtitle"]
     return list(timeline.overlays)
@@ -170,17 +178,23 @@ def _join(labels: list[str], timeline: Timeline) -> tuple[str, str]:
             # 60ms keeps the fade's first changed frame inside the 80ms beat window.
             # A 300ms fade shifts every later cut by that overlap.
             overlap = min(0.06, previous.duration_s / 2, timeline.clips[index].duration_s / 2)
-            offset = max(0.0, elapsed - overlap)
+            exact = timeline.target_duration_s is not None
+            offset = elapsed if exact else max(0.0, elapsed - overlap)
             left = f"d{index}a"
             right = f"d{index}b"
             # concat emits 1/1000000. xfade requires both inputs on one timebase.
-            parts.append(f"[{current}]settb=1/{timeline.fps}[{left}]")
+            pad = (
+                f"fps={timeline.fps},tpad=stop_mode=clone:stop_duration={overlap:.3f},"
+                if exact
+                else ""
+            )
+            parts.append(f"[{current}]{pad}settb=1/{timeline.fps}[{left}]")
             parts.append(f"[{labels[index]}]settb=1/{timeline.fps}[{right}]")
             parts.append(
                 f"[{left}][{right}]xfade=transition=fade:"
                 f"duration={overlap:.3f}:offset={offset:.3f}[{out}]"
             )
-            elapsed = elapsed + timeline.clips[index].duration_s - overlap
+            elapsed = elapsed + timeline.clips[index].duration_s - (0 if exact else overlap)
         else:
             parts.append(f"[{current}][{labels[index]}]concat=n=2:v=1:a=0[{out}]")
             elapsed += timeline.clips[index].duration_s

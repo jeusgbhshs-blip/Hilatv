@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import math
 from pathlib import Path
+from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont, UnidentifiedImageError
 
@@ -79,6 +80,21 @@ def render_overlay(
         cursor += len(line) + 1
         y += line_h + gap
     return image
+
+
+def fitting_text(
+    spec: dict[str, Any], max_width: int, max_height: int
+) -> tuple[Image.Image, dict[str, Any]]:
+    """Rasterize at a legible font size that actually fits the safe rectangle."""
+
+    fitted = dict(spec)
+    size = int(fitted["font_size"])
+    for candidate in range(size, 11, -1):
+        fitted["font_size"] = candidate
+        image = render_overlay(**fitted)
+        if image.width <= max_width and image.height <= max_height:
+            return image, fitted
+    raise ValueError("overlay text does not fit the safe area at a readable font size")
 
 
 def render_logo(

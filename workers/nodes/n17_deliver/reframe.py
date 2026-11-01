@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from workers.media.packaging import aspect_size
 from workers.nodes.n17_deliver.schema import GeometryRecord, SubjectTrack
 
 
@@ -105,19 +106,7 @@ class ShotGeometry:
 def output_size(aspect: str, long_edge: int) -> tuple[int, int]:
     """Even frame whose long side is ``long_edge`` and whose ratio is ``aspect``."""
 
-    left, right = aspect.split(":", 1)
-    aw, ah = int(left), int(right)
-    if aw >= ah:
-        width = long_edge
-        height = int(round(long_edge * ah / aw))
-    else:
-        height = long_edge
-        width = int(round(long_edge * aw / ah))
-    if width % 2:
-        width -= 1
-    if height % 2:
-        height -= 1
-    return max(16, width), max(16, height)
+    return aspect_size(aspect, long_edge)
 
 
 def track_pixels(track: SubjectTrack, src_w: int, src_h: int) -> tuple[Rect, Rect]:

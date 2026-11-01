@@ -7,6 +7,7 @@ from typing import Any
 from pydantic import BaseModel, Field, model_validator
 
 from workers.nodes.n12_music.schema import LicensingSummary
+from workers.nodes.n15_compose.schema import Timeline
 from workers.schemas.brand import BrandKit
 from workers.schemas.brief import Brief
 from workers.schemas.script import Script
@@ -60,6 +61,11 @@ class N17Input(BaseModel):
     script: Script
     brief: Brief
     master_path: str = Field(min_length=1)
+    picture_path: str | None = None
+    source_timeline: Timeline | None = None
+    target_duration_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    intro_s: float = Field(default=0, ge=0, allow_inf_nan=False)
+    outro_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     brand_kit: BrandKit | None = None
     variants: list[Script] = Field(default_factory=list)
     subject_tracks: list[SubjectTrack] = Field(default_factory=list)
@@ -144,6 +150,8 @@ class DeliveryVersion(BaseModel):
     modes: dict[str, str]
     subject_box_source: str = "default"
     qa_status: str = "needs_review"
+    target_duration_s: float | None = None
+    media_provenance: str = "unknown"
 
 
 def _inside(x: float, y: float, w: float, h: float) -> None:

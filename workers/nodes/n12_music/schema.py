@@ -40,6 +40,9 @@ class N12Input(BaseModel):
     brief: Brief | None = None
     mood: str = ""
     work_dir: str | None = None
+    target_duration_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    intro_s: float = Field(default=0, ge=0, allow_inf_nan=False)
+    outro_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class CutPoint(BaseModel):

@@ -34,6 +34,9 @@ class N6Input(BaseModel):
     brand_kit: BrandKit | None = None
     brief: Brief | None = None
     enterprise_id: str | None = None
+    target_duration_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    intro_s: float = Field(default=0, ge=0, allow_inf_nan=False)
+    outro_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class WordStamp(BaseModel):

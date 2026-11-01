@@ -6,6 +6,7 @@ Localization and dubbing go through the gateway. No vendor SDK is imported here.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import uuid
@@ -14,11 +15,16 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+from PIL import Image
+
 from gateway.constants import NO_RENDERED_TEXT
 from gateway.media_bytes import render_png
 from workers.logging import log_event
+from workers.media.audio import combine_provenance
 from workers.media.ffmpeg import RenderError, probe, run_ffmpeg
 from workers.media.packaging import safe_insets
+from workers.media.timing import DurationBudget, duration_budget
+from workers.nodes.n15_compose.schema import Timeline
 from workers.nodes.n17_deliver.cuts import (
     KeptShot,
     duration_targets,
@@ -35,6 +41,7 @@ from workers.nodes.n17_deliver.schema import (
     N17Input,
     NodeRequest,
     NodeResult,
+    OverlayBox,
     SubjectTrack,
     TrackSource,
 )
@@ -114,6 +121,15 @@ def _execute(
     )
     from workers.compliance.gate import open_delivery
 
+    root = project_path(request.project_id, create=True).resolve()
+    master, source_timeline = _clean_picture(root, payload)
+    exact = (
+        duration_budget(payload.target_duration_s, intro_s=payload.intro_s, outro_s=payload.outro_s)
+        if payload.target_duration_s is not None
+        else None
+    )
+    if exact and source_timeline is None:
+        raise QAError("an explicit duration export requires its clean source timeline")
     open_delivery(
         request.project_id,
         payload,
@@ -121,8 +137,6 @@ def _execute(
         gateway=gateway,
         attempt=attempt,
     )
-    root = project_path(request.project_id, create=True).resolve()
-    master = _contained_file(root, payload.master_path)
     info = probe(master)
     src_w, src_h = int(info["width"]), int(info["height"])
     if src_w < 16 or src_h < 16:
@@ -138,6 +152,14 @@ def _execute(
         picture_s=picture_s,
         platforms=list(payload.brief.platform),
     )
+    if exact:
+        if abs(picture_s - exact.body_s) > 1 / 30 + 0.001:
+            raise QAError("source story does not match the explicit export duration")
+        if payload.durations_s and any(
+            abs(value - exact.total_s) > 1 / 30 for value in payload.durations_s
+        ):
+            raise QAError("a different duration needs a separately planned story, not a hard trim")
+        targets = [exact.body_s]
     work = _contained_dir(root, payload.work_dir)
     ready = {item.language: item for item in payload.variants}
     scripts: dict[str, Script] = {}
@@ -177,6 +199,7 @@ def _execute(
                     project_id=request.project_id,
                     attempt=attempt,
                     enterprise_id=payload.enterprise_id,
+                    strict_duration=exact is not None,
                 ),
             )
     versions: list[DeliveryVersion] = []
@@ -186,8 +209,9 @@ def _execute(
         out_w, out_h = output_size(aspect, long_edge)
         for duration, kept in cuts.items():
             deadline.check()
+            placed_kept = _source_spans(kept, source_timeline)
             geometries, track_sources = _geometries(
-                kept,
+                placed_kept,
                 tracks,
                 src_w=src_w,
                 src_h=src_h,
@@ -201,6 +225,10 @@ def _execute(
                 project_id=request.project_id,
                 attempt=attempt,
             )
+            if exact:
+                geometries = _with_packaging_geometry(
+                    geometries, source_timeline, exact, src_w, src_h, out_w, out_h
+                )
             backgrounds = _background_files(geometries, work / "plates")
             slug = _slug(aspect, duration)
             silent = work / "pictures" / f"{slug}.mp4"
@@ -229,11 +257,16 @@ def _execute(
             deadline.check()
             board, takes = dubbed[(language, duration)]
             version_dir = work / "burn" / _slug(aspect, duration) / language
+            body_geometries = [
+                item
+                for item in geometries
+                if item.shot_id in {shot.shot_id for shot in board.shots}
+            ]
             boxes, placed, spoken = burn_overlays(
                 board,
                 takes,
-                geometries,
-                brief=payload.brief,
+                body_geometries,
+                brief=payload.brief.model_copy(update={"aspect_ratios": [aspect]}),
                 brand=payload.brand_kit,
                 project_id=f"{request.project_id}-{language}-{_slug(aspect, duration)}",
                 work=version_dir,
@@ -241,15 +274,33 @@ def _execute(
                 height=out_h,
             )
             audios = _audios(takes, board)
+            total_duration = exact.total_s if exact else duration
+            if exact:
+                boxes, placed = _package_export(
+                    payload,
+                    board,
+                    boxes,
+                    placed,
+                    work=version_dir,
+                    project_id=request.project_id,
+                    width=out_w,
+                    height=out_h,
+                    aspect=aspect,
+                    budget=exact,
+                    gateway=gateway,
+                )
+                audios = [(path, delay + exact.intro_s) for path, delay in audios]
             soundtrack = _soundtrack(root, payload.audio_track)
             if soundtrack is not None:
                 audios = [soundtrack, *audios]
-            dest = work / "versions" / f"{_slug(aspect, duration)}_{language}.mp4"
+            dest = work / "versions" / f"{_slug(aspect, total_duration)}_{language}.mp4"
             dest.parent.mkdir(parents=True, exist_ok=True)
-            _args, burn = burn_command(str(silent), audios, placed, str(dest), duration)
+            _args, burn = burn_command(str(silent), audios, placed, str(dest), total_duration)
             run_ffmpeg(_args)
             version_id = str(
-                uuid.uuid5(ASSET_NS, f"{request.project_id}:{aspect}:{language}:{duration:.3f}")
+                uuid.uuid5(
+                    ASSET_NS, f"{request.project_id}:{aspect}:{language}:{total_duration:.3f}"
+                )
             )
             provided = all(item.provided for item in track_sources)
             versions.append(
@@ -257,7 +308,7 @@ def _execute(
                     version_id=version_id,
                     aspect_ratio=aspect,
                     language=language,
-                    duration_s=duration,
+                    duration_s=total_duration,
                     width=out_w,
                     height=out_h,
                     path=str(dest),
@@ -270,8 +321,19 @@ def _execute(
                     tracks=track_sources,
                     safe=safe_dump,
                     modes={item.shot_id: item.mode for item in geometries},
-                    subject_box_source="provided" if provided else "default",
-                    qa_status="pass" if provided else "needs_review",
+                    subject_box_source="provided" if provided and not exact else "default",
+                    qa_status="pass" if provided and not exact else "needs_review",
+                    target_duration_s=payload.target_duration_s,
+                    media_provenance=combine_provenance(
+                        [
+                            source_timeline.audio_provenance if source_timeline else "unknown",
+                            "mock"
+                            if source_timeline
+                            and any(clip.placeholder for clip in source_timeline.clips)
+                            else "unknown",
+                            *[take.provenance for take in takes],
+                        ]
+                    ),
                 )
             )
             assets.append(
@@ -314,7 +376,9 @@ def _execute(
             "assets": [item.model_dump(mode="json") for item in assets],
             "prompts": prompts,
             "rights": {
-                "picture": "16:9 master reframed in the render layer. Models do not paint text.",
+                "picture": (
+                    "Clean picture source reframed in the render layer. Models do not paint text."
+                ),
                 "voice": "gateway tts",
                 "subtitles": "render-layer PNG, Noto Sans CJK SC (OFL 1.1)",
                 "fonts": "Noto Sans CJK SC, SIL OFL 1.1",
@@ -327,11 +391,154 @@ def _execute(
             "compliance": compliance,
             "languages": languages,
             "aspect_ratios": aspects,
-            "durations_s": targets,
+            "durations_s": [exact.total_s] if exact else targets,
             "verify_pixels": bool(versions)
             and all(item.subject_box_source == "provided" for item in versions),
         },
     )
+
+
+def _clean_picture(root: Path, payload: N17Input) -> tuple[Path, Timeline | None]:
+    saved = {}
+    state = root / "nodes" / "n15_compose.json"
+    if state.is_file() and state.resolve().is_relative_to(root):
+        try:
+            saved = json.loads(state.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            raise QAError("composition source record is unreadable") from None
+    exports = saved.get("exports") or {}
+    raw = payload.picture_path or saved.get("clean_picture_path") or exports.get("clean_picture")
+    if not raw:
+        raise QAError("clean picture source is missing; recompose before exporting new overlays")
+    timeline = payload.source_timeline
+    if timeline is None and saved.get("timeline"):
+        timeline = Timeline.model_validate(saved["timeline"])
+    return _contained_file(root, raw), timeline
+
+
+def _source_spans(kept: list[KeptShot], timeline: Timeline | None) -> list[KeptShot]:
+    if timeline is None:
+        return kept
+    clips = {clip.clip_id: clip for clip in timeline.clips}
+    rows = []
+    for item in kept:
+        clip = clips.get(item.shot.shot_id)
+        if clip is None or item.duration_s > clip.duration_s + 1 / 30:
+            raise QAError("clean source timeline does not contain the requested shot")
+        rows.append(replace(item, source_start=clip.start_s))
+    return rows
+
+
+def _with_packaging_geometry(
+    body: list[ShotGeometry],
+    timeline: Timeline,
+    budget: DurationBudget,
+    src_w: int,
+    src_h: int,
+    out_w: int,
+    out_h: int,
+) -> list[ShotGeometry]:
+    if abs(timeline.duration_s - budget.total_s) > 1 / 30 + 0.001:
+        raise QAError("clean source timeline does not match the explicit total duration")
+    result = list(body)
+    for name, duration in (("intro", budget.intro_s), ("outro", budget.outro_s)):
+        if duration <= 0:
+            continue
+        clip = next((item for item in timeline.clips if item.clip_id == name), None)
+        if clip is None or abs(clip.duration_s - duration) > 1 / 30 + 0.001:
+            raise QAError("clean source packaging does not match its reserved duration")
+        geo = plan_shot(
+            shot_id=name,
+            track=_full_frame(name),
+            src_w=src_w,
+            src_h=src_h,
+            out_w=out_w,
+            out_h=out_h,
+            start_s=clip.start_s,
+            duration_s=clip.duration_s,
+            motion_s=0,
+            regenerate=False,
+        )
+        if name == "intro":
+            result.insert(0, replace(geo, mode="blur"))
+        else:
+            result.append(replace(geo, mode="blur"))
+    return result
+
+
+def _package_export(
+    payload: N17Input,
+    board: Script,
+    boxes: list[OverlayBox],
+    placed: list,
+    *,
+    work: Path,
+    project_id: str,
+    width: int,
+    height: int,
+    aspect: str,
+    budget: DurationBudget,
+    gateway: Any,
+) -> tuple[list[OverlayBox], list]:
+    from workers.nodes.n14_packaging.node import run as run_packaging
+
+    shifted_boxes = [
+        item.model_copy(
+            update={
+                "start_s": 0 if item.kind == "ai_label" else item.start_s + budget.intro_s,
+                "end_s": budget.total_s if item.kind == "ai_label" else item.end_s + budget.intro_s,
+            }
+        )
+        for item in boxes
+    ]
+    shifted = []
+    for item, box in zip(placed, shifted_boxes, strict=True):
+        shifted.append((item[0], box.start_s, box.end_s, item[3], item[4]))
+    result = run_packaging(
+        {
+            "project_id": project_id,
+            "payload": {
+                "script": board.model_dump(mode="json"),
+                "brief": payload.brief.model_copy(update={"aspect_ratios": [aspect]}).model_dump(
+                    mode="json"
+                ),
+                "brand_kit": payload.brand_kit.model_dump(mode="json")
+                if payload.brand_kit
+                else None,
+                "enterprise_id": payload.enterprise_id,
+                "width": width,
+                "height": height,
+                "work_dir": str(work / "packaging"),
+                "target_duration_s": budget.total_s,
+                "intro_s": budget.intro_s,
+                "outro_s": budget.outro_s,
+            },
+        },
+        gateway=gateway,
+    )
+    for element in result.payload["elements"]:
+        if element["kind"] not in {"intro_logo", "corner_logo", "outro_logo", "outro_cta"}:
+            continue
+        with Image.open(element["png_path"]) as image:
+            w, h = image.size
+        center = element["anchor"] == "center"
+        x = round((width - w) / 2) if center else round(element["x_ratio"] * width)
+        y = round(element["y_ratio"] * height - (h / 2 if center else 0))
+        shifted_boxes.append(
+            OverlayBox(
+                kind=element["kind"],
+                text=element["text"],
+                language=board.language,
+                x=x,
+                y=y,
+                w=w,
+                h=h,
+                start_s=element["start_s"],
+                end_s=element["end_s"],
+            )
+        )
+        shifted.append((element["png_path"], element["start_s"], element["end_s"], x, y))
+    return shifted_boxes, shifted
 
 
 def _geometries(

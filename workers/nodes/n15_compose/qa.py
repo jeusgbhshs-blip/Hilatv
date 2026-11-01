@@ -36,6 +36,11 @@ def check(result: NodeResult) -> Timeline:
             raise QAError(f"{name} fps is {info['fps']}")
         if int(info["width"]) != timeline.width or int(info["height"]) != timeline.height:
             raise QAError(f"{name} frame size does not match the timeline")
+        if (
+            timeline.target_duration_s is not None
+            and abs(float(info["duration_s"]) - timeline.target_duration_s) > 1 / FPS + 0.001
+        ):
+            raise QAError(f"{name} does not match the explicit total duration", retryable=False)
         playable(path)
         graph = filter_complex(timeline, name)
         if filters.get(name) != graph:
@@ -45,6 +50,18 @@ def check(result: NodeResult) -> Timeline:
         if "colorchannelmixer=" not in graph or "eq=brightness=0.02" not in graph:
             raise QAError("the grade is missing")
     master = probe(Path(exports["master"]))
+    if exports.get("clean_picture"):
+        clean = Path(exports["clean_picture"])
+        info = probe(clean)
+        if info["audio_codecs"] or "overlay=" in str(filters.get("clean_picture")):
+            raise QAError("the private picture source contains a burned layer or audio")
+        if (
+            int(info["width"]) != timeline.width
+            or int(info["height"]) != timeline.height
+            or abs(float(info["duration_s"]) - float(master["duration_s"])) > 1 / FPS + 0.001
+        ):
+            raise QAError("the private picture source does not match the master clock")
+        playable(clean)
     novo = probe(Path(exports["novo"]))
     if not master["audio_codecs"]:
         raise QAError("master export has no audio")

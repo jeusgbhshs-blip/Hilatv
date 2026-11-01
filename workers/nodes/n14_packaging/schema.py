@@ -40,6 +40,9 @@ class N14Input(BaseModel):
     width: int | None = Field(default=None, ge=16)
     height: int | None = Field(default=None, ge=16)
     work_dir: str | None = None
+    target_duration_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    intro_s: float | None = Field(default=None, ge=0, le=2, allow_inf_nan=False)
+    outro_s: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class PackageElement(BaseModel):

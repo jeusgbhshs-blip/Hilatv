@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from workers.media.timing import duration_budget
 from workers.nodes.n06_voiceover.audio import (
     CER_LIMIT,
     FRAME_S,
@@ -87,7 +88,17 @@ def check(result: NodeResult) -> Script:
         if asset is None or asset.kind is not AssetKind.voiceover or asset.uri != take.uri:
             raise QAError(f"{shot.shot_id} is missing a voiceover asset")
     brief = _brief(result.payload.get("brief"))
-    if brief is not None and brief.duration_s > 0:
+    if result.payload.get("target_duration_s") is not None:
+        exact = duration_budget(
+            result.payload["target_duration_s"],
+            intro_s=result.payload.get("intro_s", 0),
+            outro_s=result.payload.get("outro_s"),
+        )
+        if abs(board_total - exact.body_s) > 0.001:
+            raise QAError(
+                "storyboard does not match the explicit whole-film frame budget", retryable=False
+            )
+    elif brief is not None and brief.duration_s > 0:
         error = abs(board_total - brief.duration_s) / brief.duration_s
         if error > DURATION_TOLERANCE + 1e-9:
             raise QAError(

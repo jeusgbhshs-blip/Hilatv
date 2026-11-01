@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from fractions import Fraction
 from functools import lru_cache
 from pathlib import Path
 
@@ -127,17 +128,57 @@ def canvas_size(
     width: int | None = None,
     height: int | None = None,
 ) -> tuple[int, int]:
-    if width and height:
-        return int(width), int(height)
+    ratio = _aspect(aspect) if aspect is not None else None
+    if width is not None or height is not None:
+        if width is None or height is None:
+            raise ValueError("render width and height must be supplied together")
+        return _checked_size(width, height, ratio)
     env_w = os.getenv("HILATV_RENDER_WIDTH", "").strip()
     env_h = os.getenv("HILATV_RENDER_HEIGHT", "").strip()
     if env_w and env_h:
-        return int(env_w), int(env_h)
-    if aspect == "9:16":
-        return 720, 1280
-    if aspect == "1:1":
-        return 720, 720
-    return 1280, 720
+        configured = _checked_size(int(env_w), int(env_h), None)
+        # Old global landscape test settings must not turn an explicit portrait
+        # project into a landscape movie. Only matching, smaller sizes apply.
+        if ratio is None:
+            return configured
+        default = aspect_size(aspect)
+        if (
+            configured[0] * ratio.denominator == configured[1] * ratio.numerator
+            and configured[0] <= default[0]
+            and configured[1] <= default[1]
+        ):
+            return configured
+    return aspect_size(aspect or "16:9")
+
+
+def aspect_size(aspect: str, long_edge: int | None = None) -> tuple[int, int]:
+    """An exact, even-pixel aspect, bounded by the requested long edge."""
+
+    ratio = _aspect(aspect)
+    edge = (720 if ratio == 1 else 1280) if long_edge is None else int(long_edge)
+    unit = max(ratio.numerator, ratio.denominator)
+    multiplier = edge // (2 * unit) * 2
+    if multiplier < 2 or min(ratio.numerator, ratio.denominator) * multiplier < 16:
+        raise ValueError("render dimensions are too small for the requested aspect ratio")
+    return ratio.numerator * multiplier, ratio.denominator * multiplier
+
+
+def _aspect(aspect: str) -> Fraction:
+    try:
+        left, right = aspect.split(":")
+        if not left.isdigit() or not right.isdigit() or int(left) <= 0 or int(right) <= 0:
+            raise ValueError
+        return Fraction(int(left), int(right))
+    except (ValueError, ZeroDivisionError) as exc:
+        raise ValueError("aspect ratio must contain two positive integers") from exc
+
+
+def _checked_size(width: int, height: int, ratio: Fraction | None) -> tuple[int, int]:
+    if width < 16 or height < 16 or width % 2 or height % 2:
+        raise ValueError("render dimensions must be even integers of at least 16 pixels")
+    if ratio is not None and width * ratio.denominator != height * ratio.numerator:
+        raise ValueError("render dimensions do not match the requested aspect ratio")
+    return width, height
 
 
 def quantize_s(seconds: float, fps: int = FPS) -> float:
