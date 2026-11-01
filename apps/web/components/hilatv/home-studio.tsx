@@ -24,6 +24,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ProjectDraftRecovery } from "@/components/project-draft-recovery";
+import { GenerationSettingsPicker } from "@/components/generation-settings";
 import { useProjectDraft } from "@/lib/use-project-draft";
 import { isCompositionEnter, type DraftFile, type DraftLink } from "@/lib/project-draft";
 import { apiFetch, errorMessage } from "@/lib/api";
@@ -42,14 +43,8 @@ const ICONS: Record<string, LucideIcon> = {
 
 const RISE = ["rise-d5", "rise-d6", "rise-d7", "rise-d8", "rise-d9", "rise-d10", "rise-d11"];
 
-/**
- * CreateProject (apps/api) accepts sentence, attachments, skip_storyboard,
- * brand_kit, brand_id, and concept_selection. It rejects any other field.
- * Aspect, duration, and language are not on that schema. brand_id is an id,
- * not the 「自动 / 不套用」 switch, and there is no field for “don’t apply”.
- * Those four chips stay visible but cannot be chosen.
- */
-const FROZEN_OPTIONS = ["比例", "时长", "语言", "品牌资料"] as const;
+/** Language and brand policy are not exposed by the generation-settings API. */
+const FROZEN_OPTIONS = ["语言", "品牌资料"] as const;
 
 type PickedFile = DraftFile;
 type LinkItem = DraftLink;
@@ -367,6 +362,7 @@ export function HomeStudio() {
 
               <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div className="flex flex-wrap gap-2" aria-label="生成选项">
+                  <GenerationSettingsPicker value={drafts.draft.generation_settings} disabled={!drafts.editable || busy || Boolean(drafts.conflict)} onChange={(value) => drafts.field("generation_settings", value)} />
                   {FROZEN_OPTIONS.map((label) => (
                     <FrozenOption key={label} label={label} />
                   ))}

@@ -1,5 +1,6 @@
 import { apiFetch, ensureSession, errorMessage } from "./api";
 import type { DirectionCard } from "./selection";
+import { conceptInputKey, generationSettings, settingsKey, type GenerationSettings } from "./generation-settings";
 
 export type UploadedDraftFile = { kind: string; upload_id: string; filename: string };
 export type DraftFile = { id: string; file: File; preview: string | null; uploaded?: UploadedDraftFile };
@@ -13,8 +14,10 @@ export type ProjectDraft = {
   links: DraftLink[];
   skip_storyboard: boolean;
   concept_selection: string | null;
+  generation_settings: GenerationSettings;
   cards?: DirectionCard[];
   cards_sentence?: string;
+  cards_input_key?: string;
   brand_applied?: boolean;
   start_operation_id?: string;
   create_snapshot?: {
@@ -22,6 +25,7 @@ export type ProjectDraft = {
     attachments: (UploadedDraftFile | { kind: string; uri: string })[];
     skip_storyboard: boolean;
     concept_selection: string | null;
+    generation_settings: GenerationSettings;
   };
   started?: boolean;
   submission_pending?: boolean;
@@ -40,7 +44,7 @@ export class StaleDraftSessionError extends Error {
 }
 
 export function newDraft(sentence = ""): ProjectDraft {
-  return { operation_id: crypto.randomUUID(), sentence, files: [], links: [], skip_storyboard: false, concept_selection: null };
+  return { operation_id: crypto.randomUUID(), sentence, files: [], links: [], skip_storyboard: false, concept_selection: null, generation_settings: generationSettings() };
 }
 
 /** No file bytes or credentials enter a URL or JSON transport. File bytes live in IndexedDB. */
@@ -51,7 +55,26 @@ export function draftFingerprint(draft: ProjectDraft): string {
     links: draft.links.map((item) => item.uri),
     skip_storyboard: draft.skip_storyboard,
     concept_selection: draft.concept_selection,
+    generation_settings: generationSettings(draft.generation_settings),
   });
+}
+
+/** Migrate pre-settings local records without making an already saved draft dirty. */
+function restoredDraft(draft: ProjectDraft): ProjectDraft {
+  const migrated = { ...draft, generation_settings: generationSettings(draft.generation_settings) };
+  if (!draft.generation_settings && draft.synced_fingerprint) {
+    const legacy = JSON.parse(draftFingerprint(migrated)) as Record<string, unknown>;
+    delete legacy.generation_settings;
+    if (draft.synced_fingerprint === JSON.stringify(legacy)) migrated.synced_fingerprint = draftFingerprint(migrated);
+  }
+  return migrated;
+}
+
+export function currentConceptCards(draft: ProjectDraft): DirectionCard[] {
+  const valid = draft.cards_input_key
+    ? draft.cards_input_key === conceptInputKey(draft.sentence, draft.generation_settings)
+    : draft.cards_sentence === draft.sentence.trim() && settingsKey(draft.generation_settings) === settingsKey();
+  return valid ? draft.cards || [] : [];
 }
 
 export function isCompositionEnter(event: { key: string; isComposing?: boolean; keyCode?: number }): boolean {
@@ -81,7 +104,7 @@ export async function readLocalDraft(scope: string, projectId?: string): Promise
       request.onsuccess = () => {
         const doc = request.result as ProjectDraft | undefined;
         if (!doc || doc.started) return resolve(null);
-        resolve({ ...doc, files: doc.files.map((item) => ({ ...item, preview: item.file.type.startsWith("image/") ? URL.createObjectURL(item.file) : null })) });
+      resolve({ ...restoredDraft(doc), files: doc.files.map((item) => ({ ...item, preview: item.file.type.startsWith("image/") ? URL.createObjectURL(item.file) : null })) });
       };
       request.onerror = () => reject(new Error("未能恢复本地草稿，请从项目列表继续"));
     });
@@ -133,7 +156,7 @@ export async function readDraftBackups(scope: string, projectId?: string): Promi
         if (!cursor) return resolve(rows.sort((a, b) => b.created_at - a.created_at));
         if (String(cursor.key).startsWith(`${scope}:backup:`)) {
           const backup = cursor.value as DraftBackup;
-          if (backup?.draft && backup.draft.project_id === projectId) rows.push(backup);
+            if (backup?.draft && backup.draft.project_id === projectId) rows.push({ ...backup, draft: restoredDraft(backup.draft) });
         }
         cursor.continue();
       };
@@ -143,7 +166,7 @@ export async function readDraftBackups(scope: string, projectId?: string): Promi
 }
 
 export function withDraftPreviews(draft: ProjectDraft): ProjectDraft {
-  return { ...draft, files: draft.files.map((item) => ({ ...item, preview: item.file.type.startsWith("image/") ? URL.createObjectURL(item.file) : null })) };
+  return { ...restoredDraft(draft), files: draft.files.map((item) => ({ ...item, preview: item.file.type.startsWith("image/") ? URL.createObjectURL(item.file) : null })) };
 }
 
 function releaseDraftPreviews(draft: ProjectDraft) {
@@ -156,6 +179,7 @@ export function draftFromServer(body: Record<string, unknown>, projectId: string
   draft.draft_revision = typeof body.draft_revision === "number" ? body.draft_revision : 0;
   draft.skip_storyboard = body.skip_storyboard === true;
   draft.concept_selection = typeof body.concept_selection === "string" ? body.concept_selection : null;
+  draft.generation_settings = generationSettings(body.generation_settings);
   draft.server_status = typeof body.status === "string" ? body.status : "draft";
   draft.submission_pending = draft.server_status !== "draft" || body.submission_state === "pending" || body.submission_state === "unknown_external_result";
   if (typeof body.submission_operation_id === "string") draft.start_operation_id = body.submission_operation_id;
@@ -167,6 +191,7 @@ export function draftFromServer(body: Record<string, unknown>, projectId: string
   if (body.concept_preview_sentence === draft.sentence.trim() && Array.isArray(preview?.directions)) {
     draft.cards = preview.directions;
     draft.cards_sentence = String(body.concept_preview_sentence);
+    draft.cards_input_key = conceptInputKey(draft.sentence, body.concept_preview_generation_settings);
   }
   draft.synced_fingerprint = draftFingerprint(draft);
   return draft;
@@ -202,6 +227,7 @@ export async function syncServerDraft(input: ProjectDraft, onProgress: (draft: P
     attachments: [...draft.files.map((item) => item.uploaded!), ...draft.links.map((item) => ({ kind: "url", uri: item.uri }))],
     skip_storyboard: draft.skip_storyboard,
     concept_selection: draft.concept_selection,
+    generation_settings: generationSettings(draft.generation_settings),
   };
   if (!draft.project_id) {
     draft.create_snapshot = draft.create_snapshot || body;
@@ -295,7 +321,7 @@ export class ProjectDraftSession {
     releaseDraftPreviews(this.state.draft);
   }
 
-  private hasContent() { const doc = this.state.draft; return Boolean(doc.project_id || doc.sentence.trim() || doc.files.length || doc.links.length); }
+  private hasContent() { const doc = this.state.draft; return Boolean(doc.project_id || doc.sentence.trim() || doc.files.length || doc.links.length || settingsKey(doc.generation_settings) !== settingsKey()); }
   private emit(patch: Partial<DraftSessionState>) {
     this.state = { ...this.state, ...patch };
     if (this.active) this.listeners.forEach((listener) => listener());
@@ -373,6 +399,13 @@ export class ProjectDraftSession {
   update = (patch: Partial<ProjectDraft>): boolean => {
     if (!this.editable) return false;
     const draft = { ...this.state.draft, ...patch };
+    draft.generation_settings = generationSettings(draft.generation_settings);
+    if (conceptInputKey(draft.sentence, draft.generation_settings) !== conceptInputKey(this.state.draft.sentence, this.state.draft.generation_settings)) {
+      draft.cards = undefined;
+      draft.cards_sentence = undefined;
+      draft.cards_input_key = undefined;
+      draft.concept_selection = null;
+    }
     this.emit({ draft });
     const ticket = this.ticket();
     void this.persist(draft).catch((caught: unknown) => { if (ticket()) this.emit({ error: caught instanceof Error ? caught.message : "本地草稿未保存" }); });

@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiFetch } from "./api";
 import { DraftConflictError, ProjectDraftSession, StaleDraftSessionError, draftFingerprint, isCompositionEnter,
-  newDraft, syncServerDraft, writeLocalDraft, type DraftBackup, type DraftSessionIO, type ProjectDraft } from "./project-draft";
+  newDraft, syncServerDraft, writeLocalDraft, currentConceptCards, draftFromServer, withDraftPreviews, type DraftBackup, type DraftSessionIO, type ProjectDraft } from "./project-draft";
+import { ASPECT_RATIOS, conceptInputKey, generationSettings } from "./generation-settings";
 
 vi.mock("./api", () => ({
   apiFetch: vi.fn(), ensureSession: vi.fn(),
@@ -125,6 +126,138 @@ function harness(documents: ProjectDraft[]) {
 }
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+describe("generation settings and saved concept identity", () => {
+  it("keeps automatic intent distinct from every supported ratio and validates custom integer duration", () => {
+    expect(generationSettings()).toEqual({ aspect_ratio: null, duration_s: null });
+    for (const aspect_ratio of ASPECT_RATIOS) expect(generationSettings({ aspect_ratio, duration_s: 45 })).toEqual({ aspect_ratio, duration_s: 45 });
+    for (const duration_s of [4, 181, 30.5, Infinity, "30", true]) expect(generationSettings({ duration_s }).duration_s).toBeNull();
+    expect(generationSettings({ aspect_ratio: "unsupported", duration_s: 5 })).toEqual({ aspect_ratio: null, duration_s: 5 });
+    expect(generationSettings({ duration_s: 180 }).duration_s).toBe(180);
+    expect(conceptInputKey("  文本15秒  ", { aspect_ratio: "9:16", duration_s: 30 })).not.toBe(conceptInputKey("文本15秒"));
+  });
+
+  it("saves a settings-only draft and restores it across home, concepts and home again", async () => {
+    const h = harness([]); const home = new ProjectDraftSession("", undefined, h.io); await home.restore();
+    home.update({ generation_settings: { aspect_ratio: "9:16", duration_s: 30 } });
+    expect(home.dirty).toBe(true);
+    const saved = await home.flush();
+    expect(saved.sentence).toBe("");
+    const concept = new ProjectDraftSession("", saved.project_id, h.io); await concept.restore();
+    expect(concept.snapshot().draft.generation_settings).toEqual({ aspect_ratio: "9:16", duration_s: 30 });
+    concept.update({ generation_settings: { aspect_ratio: "4:5", duration_s: 60 } }); await concept.flush();
+    const backHome = new ProjectDraftSession("", undefined, h.io); await backHome.restore();
+    expect(backHome.snapshot().draft.generation_settings).toEqual({ aspect_ratio: "4:5", duration_s: 60 });
+    expect(backHome.dirty).toBe(false);
+  });
+
+  it("pins settings in a lost creation receipt while the following PUT saves newer settings", async () => {
+    let latest = { ...newDraft("文本说15秒"), generation_settings: { aspect_ratio: "9:16" as const, duration_s: 30 } };
+    request.mockRejectedValueOnce(new TypeError("ACK lost"));
+    await expect(syncServerDraft(latest, async (saved) => { latest = saved as typeof latest; })).rejects.toThrow("ACK lost");
+    latest = { ...latest, generation_settings: { aspect_ratio: "9:16", duration_s: 60 } };
+    request.mockResolvedValueOnce(Response.json({ project_id: "A", draft_revision: 1 }, { status: 200 }));
+    request.mockResolvedValueOnce(Response.json({ project_id: "A", draft_revision: 2 }));
+    await syncServerDraft(latest, async (saved) => { latest = saved as typeof latest; });
+    const bodies = request.mock.calls.map(([, init]) => JSON.parse(String(init?.body)));
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(bodies[0].generation_settings).toEqual({ aspect_ratio: "9:16", duration_s: 30 });
+    expect(bodies[2].generation_settings).toEqual({ aspect_ratio: "9:16", duration_s: 60 });
+  });
+
+  it("never lets an old settings save ACK overwrite a selection made during that save", async () => {
+    const h = harness([document("A", "文本说15秒")]);
+    let finish!: (draft: ProjectDraft) => void;
+    const real = h.io.sync;
+    const sync = vi.fn<DraftSessionIO["sync"]>().mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; })).mockImplementation(real);
+    h.io.sync = sync;
+    const session = new ProjectDraftSession("", "A", h.io); await session.restore();
+    session.update({ generation_settings: { aspect_ratio: "16:9", duration_s: 30 } }); const saving = session.flush(); await tick();
+    const first = copyDraft(sync.mock.calls[0][0]);
+    session.update({ generation_settings: { aspect_ratio: "9:16", duration_s: 60 } });
+    const ack = { ...first, draft_revision: 2, synced_fingerprint: draftFingerprint(first) };
+    h.server.set("A", ack); finish(ack); await saving;
+    expect(sync.mock.calls.map(([input]) => input.generation_settings)).toEqual([{ aspect_ratio: "16:9", duration_s: 30 }, { aspect_ratio: "9:16", duration_s: 60 }]);
+    expect(session.snapshot().draft.generation_settings).toEqual({ aspect_ratio: "9:16", duration_s: 60 });
+    expect(session.dirty).toBe(false);
+  });
+
+  it("clears a selected concept when settings change even when sentence text is unchanged", async () => {
+    const draft = document("A", "产品宣传片"); draft.cards = [{ direction_id: "d1", title: "方向", idea: "创意" }];
+    draft.cards_sentence = draft.sentence; draft.cards_input_key = conceptInputKey(draft.sentence, draft.generation_settings); draft.concept_selection = "d1";
+    draft.synced_fingerprint = draftFingerprint(draft);
+    const h = harness([draft]); const session = new ProjectDraftSession("", "A", h.io); await session.restore();
+    expect(currentConceptCards(session.snapshot().draft)).toHaveLength(1);
+    session.update({ generation_settings: { aspect_ratio: "4:3", duration_s: 15 } });
+    expect(currentConceptCards(session.snapshot().draft)).toEqual([]);
+    expect(session.snapshot().draft.concept_selection).toBeNull();
+    expect(session.dirty).toBe(true);
+    await session.flush(); expect(h.server.get("A")?.concept_selection).toBeNull();
+  });
+
+  it("only restores server concept cards with matching frozen settings", () => {
+    const snapshot = { status: "draft", sentence: "宣传片", generation_settings: { aspect_ratio: "9:16", duration_s: 30 }, concept_preview_sentence: "宣传片", concept_preview: { directions: [{ direction_id: "d1", title: "方案", idea: "创意" }] } };
+    expect(currentConceptCards(draftFromServer(snapshot, "A"))).toEqual([]);
+    expect(currentConceptCards(draftFromServer({ ...snapshot, concept_preview_generation_settings: { aspect_ratio: "16:9", duration_s: 30 } }, "A"))).toEqual([]);
+    expect(currentConceptCards(draftFromServer({ ...snapshot, concept_preview_generation_settings: snapshot.generation_settings }, "A"))).toHaveLength(1);
+    expect(currentConceptCards(draftFromServer({ ...snapshot, generation_settings: { aspect_ratio: null, duration_s: null } }, "A"))).toHaveLength(1);
+  });
+
+  it("compares both settings on a conflict and retains them in recoverable backups", async () => {
+    const mine = document("A", "同样文字"); mine.generation_settings = { aspect_ratio: "9:16", duration_s: 60 };
+    const h = harness([mine]); const remote = document("A", "同样文字", 3); remote.generation_settings = { aspect_ratio: "16:9", duration_s: 15 }; remote.synced_fingerprint = draftFingerprint(remote); h.server.set("A", remote);
+    const session = new ProjectDraftSession("", "A", h.io); await session.restore();
+    await expect(session.flush()).rejects.toBeInstanceOf(DraftConflictError);
+    expect(session.snapshot().draft.generation_settings).toEqual(mine.generation_settings);
+    expect(session.snapshot().conflict?.generation_settings).toEqual(remote.generation_settings);
+    await session.resolveConflict("server");
+    expect(h.archives[0].draft.generation_settings).toEqual(mine.generation_settings);
+    const reloaded = new ProjectDraftSession("", "A", h.io); await reloaded.restore();
+    await reloaded.restoreBackup(reloaded.snapshot().backups[0]);
+    expect(reloaded.snapshot().draft.generation_settings).toEqual(mine.generation_settings);
+    expect(reloaded.snapshot().conflict?.generation_settings).toEqual(remote.generation_settings);
+  });
+
+  it("sends exact generation settings with CAS and only rebases after an explicit conflict choice", async () => {
+    const mine = document("A", "文本说15秒横屏"); mine.generation_settings = { aspect_ratio: "9:16", duration_s: 60 };
+    const h = harness([mine]); h.io.sync = syncServerDraft;
+    request.mockResolvedValueOnce(Response.json({ detail: { code: "draft_conflict", draft_revision: 3, snapshot: {
+      project_id: "A", status: "draft", sentence: mine.sentence, draft_revision: 3, generation_settings: { aspect_ratio: "4:3", duration_s: 30 },
+    } } }, { status: 409 }));
+    const session = new ProjectDraftSession("", "A", h.io); await session.restore();
+    await expect(session.flush()).rejects.toBeInstanceOf(DraftConflictError);
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(request.mock.calls[0][1]?.body))).toMatchObject({ draft_revision: 1, generation_settings: { aspect_ratio: "9:16", duration_s: 60 } });
+    expect(session.snapshot().conflict?.generation_settings).toEqual({ aspect_ratio: "4:3", duration_s: 30 });
+    request.mockResolvedValueOnce(Response.json({ project_id: "A", draft_revision: 4 }));
+    await session.resolveConflict("mine");
+    expect(JSON.parse(String(request.mock.calls[1][1]?.body))).toMatchObject({ draft_revision: 3, generation_settings: { aspect_ratio: "9:16", duration_s: 60 } });
+    expect(h.archives[0].draft.generation_settings).toEqual({ aspect_ratio: "9:16", duration_s: 60 });
+    expect(session.snapshot().draft.draft_revision).toBe(4);
+  });
+
+  it("freezes settings under the same pending submission identity through reload", async () => {
+    const draft = document("A", "原提交"); draft.generation_settings = { aspect_ratio: "2:3", duration_s: 45 }; draft.synced_fingerprint = draftFingerprint(draft);
+    const h = harness([draft]); const session = new ProjectDraftSession("", "A", h.io); await session.restore();
+    const first = await session.stageSubmission();
+    expect(session.update({ generation_settings: { aspect_ratio: "21:9", duration_s: 15 } })).toBe(false);
+    const restored = new ProjectDraftSession("", "A", h.io); await restored.restore();
+    const retry = await restored.stageSubmission();
+    expect(retry.start_operation_id).toBe(first.start_operation_id);
+    expect(retry.generation_settings).toEqual({ aspect_ratio: "2:3", duration_s: 45 });
+  });
+
+  it("migrates old saved local records to automatic settings without inventing an unsaved edit", () => {
+    const old = document("A", "之前保存的输入");
+    const legacy = JSON.parse(old.synced_fingerprint!); delete legacy.generation_settings;
+    delete (old as Partial<ProjectDraft>).generation_settings; old.synced_fingerprint = JSON.stringify(legacy);
+    const restored = withDraftPreviews(old);
+    expect(restored.generation_settings).toEqual({ aspect_ratio: null, duration_s: null });
+    expect(restored.synced_fingerprint).toBe(draftFingerprint(restored));
+    old.sentence = "尚未保存的新输入";
+    expect(withDraftPreviews(old).synced_fingerprint).not.toBe(draftFingerprint(withDraftPreviews(old)));
+  });
+});
 
 describe("route-owned draft recovery", () => {
   it("rejects early input while restore is pending instead of displaying then discarding attachments", async () => {

@@ -11,10 +11,13 @@ import { Card } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ProjectDraftRecovery } from "@/components/project-draft-recovery";
+import { GenerationSettingsPicker } from "@/components/generation-settings";
 import { useProjectDraft } from "@/lib/use-project-draft";
 import { apiFetch, errorMessage } from "@/lib/api";
 import { chooseCard, type DirectionCard } from "@/lib/selection";
 import { cn } from "@/lib/utils";
+import { conceptInputKey } from "@/lib/generation-settings";
+import { currentConceptCards } from "@/lib/project-draft";
 
 type ConceptResponse = {
   brand_applied?: boolean;
@@ -31,7 +34,7 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
   const router = useRouter();
   const drafts = useProjectDraft(initialSentence, initialProjectId);
   const { sentence, skip_storyboard: skipStoryboard } = drafts.draft;
-  const cards = drafts.draft.cards_sentence === sentence.trim() ? drafts.draft.cards || [] : [];
+  const cards = currentConceptCards(drafts.draft);
   const duration = cards[0]?.duration_s ?? null;
   const aspect = cards[0]?.aspect_ratio ?? "";
   const picked = drafts.draft.concept_selection;
@@ -74,7 +77,7 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
       if (!Array.isArray(body.concept?.directions) || body.concept.directions.length === 0) throw new Error("没有拿到有效方案，请重试");
       drafts.update({
         cards: body.concept.directions.map((card) => ({ ...card, duration_s: card.duration_s ?? body.concept.duration_s, aspect_ratio: card.aspect_ratio ?? body.concept.aspect_ratio })),
-        cards_sentence: text, brand_applied: body.brand_applied === true, concept_selection: "你帮我选",
+        cards_sentence: text, cards_input_key: conceptInputKey(saved.sentence, saved.generation_settings), brand_applied: body.brand_applied === true, concept_selection: "你帮我选",
       });
     } catch (caught) {
       if (current()) setError(caught instanceof Error ? caught.message : "方案没有生成");
@@ -139,6 +142,10 @@ export function ConceptBoard({ initialSentence, initialProjectId }: { initialSen
           disabled={busy || !drafts.editable}
           onChange={(event) => setSentence(event.target.value)}
         />
+        <div className="flex flex-wrap gap-2" aria-label="生成选项">
+          <GenerationSettingsPicker value={drafts.draft.generation_settings} disabled={busy || !drafts.editable || Boolean(drafts.conflict)} onChange={(value) => drafts.field("generation_settings", value)} />
+        </div>
+        <p className="text-caption text-text-3">比例和时长选择优先于输入文字；更改后需重新生成方案。</p>
         <div>
           <Button
             type="submit"
