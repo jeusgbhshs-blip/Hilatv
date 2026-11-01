@@ -397,6 +397,7 @@ def create_blank_project(
         shots=[],
         events=[],
         enterprise_id=identity.enterprise_id,
+        owner_member_id=identity.member_id,
         work_dir=str(project_path(project_id)),
     )
     log_event("blank_project_created", service="hilatv-api", project_id=project_id)

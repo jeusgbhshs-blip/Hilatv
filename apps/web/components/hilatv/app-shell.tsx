@@ -59,8 +59,18 @@ function items(): NavItem[] {
       href: "/settings/appearance",
       match: (value) => value.startsWith("/settings/appearance"),
     },
-    { label: "用量与账单", icon: ReceiptText },
-    { label: "团队设置", icon: Users },
+    {
+      label: "用量与账单",
+      icon: ReceiptText,
+      href: "/usage",
+      match: (value) => value.startsWith("/usage"),
+    },
+    {
+      label: "团队设置",
+      icon: Users,
+      href: "/settings/team",
+      match: (value) => value.startsWith("/settings/team"),
+    },
   ];
 }
 

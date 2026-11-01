@@ -14,6 +14,7 @@ from app.deliveries import router as delivery_router
 from app.expert import router as expert_router
 from app.identity import router as identity_router
 from app.logging import log_event
+from app.members import router as member_router
 from app.projects import router
 from app.settings import get_settings
 from app.shares import router as share_router
@@ -60,6 +61,7 @@ app.include_router(assets_router)
 app.include_router(template_router)
 app.include_router(share_router)
 app.include_router(usage_router)
+app.include_router(member_router)
 
 
 @app.middleware("http")
