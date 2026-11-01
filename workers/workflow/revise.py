@@ -1016,7 +1016,7 @@ def _state(directory: Path) -> dict[str, Any]:
 
 
 def _script(state: dict[str, Any]) -> Script:
-    raw = state.get("rendered_script") or state.get("script")
+    raw = state.get("rendered_script") or state.get("aligned_script") or state.get("script")
     if not isinstance(raw, dict):
         raise RevisionError("还没有分镜，不能改稿", status=409)
     return Script.model_validate(raw)

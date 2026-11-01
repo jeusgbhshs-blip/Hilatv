@@ -320,6 +320,18 @@ def test_revision_starts_from_rendered_cuts_and_updates_saved_alignment():
     assert patches["n15_compose"]["exports"]["clean_picture"] == "old-clean.mp4"
 
 
+def test_legacy_revision_uses_aligned_cuts_when_rendered_script_was_not_saved():
+    original = storyboard(shot(duration_s=3, voiceover=""))
+    aligned = copy.deepcopy(original)
+    aligned["shots"][0]["duration_s"] = 4
+    state = {"script": original, "aligned_script": aligned}
+    assert revise._script(state).shots[0].duration_s == 4
+    rendered = copy.deepcopy(aligned)
+    rendered["shots"][0]["duration_s"] = 5
+    state["rendered_script"] = rendered
+    assert revise._script(state).shots[0].duration_s == 5
+
+
 def test_legacy_per_shot_image_is_recovered_without_touching_its_bytes(project):
     _project_id, directory = project
     image = directory / "media/S01.bin"
