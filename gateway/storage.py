@@ -9,15 +9,77 @@ from __future__ import annotations
 import hashlib
 import hmac
 import os
+import stat
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Protocol
-from urllib.parse import quote, urlparse
+from urllib.parse import quote, unquote, urlparse
 
 import httpx
 
 from gateway.errors import StorageError
 
 _EMPTY_HASH = hashlib.sha256(b"").hexdigest()
+
+
+@dataclass(frozen=True)
+class AssetRef:
+    """Internal media reference. A URI alone never grants local-file access."""
+
+    uri: str
+
+
+def read_asset_bytes(
+    ref: AssetRef | str,
+    *,
+    store: ObjectStore | None = None,
+    allowed_roots: Sequence[Path] = (),
+    max_bytes: int = 20 * 1024 * 1024,
+) -> bytes:
+    """Read private oss/s3 objects or a file inside server-approved roots.
+
+    Roots must come from the authenticated project's storage configuration,
+    never the request. HTTP URLs and arbitrary local paths are rejected. No
+    public URL or long-lived storage credential is issued by this reader.
+    """
+    uri = ref.uri if isinstance(ref, AssetRef) else ref
+    if not isinstance(uri, str) or not uri or max_bytes < 1:
+        raise StorageError("invalid media reference")
+    parsed = urlparse(uri)
+    if parsed.scheme in {"oss", "s3"}:
+        parse_object_uri(uri)
+        if store is None:
+            raise StorageError("media object store is not configured")
+        if parsed.netloc != store.bucket:
+            raise StorageError("media object belongs to another bucket")
+        limited = getattr(store, "get_limited", None)
+        data = limited(uri, max_bytes=max_bytes) if limited else store.get(uri)
+    elif parsed.scheme in {"", "file"}:
+        if parsed.netloc or parsed.query or parsed.fragment:
+            raise StorageError("invalid local media reference")
+        path = Path(unquote(parsed.path) if parsed.scheme else uri)
+        if not path.is_absolute():
+            raise StorageError("local media path must be absolute")
+        resolved = path.resolve()
+        roots = [Path(root).resolve() for root in allowed_roots]
+        if not any(resolved != root and resolved.is_relative_to(root) for root in roots):
+            raise StorageError("media is outside the authorized project")
+        try:
+            fd = os.open(resolved, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            with os.fdopen(fd, "rb") as handle:
+                info = os.fstat(handle.fileno())
+                if not stat.S_ISREG(info.st_mode) or info.st_size > max_bytes:
+                    raise StorageError("media exceeds the size limit or is not a file")
+                data = handle.read(max_bytes + 1)
+        except OSError as exc:
+            raise StorageError("media cannot be read") from exc
+    else:
+        raise StorageError("media must use an authorized file, oss or s3 reference")
+    if not data or len(data) > max_bytes:
+        raise StorageError("media is empty or exceeds the size limit")
+    return data
 
 
 class ObjectStore(Protocol):
@@ -99,6 +161,15 @@ class S3ObjectStore:
             )
         return response.content
 
+    def get_limited(self, uri: str, *, max_bytes: int) -> bytes:
+        _scheme, bucket, key = parse_object_uri(uri)
+        if bucket != self.bucket:
+            raise StorageError("media object belongs to another bucket")
+        response = self._signed("GET", key, data=b"", max_bytes=max_bytes)
+        if response.status_code >= 400:
+            raise StorageError(f"media object unavailable: HTTP {response.status_code}")
+        return response.content
+
     def ensure_bucket(self) -> None:
         if self._bucket_ready:
             return
@@ -141,6 +212,7 @@ class S3ObjectStore:
         data: bytes,
         content_type: str | None = None,
         bucket_only: bool = False,
+        max_bytes: int | None = None,
     ) -> httpx.Response:
         url, canonical_uri, host = self._target(key, bucket_only=bucket_only)
         amz_date = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
@@ -165,7 +237,20 @@ class S3ObjectStore:
         sent = {name: value for name, value in headers.items() if name != "host"}
         try:
             with httpx.Client(transport=self.transport, timeout=60.0) as client:
-                return client.request(method, url, content=data, headers=sent)
+                if max_bytes is None:
+                    return client.request(method, url, content=data, headers=sent)
+                with client.stream(method, url, content=data, headers=sent) as response:
+                    chunks = bytearray()
+                    for chunk in response.iter_bytes():
+                        if len(chunks) + len(chunk) > max_bytes:
+                            raise StorageError("media exceeds the size limit")
+                        chunks.extend(chunk)
+                    return httpx.Response(
+                        response.status_code,
+                        headers=response.headers,
+                        content=bytes(chunks),
+                        request=response.request,
+                    )
         except httpx.HTTPError as exc:
             raise StorageError(f"{method} {url} failed") from exc
 
