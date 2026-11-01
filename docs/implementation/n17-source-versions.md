@@ -1,0 +1,15 @@
+# N17 source-bound export versions
+
+Export filenames and UUIDs previously used only project/aspect/language/duration. Replacing a clean source or changing the script could therefore write a new video over an earlier version's file. This change gives every consumed source/configuration its own directory and identity.
+
+`source_media_hash` is the SHA-256 of the actual clean-picture bytes. `source_key` is the SHA-256 of canonical JSON containing that hash, the normalized script/Brief/BrandKit, resolved whole-film clock, semantic timeline spans, supplied language variants and subject tracks, and resolved render configuration. The latter includes output aspects/languages/durations/long edge, vertical-regeneration policy, and an optional soundtrack hash. Temporary render paths, plate paths, random ProduceIDs and work directories do not enter the key. A render-policy version is explicit in the canonical document; future output-policy changes must bump it.
+
+Private outputs live under `base_work/sources/<source_key>/`. Export UUIDs include the project id, source key, aspect, language and actual total duration. A changed source picture or script therefore yields a new UUID/path while older source outputs remain intact. The same source/configuration yields the same UUID. Source identities are not quality approvals, authorizations, output hashes, or new billing receipts; the existing exact-file delivery gate still applies, and ordinary re-rendering retains the existing AI-metadata policy.
+
+Before FFmpeg reads a source, a copy is streamed into the private source directory and independently hashed against `source_media_hash`. A changed source during this copy fails. The pinned regular file is read-only, symlink destinations are rejected, and an already-pinned source with a mismatched hash fails. This keeps an in-place master revision from changing the bytes of an export already bound to the previous source hash.
+
+The node result and each `DeliveryVersion` add `source_key` and `source_media_hash`. API/public DTO forwarding, precise UI version selection, and binding the default export script to the current N15 aligned script are handled in the coordinating commits. This patch does not modify HTTP routes, workflow activities, model routing, billing, asset storage or delivery thresholds.
+
+Validation uses actual locally encoded color sources and zero-cost fake gateway adapters. Dedicated regressions replace a source at the same path, change the script while retaining the source bytes, decode different picture colors, verify a new UUID and preserved older file bytes, and verify retry identity stability. Canonical-path exclusions and source-copy integrity also have focused coverage. The existing five/six/fifteen-second media regressions, including exact 15-second N17 output and all nine actual aspect ratios, are rerun with the patch.
+
+Result: **38 passed** for all N17 tests plus the generation-media regression file, with no skipped tests. Ruff and whitespace checks pass. No vendor calls, billing-policy changes, HTTP changes, or service restarts were required.

@@ -45,6 +45,7 @@ from workers.nodes.n17_deliver.schema import (
     SubjectTrack,
     TrackSource,
 )
+from workers.nodes.n17_deliver.source import file_hash, pin_source, source_key
 from workers.nodes.n17_deliver.voice import dub
 from workers.nodes.runtime import Deadline
 from workers.schemas.asset import Asset, AssetKind
@@ -160,7 +161,24 @@ def _execute(
         ):
             raise QAError("a different duration needs a separately planned story, not a hard trim")
         targets = [exact.body_s]
-    work = _contained_dir(root, payload.work_dir)
+    base_work = _contained_dir(root, payload.work_dir)
+    source_media_hash = file_hash(master)
+    soundtrack = _soundtrack(root, payload.audio_track)
+    identity = source_key(
+        payload,
+        source_media_hash,
+        source_timeline,
+        {
+            "aspects": sorted(aspects),
+            "languages": sorted(languages),
+            "durations_s": sorted(targets),
+            "long_edge": long_edge,
+            "regenerate_vertical": regenerate,
+            "audio_track_hash": file_hash(Path(soundtrack[0])) if soundtrack else None,
+        },
+    )
+    work = _contained_dir(root, str(base_work / "sources" / identity))
+    master = pin_source(master, work, source_media_hash)
     ready = {item.language: item for item in payload.variants}
     scripts: dict[str, Script] = {}
     prompts: list[str] = []
@@ -290,7 +308,6 @@ def _execute(
                     gateway=gateway,
                 )
                 audios = [(path, delay + exact.intro_s) for path, delay in audios]
-            soundtrack = _soundtrack(root, payload.audio_track)
             if soundtrack is not None:
                 audios = [soundtrack, *audios]
             dest = work / "versions" / f"{_slug(aspect, total_duration)}_{language}.mp4"
@@ -299,7 +316,8 @@ def _execute(
             run_ffmpeg(_args)
             version_id = str(
                 uuid.uuid5(
-                    ASSET_NS, f"{request.project_id}:{aspect}:{language}:{total_duration:.3f}"
+                    ASSET_NS,
+                    f"{request.project_id}:{identity}:{aspect}:{language}:{total_duration:.3f}",
                 )
             )
             provided = all(item.provided for item in track_sources)
@@ -324,6 +342,8 @@ def _execute(
                     subject_box_source="provided" if provided and not exact else "default",
                     qa_status="pass" if provided and not exact else "needs_review",
                     target_duration_s=payload.target_duration_s,
+                    source_key=identity,
+                    source_media_hash=source_media_hash,
                     media_provenance=combine_provenance(
                         [
                             source_timeline.audio_provenance if source_timeline else "unknown",
@@ -390,6 +410,8 @@ def _execute(
             },
             "compliance": compliance,
             "languages": languages,
+            "source_key": identity,
+            "source_media_hash": source_media_hash,
             "aspect_ratios": aspects,
             "durations_s": [exact.total_s] if exact else targets,
             "verify_pixels": bool(versions)

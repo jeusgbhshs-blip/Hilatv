@@ -152,6 +152,8 @@ class DeliveryVersion(BaseModel):
     qa_status: str = "needs_review"
     target_duration_s: float | None = None
     media_provenance: str = "unknown"
+    source_key: str | None = None
+    source_media_hash: str | None = None
 
 
 def _inside(x: float, y: float, w: float, h: float) -> None:
