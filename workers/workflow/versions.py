@@ -17,6 +17,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from workers.schemas.base import ASPECT_RATIO_PATTERN, LANGUAGE_PATTERN
+from workers.schemas.generation import generation_settings
 from workers.workflow.contract import PIPELINE
 from workers.workflow.readiness import (
     draft_context,
@@ -75,7 +77,9 @@ def restore_version(project_id: str, version_id: str) -> dict[str, Any]:
         snapshot["current_version_id"] = version_id
         snapshot["concept_degraded"] = manifest.get("concept_degraded") is True
         snapshot["revision_incomplete"] = manifest.get("revision_incomplete") is True
-        assessed = readiness(snapshot, state_from_directory(staged), staged / "master.mp4")
+        archived_state = state_from_directory(staged)
+        snapshot.update(_production_intent(manifest, archived_state))
+        assessed = readiness(snapshot, archived_state, staged / "master.mp4")
         snapshot.update(assessed)
         snapshot["preview_path"] = str(playback) if (staged / "master.mp4").is_file() else None
         snapshot["media_path"] = snapshot["preview_path"]
@@ -130,6 +134,8 @@ def atomic_write(path: Path, payload: bytes) -> None:
 
 
 def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[str, Any]:
+    state = state_from_directory(directory)
+    intent = _production_intent(snapshot, state)
     version_id = uuid.uuid4().hex
     index = _index(directory)
     number = len(index["items"]) + 1
@@ -150,8 +156,12 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
         if source.is_file():
             _copy_bytes(source, folder / "master.mp4")
             master_name = "master.mp4"
-    reviewed_snapshot = {**snapshot, "concept_degraded": fields.get("concept_degraded") is True}
-    assessed = readiness(reviewed_snapshot, state_from_directory(directory), folder / "master.mp4")
+    reviewed_snapshot = {
+        **snapshot,
+        **intent,
+        "concept_degraded": fields.get("concept_degraded") is True,
+    }
+    assessed = readiness(reviewed_snapshot, state, folder / "master.mp4")
     quality_pass = assessed["quality_pass"]
     manifest = {
         "version_id": version_id,
@@ -168,6 +178,7 @@ def _commit(directory: Path, snapshot: dict[str, Any], **fields: Any) -> dict[st
         "revision_incomplete": snapshot.get("revision_incomplete") is True,
         "delivery": assessed,
         "media_hash": assessed["media_hash"],
+        **intent,
     }
     evidence = evidence_for(
         str(snapshot.get("project_id") or directory.name), assessed["media_hash"]
@@ -342,13 +353,16 @@ def _public(directory: Path) -> dict[str, Any]:
     for item in index["items"]:
         folder = _version_dir(directory, item["version_id"])
         manifest = _json_document(folder / "manifest.json")
+        state = state_from_directory(folder)
+        intent = _production_intent(manifest, state)
         assessed = readiness(
             {
                 **snapshot,
+                **intent,
                 "concept_degraded": manifest.get("concept_degraded") is True,
                 "revision_incomplete": manifest.get("revision_incomplete") is True,
             },
-            state_from_directory(folder),
+            state,
             folder / "master.mp4",
         )
         versions.append(
@@ -364,6 +378,7 @@ def _public(directory: Path) -> dict[str, Any]:
                 "preview_available": assessed["preview_available"],
                 "reasons": assessed["reasons"],
                 "current": item["version_id"] == current,
+                **intent,
             }
         )
     ready = [item["version_id"] for item in versions if item["quality_pass"]]
@@ -371,6 +386,54 @@ def _public(directory: Path) -> dict[str, Any]:
         "versions": versions,
         "current_version_id": current,
         "last_ready_version_id": ready[-1] if ready else None,
+    }
+
+
+def _production_intent(snapshot: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Restore only these content targets, never archived access or money state."""
+
+    brief = state.get("brief")
+    brief = brief if isinstance(brief, dict) else {}
+    try:
+        explicit = generation_settings(
+            snapshot.get("generation_settings", brief.get("generation_settings"))
+        )
+    except ValueError as exc:
+        raise VersionError("版本生成设置无效") from exc
+    resolved = snapshot.get("resolved_generation_settings")
+    if resolved is None:
+        ratios = brief.get("aspect_ratios")
+        languages = brief.get("languages")
+        resolved = {
+            "aspect_ratio": explicit.aspect_ratio
+            or (ratios[0] if isinstance(ratios, list) and ratios else None),
+            "duration_s": explicit.duration_s
+            if explicit.duration_s is not None
+            else brief.get("duration_s"),
+            "language": languages[0] if isinstance(languages, list) and languages else None,
+        }
+    if not isinstance(resolved, dict):
+        raise VersionError("版本解析目标无效")
+    ratio, duration, language = (
+        resolved.get(key) for key in ("aspect_ratio", "duration_s", "language")
+    )
+    if ratio is not None and (
+        not isinstance(ratio, str) or re.fullmatch(ASPECT_RATIO_PATTERN, ratio) is None
+    ):
+        raise VersionError("版本主画幅无效")
+    if duration is not None and (type(duration) is not int or not 5 <= duration <= 180):
+        raise VersionError("版本目标时长无效")
+    if language is not None and (
+        not isinstance(language, str) or re.fullmatch(LANGUAGE_PATTERN, language) is None
+    ):
+        raise VersionError("版本目标语种无效")
+    return {
+        "generation_settings": explicit.model_dump(mode="json"),
+        "resolved_generation_settings": {
+            "aspect_ratio": ratio,
+            "duration_s": duration,
+            "language": language,
+        },
     }
 
 

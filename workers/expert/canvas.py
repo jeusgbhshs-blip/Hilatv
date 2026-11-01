@@ -12,6 +12,7 @@ from workers.qa.budget_store import open_project_budget
 from workers.qa.pixels import MediaLoad, resolve_project_file
 from workers.qa.scores import content_blocked
 from workers.schemas.asset import Candidate
+from workers.schemas.generation import generation_settings
 from workers.workflow.contract import PIPELINE
 from workers.workflow.readiness import readiness
 from workers.workflow.store import load_checkpoint, read_snapshot, valid_project_id
@@ -68,6 +69,9 @@ def build_canvas(project_id: str) -> dict[str, Any]:
     body = {
         "project_id": project_id,
         "draft_revision": snapshot.get("draft_revision"),
+        "generation_settings": generation_settings(snapshot.get("generation_settings")).model_dump(
+            mode="json"
+        ),
         "sentence": snapshot.get("sentence") or "",
         "status": snapshot.get("status") or "",
         "budget": {
