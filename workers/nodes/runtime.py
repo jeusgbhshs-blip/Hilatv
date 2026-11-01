@@ -7,10 +7,24 @@ import os
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextlib import contextmanager
+from contextvars import ContextVar, copy_context
 from typing import Any
 
 from workers.schemas.asset import Candidate, QAReport, QAScores
 from workers.schemas.script import Shot
+
+_GENERATION: ContextVar[tuple[str, int] | None] = ContextVar("hilatv_generation", default=None)
+
+
+@contextmanager
+def generation_scope(generation_id: str, sequence: int):
+    """One server-issued attempt; thread workers inherit it explicitly below."""
+    token = _GENERATION.set((generation_id, sequence))
+    try:
+        yield
+    finally:
+        _GENERATION.reset(token)
 
 
 class Deadline:
@@ -46,7 +60,7 @@ def run_parallel(
         return []
     output: list[tuple[str, Any, BaseException | None]] = []
     with ThreadPoolExecutor(max_workers=max(1, min(workers, len(shots)))) as pool:
-        futures = {pool.submit(fn, shot): shot.shot_id for shot in shots}
+        futures = {pool.submit(copy_context().run, fn, shot): shot.shot_id for shot in shots}
         for future in as_completed(futures):
             shot_id = futures[future]
             try:
@@ -61,11 +75,17 @@ def run_parallel(
 def variant_seeds(shot_id: str, kind: str, count: int) -> list[int]:
     digest = hashlib.sha256(f"{kind}:{shot_id}".encode()).hexdigest()
     base = int(digest[:8], 16) % 1_000_000
-    return [base + index * 17 for index in range(count)]
+    generation = _GENERATION.get()
+    if generation is not None:
+        base += generation[1] * 100_003
+    return [(base + index * 17) % (2**32) for index in range(count)]
 
 
 def candidate_uuid(project_id: str, shot_id: str, node: str, kind: str, seed: int) -> str:
     name = f"hilatv:{project_id}:{shot_id}:{node}:{kind}:{seed}"
+    generation = _GENERATION.get()
+    if generation is not None:
+        name += f":{generation[0]}"
     return str(uuid.uuid5(uuid.NAMESPACE_URL, name))
 
 

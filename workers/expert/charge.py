@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from workers.expert.gates import GateError
 from workers.qa.budget_store import open_project_budget
 from workers.workflow.contract import PIPELINE
 
@@ -93,6 +94,8 @@ def reserve_picture(
     project_id: str,
     shots: list[dict[str, Any]] | None,
     shot_id: str,
+    *,
+    operation_id: str | None = None,
 ) -> int:
     """Charge the shared ledger for one shot's picture only."""
 
@@ -100,6 +103,18 @@ def reserve_picture(
     if count == 0:
         return 0
     budget = open_project_budget(project_id)
+    if operation_id:
+        key = f"picture:{operation_id}"
+        status, token = budget.begin_batch(count, key)
+        if status == "already":
+            return count
+        if status == "refused":
+            raise BudgetExhausted(project_id, budget.used, budget.limit)
+        if status != "begun":
+            raise GateError("这次生成的次数预留尚未确认，请保留 operation_id", status=409)
+        if budget.finish_batch(count, key, token) not in {"taken", "already", "audited"}:
+            raise GateError("这次生成的次数结算尚未确认，请保留 operation_id", status=409)
+        return count
     if not budget.try_take_n(count):
         raise BudgetExhausted(project_id, budget.used, budget.limit)
     return count

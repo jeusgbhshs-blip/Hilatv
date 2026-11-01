@@ -8,6 +8,7 @@ be treated as a pass.
 
 from __future__ import annotations
 
+import copy
 import json
 from typing import Any
 
@@ -22,11 +23,12 @@ from workers.expert.desk import (
 )
 from workers.expert.gates import GateError, refuse_label_bypass
 from workers.expert.invoke import invoke_node
+from workers.expert.operations import GenerationOperation, run_generation
 from workers.expert.uploads import materialize_reference, resolve_upload
 from workers.identity.session import canonical_enterprise
 from workers.logging import log_event
 from workers.schemas.asset import Candidate
-from workers.schemas.script import Script
+from workers.schemas.script import Script, Shot
 from workers.workflow.store import project_path, save_node
 
 _MAX_SUFFIX = 500
@@ -46,36 +48,100 @@ def regenerate_shot(
     refuse_label_bypass(payload)
     user_suffix = _optional_text(payload.get("prompt_suffix"), "补充提示词过长")
     narration = _optional_text(payload.get("narration"), "旁白过长")
+    return run_generation(
+        project_id,
+        operation_id=payload.get("operation_id"),
+        kind="shot_regenerate",
+        target=shot_id,
+        request={"prompt_suffix": user_suffix, "narration": narration},
+        action=lambda operation: _regenerate_shot(
+            project_id, shot_id, user_suffix, narration, operation, gateway=gateway
+        ),
+    )
+
+
+def _regenerate_shot(
+    project_id: str,
+    shot_id: str,
+    user_suffix: str | None,
+    narration: str | None,
+    operation: GenerationOperation,
+    *,
+    gateway: Any | None = None,
+) -> dict[str, Any]:
     box: dict[str, Any] = {}
 
     def mutate(doc: CanvasDoc, state: dict[str, Any], snapshot: dict[str, Any]) -> None:
         if snapshot.get("status") == "running":
             raise GateError("项目仍在运行", status=409)
         row = _shot_row(state, shot_id)
-        desk = doc.shots.get(shot_id) or ShotDesk()
+        desk = (doc.shots.get(shot_id) or ShotDesk()).model_copy(deep=True)
         if user_suffix is not None:
             desk.prompt_suffix = user_suffix
         if narration is not None:
             desk.narration = narration
-            _write_narration(project_id, state, shot_id, narration)
+            state["script"] = _narrated_script(state, shot_id, narration)
         suffix = desk.prompt_suffix
         spoken = desk.narration if desk.narration is not None else str(row.get("voiceover") or "")
         texts, uploads = _upstream(doc, shot_node_id(shot_id))
         if desk.reference_upload_id:
             uploads.append(desk.reference_upload_id)
+        if not uploads:
+            for attachment in snapshot.get("attachments") or []:
+                if isinstance(attachment, dict) and attachment.get("kind") == "image":
+                    upload_id = attachment.get("upload_id")
+                    if not isinstance(upload_id, str):
+                        raise GateError("参考图不存在", status=404)
+                    uploads.append(upload_id)
         uploads = list(dict.fromkeys(uploads))
+        if len(uploads) > 14:
+            raise GateError("一次最多使用 14 张参考图")
         enterprise_id = snapshot.get("enterprise_id")
         owner = enterprise_id if isinstance(enterprise_id, str) else ""
-        references = [
-            materialize_reference(item, enterprise_id=owner, project_id=project_id)
-            for item in uploads
-        ]
+        for item in uploads:
+            resolve_upload(item, enterprise_id=owner)
         for text in texts:
             refuse_label_bypass(text)
         model_suffix = _model_suffix(suffix, spoken, texts, uploads)
         refuse_label_bypass(model_suffix)
         rows = _script_rows(state)
-        charged = reserve_picture(project_id, rows, shot_id)
+        from workers.brand_kit.people import ConsentError
+        from workers.compliance.consent_gate import assert_generation_allowed
+
+        try:
+            assert_generation_allowed(Shot.model_validate(row), owner)
+        except ConsentError as exc:
+            raise GateError(str(exc)) from exc
+        operation.capture(
+            doc.layout_version,
+            {
+                "shot": next(item for item in rows if item.get("shot_id") == shot_id),
+                "prompt_suffix": model_suffix,
+                "references": uploads,
+                "selected": [
+                    item.get("candidate_id")
+                    for key in ("keyframes", "videos")
+                    for item in state.get(key, [])
+                    if item.get("selected")
+                ],
+            },
+        )
+        charged = reserve_picture(project_id, rows, shot_id, operation_id=operation.operation_id)
+        references = [
+            materialize_reference(item, enterprise_id=owner, project_id=project_id)
+            for item in uploads
+        ]
+        operation.capture(
+            doc.layout_version,
+            {
+                **operation.record["input_snapshot"],
+                "reference_assets": references,
+            },
+        )
+        from gateway import get_gateway
+
+        engine = operation.gateway(gateway or get_gateway())
+        pending: dict[str, dict[str, Any]] = {}
         log_event(
             "shot_regenerate",
             project_id=project_id,
@@ -94,7 +160,7 @@ def regenerate_shot(
                 snapshot=snapshot,
                 shot_id=shot_id,
                 prompt_suffix=model_suffix,
-                gateway=gateway,
+                gateway=engine,
                 enterprise_id=owner or None,
                 reference_images=references,
             )
@@ -103,10 +169,27 @@ def regenerate_shot(
                 for item in (patch.get(key) or [])
                 if isinstance(item, dict) and item.get("shot_id") == shot_id
             ]
-            kept = [item for item in previous if item.get("shot_id") != shot_id]
+            for item in fresh:
+                item["params"] = {
+                    **(item.get("params") or {}),
+                    **operation.metadata(),
+                    **operation.provenance(
+                        str(item.get("uri") or ""),
+                        node=name,
+                        seed=(item.get("params") or {}).get("seed"),
+                    ),
+                }
+            kept = [
+                {**item, "selected": False} if item.get("shot_id") == shot_id else item
+                for item in previous
+            ]
             rows_out = kept + _demote(fresh, shot_id)
-            _store(project_id, name, {key: rows_out})
+            pending[name] = {key: rows_out}
             state[key] = rows_out
+        if narration is not None:
+            _store(project_id, "n05_storyboard", {"script": state["script"]})
+        for name, patch in pending.items():
+            _store(project_id, name, patch)
         desk.regen_count += charged
         doc.shots[shot_id] = desk
         doc.layout_version += 1
@@ -214,8 +297,8 @@ def _demote(rows: list[dict[str, Any]], shot_id: str) -> list[dict[str, Any]]:
     return changed
 
 
-def _write_narration(project_id: str, state: dict[str, Any], shot_id: str, narration: str) -> None:
-    script = state.get("script")
+def _narrated_script(state: dict[str, Any], shot_id: str, narration: str) -> dict[str, Any]:
+    script = copy.deepcopy(state.get("script"))
     if not isinstance(script, dict):
         raise GateError("缺少上游结果：script", status=409)
     found = None
@@ -230,8 +313,7 @@ def _write_narration(project_id: str, state: dict[str, Any], shot_id: str, narra
         Script.model_validate(script)
     except ValidationError as exc:
         raise GateError("旁白无法写入脚本") from exc
-    state["script"] = script
-    _store(project_id, "n05_storyboard", {"script": script})
+    return script
 
 
 def _store(project_id: str, node: str, patch: dict[str, Any]) -> None:

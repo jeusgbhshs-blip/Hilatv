@@ -136,6 +136,9 @@ class RegenerateBody(BaseModel):
 
     narration: str | None = None
     prompt_suffix: str | None = None
+    operation_id: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    )
     qa_passed: bool | None = None
     visual_reviewed: bool | None = None
 
@@ -164,7 +167,7 @@ class TimelinePut(BaseModel):
 
 
 def _gate(exc: GateError) -> HTTPException:
-    return HTTPException(status_code=exc.status, detail=str(exc))
+    return HTTPException(status_code=exc.status, detail=getattr(exc, "detail", str(exc)))
 
 
 def _call(fn):
@@ -285,6 +288,9 @@ class GenerateBody(BaseModel):
 
     prompt: str | None = Field(default=None, max_length=4000)
     count: int | None = Field(default=None, ge=1, le=4)
+    operation_id: str | None = Field(
+        default=None, min_length=1, max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$"
+    )
 
 
 @router.post("/v1/projects/{project_id}/canvas/nodes/{node_id}/generate")

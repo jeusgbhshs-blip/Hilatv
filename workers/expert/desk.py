@@ -836,6 +836,23 @@ def _content_candidate(raw: Any, kind: str) -> dict[str, Any]:
         "verdict": str(item.get("verdict") or "unreviewed"),
         "uri": str(item.get("uri") or ""),
         "duration_s": item.get("duration_s"),
+        **{
+            key: item.get(key)
+            for key in (
+                "operation_id",
+                "generation_id",
+                "input_revision",
+                "input_hash",
+                "seed",
+                "mock",
+                "execution_mode",
+                "generation_source",
+                "generation_source_uri",
+                "provider",
+                "cache_hit",
+                "fallback_reason",
+            )
+        },
     }
 
 

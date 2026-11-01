@@ -12,8 +12,10 @@ from typing import Any
 from gateway import get_gateway
 from workers.expert.desk import CanvasDoc, UserNode, update_document
 from workers.expert.gates import GateError, refuse_label_bypass
+from workers.expert.operations import GenerationOperation, run_generation
 from workers.expert.uploads import materialize_reference
 from workers.logging import log_event
+from workers.nodes.runtime import variant_seeds
 
 _CONTENT = frozenset({"image", "video", "audio"})
 _MAX_COUNT = 4
@@ -33,6 +35,27 @@ def generate_node(
     count = payload.get("count")
     if not isinstance(count, int) or isinstance(count, bool) or not 1 <= count <= _MAX_COUNT:
         count = 1
+    return run_generation(
+        project_id,
+        operation_id=payload.get("operation_id"),
+        kind="canvas_generate",
+        target=node_id,
+        request={"prompt": override, "count": count},
+        action=lambda operation: _generate_node(
+            project_id, node_id, override, count, operation, gateway=gateway
+        ),
+    )
+
+
+def _generate_node(
+    project_id: str,
+    node_id: str,
+    override: str,
+    count: int,
+    operation: GenerationOperation,
+    *,
+    gateway: Any | None = None,
+) -> dict[str, Any]:
 
     def mutate(doc: CanvasDoc, state: dict[str, Any], snapshot: dict[str, Any]) -> None:
         del state
@@ -49,12 +72,24 @@ def generate_node(
         if not prompt:
             raise GateError("先写提示词")
         rows = list(node.data.get("candidates") or [])
-        if len(rows) >= _MAX_CANDIDATES:
+        if len(rows) + count > _MAX_CANDIDATES:
             raise GateError("候选太多了，先选一张")
-        engine = gateway or get_gateway()
         references = _upstream_images(doc, node, snapshot, project_id)
-        for index in range(count):
-            row = _generate_one(engine, node, prompt, project_id, index, references)
+        operation.capture(
+            doc.layout_version,
+            {
+                "prompt": prompt,
+                "kind": node.kind,
+                "count": count,
+                "references": references,
+                "duration_s": node.data.get("duration_s"),
+            },
+        )
+        engine = operation.gateway(gateway or get_gateway())
+        for index, seed in enumerate(variant_seeds(node.id, node.kind, count)):
+            row = _generate_one(
+                engine, node, prompt, project_id, index, references, seed, operation
+            )
             rows.append(row)
         node.data = {
             **node.data,
@@ -85,8 +120,10 @@ def _generate_one(
     project_id: str,
     index: int,
     references: list[str],
+    seed: int,
+    operation: GenerationOperation,
 ) -> dict[str, Any]:
-    common = {"project_id": project_id, "node": "canvas", "params": {"seed": index}}
+    common = {"project_id": project_id, "node": "canvas", "seed": seed, "params": {"seed": seed}}
     if node.kind == "image":
         if references:
             common["params"]["reference_images"] = references
@@ -106,9 +143,13 @@ def _generate_one(
         )
         result = engine.generate_video(prompt, duration_s=seconds, **common)
     uri = result.get("uri")
+    if not isinstance(uri, str) or not uri.strip():
+        raise GateError("生成结果没有可用媒体，不能创建成功候选")
     kind = {"image": "image", "video": "video", "audio": "audio"}[node.kind]
     return {
-        "candidate_id": str(uuid.uuid4()),
+        "candidate_id": str(
+            uuid.uuid5(uuid.NAMESPACE_URL, f"{operation.generation_id}:{node.id}:{index}")
+        ),
         "kind": kind,
         "uri": uri if isinstance(uri, str) else "",
         "model": str(
@@ -117,6 +158,9 @@ def _generate_one(
         "verdict": "unreviewed",
         "thumbnail_url": None,
         "duration_s": result.get("duration_s"),
+        **operation.metadata(),
+        "seed": seed,
+        **(operation.provenance(uri) if isinstance(uri, str) else {}),
     }
 
 
