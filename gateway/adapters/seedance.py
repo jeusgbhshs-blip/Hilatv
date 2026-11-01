@@ -70,8 +70,11 @@ class SeedanceAdapter:
         return bool(self._key().strip())
 
     def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
-        body = _submit_body(call)
-        params = {"duration_s": body["duration"], "resolution": body["resolution"]}
+        # Estimate the normalized output without reading/encoding input frames.
+        params = {
+            "duration_s": _duration(call),
+            "resolution": str(call.params.get("resolution") or "720p"),
+        }
         return pricing.upper_bound(call.model, call.prompt, task=call.task, params=params)
 
     def invoke(self, call: Invocation) -> AdapterResult:

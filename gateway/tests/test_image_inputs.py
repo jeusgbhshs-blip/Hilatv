@@ -133,3 +133,37 @@ def test_reference_bytes_reach_provider_but_never_gateway_logs(tmp_path):
     logs = json.dumps(engine.store.list_logs())
     assert uri in logs
     assert "data:image" not in logs and base64.b64encode(png).decode() not in logs
+
+
+def test_budget_bounds_do_not_read_private_reference_assets():
+    from gateway.adapters.seedance import SeedanceAdapter
+
+    class PricingCapture:
+        def __init__(self):
+            self.params = []
+
+        def upper_bound(self, *args, **kwargs):
+            self.params.append(kwargs["params"])
+            return 1
+
+    pricing = PricingCapture()
+    # There is deliberately no store: admission must only use output bounds.
+    assert (
+        SeedreamAdapter().cost_upper_bound(
+            _call(reference_images=["oss://private/image.png"]), pricing
+        )
+        == 1
+    )
+    assert (
+        SeedanceAdapter().cost_upper_bound(
+            _call(
+                "video",
+                image_url="oss://private/first.png",
+                last_frame_url="oss://private/last.png",
+                duration_s=99,
+            ),
+            pricing,
+        )
+        == 1
+    )
+    assert pricing.params == [{"n": 1, "size": "1K"}, {"duration_s": 10, "resolution": "720p"}]

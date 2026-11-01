@@ -58,7 +58,9 @@ class SeedreamAdapter:
     def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
         if call.params.get("n", 1) != 1:
             return None
-        params = {"n": 1, "size": _body(call)["size"]}
+        # Budget admission must not download/encode private references. Only
+        # output cardinality/size affect this adapter's verified price bound.
+        params = {"n": 1, "size": str(call.params.get("size") or "1K")}
         return pricing.upper_bound(call.model, call.prompt, task=call.task, params=params)
 
     def invoke(self, call: Invocation) -> AdapterResult:
