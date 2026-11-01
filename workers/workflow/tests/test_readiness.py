@@ -9,10 +9,12 @@ import json
 import os
 import shutil
 from pathlib import Path
+from uuid import uuid4
 
 import pytest
 from PIL import Image, ImageDraw
 
+from gateway.store import SqlStore
 from workers.compliance.metadata import metadata_args
 from workers.media.ffmpeg import run_ffmpeg
 from workers.media.raster import render_overlay, save_png
@@ -96,6 +98,7 @@ def prepared(tmp_path, monkeypatch, film_bytes):
     path = project_path("ready-film") / "renders" / "first.mp4"
     path.parent.mkdir()
     path.write_bytes(film_bytes)
+    digest = hashlib.sha256(film_bytes).hexdigest()
     snapshot = update_snapshot("ready-film", deliverable=str(path))
     state = {
         "script": {"shots": [{"shot_id": "S01"}]},
@@ -106,7 +109,75 @@ def prepared(tmp_path, monkeypatch, film_bytes):
         "logo_status": "ready",
         "elements": [{"kind": "outro_logo", "spec": {"source_sha256": SOURCE_HASH}}],
         "licensing_summary": {"records": []},
+        "videos": [
+            {
+                "candidate_id": "v1",
+                "shot_id": "S01",
+                "node": "N10",
+                "selected": True,
+                "model": "real-fixture",
+                "uri": path.as_uri(),
+                "params": {
+                    "mock": False,
+                    "execution_mode": "live",
+                    "generation_source_uri": path.as_uri(),
+                },
+            }
+        ],
     }
+    ledger = SqlStore.sqlite(":memory:")
+    ledger.conn.execute("""CREATE TABLE IF NOT EXISTS budget_reservations (
+        id TEXT PRIMARY KEY, created_at TEXT NOT NULL, day TEXT NOT NULL,
+        amount_cny TEXT NOT NULL, state TEXT NOT NULL, context TEXT NOT NULL)""")
+    references = []
+    for task, node, output in (
+        ("video", "n10_video", {"uri": path.as_uri(), "mock": False}),
+        ("judge", "n16_final_review", {"evaluator": "real-fixture"}),
+        ("asr", "n16_final_review", {"mock": False, "text": ""}),
+        ("content_safety", "n16_review", {"mock": False, "allowed": True}),
+    ):
+        log_id = str(uuid4())
+        ledger.insert_log(
+            {
+                "id": log_id,
+                "created_at": "2026-11-01T00:00:00+00:00",
+                "day": "2026-11-01",
+                "project_id": "ready-film",
+                "node": node,
+                "shot_id": "S01" if task == "video" else None,
+                "task": task,
+                "provider": "real-fixture",
+                "model": "real-fixture",
+                "params": {"media_hash": digest} if task != "video" else {},
+                "latency_ms": 1,
+                "cost_cny": "0.0100",
+                "status": "ok",
+                "live": True,
+                "output": output,
+            }
+        )
+        ledger.conn.execute(
+            "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                log_id,
+                "2026-11-01",
+                "2026-11-01",
+                "0.0200",
+                "settled",
+                json.dumps({"project_id": "ready-film"}),
+            ),
+        )
+        references.append(
+            {
+                "execution_mode": "live",
+                "evidence_ref": f"gateway:{log_id}",
+                "gateway_log_id": log_id,
+                "output_uri": output.get("uri"),
+                "billing_status": "settled",
+            }
+        )
+    ledger.conn.commit()
+    monkeypatch.setattr(gates, "_source_store", lambda: ledger)
     save_node("ready-film", "n15_compose", state)
     digest = hashlib.sha256(film_bytes).hexdigest()
     review = {
@@ -149,13 +220,7 @@ def prepared(tmp_path, monkeypatch, film_bytes):
             "media_hash": digest,
             "verified": True,
             "complete": True,
-            "records": [
-                {
-                    "execution_mode": "live",
-                    "evidence_ref": "server-fixture-call",
-                    "billing_status": "not_billable",
-                }
-            ],
+            "records": references,
         },
         "state": state,
         "logo_evidence": {
@@ -189,7 +254,8 @@ def prepared(tmp_path, monkeypatch, film_bytes):
             ],
         },
     }
-    return snapshot, state, path, review, proofs
+    yield snapshot, state, path, review, proofs
+    ledger.close()
 
 
 def attest(prepared):
@@ -551,6 +617,7 @@ def test_saved_edits_invalidate_draft_but_not_an_immutable_version(prepared, edi
                 "data": {"prompt": "new image"},
             }
         ]
+        doc["edges"] = [{"source": "u1", "target": "shot:S01", "role": "reference"}]
     canvas = project_path(snapshot["project_id"]) / "canvas.json"
     canvas.write_text(json.dumps(doc))
     assert "review_context_changed" in codes(gates.readiness(snapshot, state, path))
@@ -578,9 +645,9 @@ def test_layout_and_unused_candidate_changes_do_not_discard_a_review(prepared):
     )
     doc["shots"] = {"S01": {"regen_count": 8}}
     canvas.write_text(json.dumps(doc))
-    state["videos"] = [{"candidate_id": "unused", "selected": False, "params": {"mock": True}}]
+    state["videos"].append({"candidate_id": "unused", "selected": False, "params": {"mock": True}})
     assert gates.readiness(snapshot, state, path)["quality_pass"] is True
-    state["videos"][0]["selected"] = True
+    state["videos"][-1]["selected"] = True
     assert gates.readiness(snapshot, state, path)["quality_pass"] is False
 
 
@@ -672,3 +739,240 @@ def test_an_unrendered_review_attempt_does_not_erase_an_approved_version(prepare
     assert list_versions(snapshot["project_id"])["versions"][0]["quality_pass"]
     assert first["version_id"] == list_versions(snapshot["project_id"])["last_ready_version_id"]
     assert len(list((project_path(snapshot["project_id"]) / "review-attempts").glob("*.json"))) == 1
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing_log",
+        "wrong_project",
+        "mock_provider",
+        "unknown_output",
+        "wrong_uri",
+        "reserved",
+        "uncertain",
+        "overrun",
+        "over_bound",
+        "negative_cost",
+        "nan_cost",
+        "reservation_owner",
+        "legacy_schema",
+        "asr_hash",
+        "asr_text",
+        "omitted_used_source",
+    ],
+)
+def test_live_and_settled_claims_cannot_override_actual_gateway_receipts(prepared, fault):
+    snapshot, state, path, _review, proofs = prepared
+    ledger = gates._source_store()
+    first = proofs["source_evidence"]["records"][0]
+    log_id = first["gateway_log_id"]
+    if fault == "missing_log":
+        first["gateway_log_id"] = str(uuid4())
+    elif fault == "wrong_project":
+        ledger.conn.execute("UPDATE call_logs SET project_id='other' WHERE id=?", (log_id,))
+    elif fault == "mock_provider":
+        ledger.conn.execute("UPDATE call_logs SET provider='mock', live=0 WHERE id=?", (log_id,))
+    elif fault == "unknown_output":
+        ledger.conn.execute(
+            "UPDATE call_logs SET output=? WHERE id=?", (json.dumps({"uri": path.as_uri()}), log_id)
+        )
+    elif fault == "wrong_uri":
+        ledger.conn.execute(
+            "UPDATE call_logs SET output=? WHERE id=?",
+            (json.dumps({"uri": "oss://other/source", "mock": False}), log_id),
+        )
+    elif fault in {"reserved", "uncertain", "overrun"}:
+        ledger.conn.execute(
+            "UPDATE budget_reservations SET state=? WHERE id=?",
+            ("settled_overrun" if fault == "overrun" else fault, log_id),
+        )
+    elif fault in {"over_bound", "negative_cost", "nan_cost"}:
+        ledger.conn.execute(
+            "UPDATE call_logs SET cost_cny=? WHERE id=?",
+            ({"over_bound": "0.0300", "negative_cost": "-0.01", "nan_cost": "NaN"}[fault], log_id),
+        )
+    elif fault == "reservation_owner":
+        ledger.conn.execute(
+            "UPDATE budget_reservations SET context=? WHERE id=?",
+            (json.dumps({"project_id": "other"}), log_id),
+        )
+    elif fault == "legacy_schema":
+        ledger.conn.execute("DROP TABLE budget_reservations")
+    elif fault == "asr_hash":
+        ledger.conn.execute(
+            "UPDATE call_logs SET params=? WHERE task='asr'",
+            (json.dumps({"media_hash": "0" * 64}),),
+        )
+    elif fault == "asr_text":
+        ledger.conn.execute(
+            "UPDATE call_logs SET output=? WHERE task='asr'",
+            (json.dumps({"text": "a different narration", "mock": False}),),
+        )
+    elif fault == "omitted_used_source":
+        proofs["source_evidence"]["records"] = proofs["source_evidence"]["records"][1:]
+    ledger.conn.commit()
+    attest(prepared)
+    result = gates.readiness(snapshot, state, path)
+    assert result["preview_available"]
+    assert not result["quality_pass"]
+    assert "source_journal_unverified" in codes(result)
+    assert result["media_provenance"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        None,
+        "no_origin",
+        "origin_unsettled",
+        "foreign_origin",
+        "different_output",
+        "nonzero_cache_cost",
+    ],
+)
+def test_cached_live_outputs_need_a_matching_settled_origin(prepared, fault):
+    snapshot, state, path, _review, proofs = prepared
+    ledger = gates._source_store()
+    reference = proofs["source_evidence"]["records"][0]
+    origin_id = reference["gateway_log_id"]
+    original = ledger.fetchall("SELECT * FROM call_logs WHERE id=%s", (origin_id,))[0]
+    cache_id = str(uuid4())
+    cached = {
+        **original,
+        "id": cache_id,
+        "status": "cache_hit",
+        "cache_hit": True,
+        "cost_cny": "0.0000",
+        "params": json.loads(original["params"]),
+        "output": json.loads(original["output"]),
+    }
+    ledger.insert_log(cached)
+    reference.update(
+        gateway_log_id=cache_id, origin_log_id=origin_id, billing_status="not_billable"
+    )
+    if fault == "no_origin":
+        reference.pop("origin_log_id")
+    elif fault == "origin_unsettled":
+        ledger.conn.execute(
+            "UPDATE budget_reservations SET state='uncertain' WHERE id=?", (origin_id,)
+        )
+    elif fault == "foreign_origin":
+        ledger.conn.execute("UPDATE call_logs SET project_id='foreign' WHERE id=?", (origin_id,))
+    elif fault == "different_output":
+        ledger.conn.execute(
+            "UPDATE call_logs SET output=? WHERE id=?",
+            (json.dumps({"uri": "oss://other/source", "mock": False}), origin_id),
+        )
+    elif fault == "nonzero_cache_cost":
+        ledger.conn.execute("UPDATE call_logs SET cost_cny='0.01' WHERE id=?", (cache_id,))
+    ledger.conn.commit()
+    attest(prepared)
+    result = gates.readiness(snapshot, state, path)
+    assert result["quality_pass"] is (fault is None)
+
+
+def test_actual_cost_revocation_survives_version_restore(prepared):
+    snapshot, _state, _path, _review, proofs = prepared
+    attest(prepared)
+    with locked_project(snapshot["project_id"]) as root:
+        approved = commit_locked(root, snapshot, instruction="approved", concept_degraded=False)
+    assert approved["quality_pass"]
+    ledger = gates._source_store()
+    log_id = proofs["source_evidence"]["records"][0]["gateway_log_id"]
+    ledger.conn.execute("UPDATE budget_reservations SET state='uncertain' WHERE id=?", (log_id,))
+    ledger.conn.commit()
+    restore_version(snapshot["project_id"], approved["version_id"])
+    assert not read_snapshot(snapshot["project_id"])["quality_pass"]
+    assert not list_versions(snapshot["project_id"])["versions"][0]["quality_pass"]
+    assert (
+        ledger.fetchall("SELECT state FROM budget_reservations WHERE id=%s", (log_id,))[0]["state"]
+        == "uncertain"
+    )
+
+
+@pytest.mark.parametrize("claim", ["clips", "reference", "graph"])
+def test_render_hook_rejects_a_claim_without_a_real_consumer(prepared, claim):
+    snapshot, state, path, _review, _proofs = prepared
+    attest(prepared)
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    witness = project_path(snapshot["project_id"]) / "render-evidence" / f"{digest}.json"
+    before = witness.read_bytes()
+    draft = {
+        "clips": {"timeline_clips": [{"shot_id": "S01", "in_s": 0.1, "out_s": 0.2}]},
+        "reference": {"shots": {"S01": {"reference_upload_id": "new-reference"}}},
+        "graph": {"user_nodes": [{"id": "u", "kind": "image", "data": {"prompt": "different"}}]},
+    }[claim]
+    with pytest.raises(ValueError, match="consumer"):
+        gates.record_render_context(
+            snapshot["project_id"], path, state, applied_draft_context=draft
+        )
+    assert witness.read_bytes() == before
+
+
+def test_a_connected_draft_is_pending_but_an_unconnected_idea_is_not_the_execution_graph(prepared):
+    snapshot, state, path, _review, _proofs = prepared
+    attest(prepared)
+    doc = {"user_nodes": [{"id": "idea", "kind": "image", "data": {"prompt": "an unused idea"}}]}
+    canvas = project_path(snapshot["project_id"]) / "canvas.json"
+    canvas.write_text(json.dumps(doc))
+    assert gates.readiness(snapshot, state, path)["quality_pass"]
+    doc["edges"] = [{"source": "idea", "target": "shot:S01", "role": "reference"}]
+    canvas.write_text(json.dumps(doc))
+    assert "draft_not_rendered" in codes(gates.readiness(snapshot, state, path))
+
+
+def test_media_cache_cannot_authorize_an_outside_symlink_or_project_alias(prepared):
+    snapshot, state, path, _review, _proofs = prepared
+    attest(prepared)
+    assert gates.readiness(snapshot, state, path)["quality_pass"]
+    root = project_path(snapshot["project_id"])
+    outside = root.parent / "outside.mp4"
+    shutil.copy2(path, outside)
+    link = root / "escape.mp4"
+    link.symlink_to(outside)
+    assert not gates.readiness(snapshot, state, link)["preview_available"]
+    moved = root.with_name("other-project")
+    root.rename(moved)
+    root.symlink_to(moved, target_is_directory=True)
+    assert not gates.readiness(snapshot, state, path)["preview_available"]
+
+
+@pytest.mark.parametrize("node_name", ["n09_keyframe", "n09_keyframe_qa"])
+def test_keyframe_review_receipts_accept_the_existing_gateway_node_aliases(prepared, node_name):
+    snapshot, state, path, _review, proofs = prepared
+    ledger = gates._source_store()
+    origin = ledger.fetchall("SELECT * FROM call_logs WHERE task='judge'")[0]
+    log_id = str(uuid4())
+    ledger.insert_log(
+        {
+            **origin,
+            "id": log_id,
+            "node": node_name,
+            "params": json.loads(origin["params"]),
+            "output": json.loads(origin["output"]),
+        }
+    )
+    ledger.conn.execute(
+        "INSERT INTO budget_reservations VALUES (?, ?, ?, ?, ?, ?)",
+        (
+            log_id,
+            "2026-11-01",
+            "2026-11-01",
+            "0.0200",
+            "settled",
+            json.dumps({"project_id": snapshot["project_id"]}),
+        ),
+    )
+    ledger.conn.commit()
+    proofs["source_evidence"]["records"].append(
+        {
+            "gateway_log_id": log_id,
+            "execution_mode": "live",
+            "billing_status": "settled",
+            "evidence_ref": f"gateway:{log_id}",
+        }
+    )
+    save_node(snapshot["project_id"], "n09_keyframe_qa", {"keyframes": []})
+    attest(prepared)
+    assert gates.readiness(snapshot, state, path)["quality_pass"]

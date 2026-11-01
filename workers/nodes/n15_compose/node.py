@@ -412,6 +412,13 @@ def _license_payload(payload: N15Input) -> dict[str, Any]:
 def _audio(
     payload: N15Input, work: Path, intro_s: float, *, gateway: Any = None
 ) -> list[AudioClip]:
+    takes = {item.shot_id: item for item in payload.voiceovers}
+    if len(takes) != len(payload.voiceovers):
+        raise QAError("voiceover shot ids must be unique", retryable=False)
+    spoken = [shot for shot in payload.script.shots if shot.voiceover.strip()]
+    for shot in spoken:
+        if shot.shot_id not in takes:
+            raise QAError(f"{shot.shot_id} is missing a voiceover asset", retryable=False)
     track = payload.audio_track
     if track is not None:
         try:
@@ -422,23 +429,31 @@ def _audio(
         if measured + 1 / FPS + 0.001 < track.duration_s:
             raise QAError("audio track is shorter than its declared duration", retryable=False)
         start = intro_s if track.start_s is None else track.start_s
+        if spoken:
+            if abs(start - intro_s) > 0.001:
+                raise QAError("narration mix must use the same shot clock", retryable=False)
+            _validate_narration_mix(payload, takes, samples, gateway=gateway)
+        base_source = (
+            "mock"
+            if track.provenance == "unknown" and track.source.startswith("hilatv-test-")
+            else track.provenance
+        )
+        sources = [base_source]
+        for shot in spoken:
+            take = takes[shot.shot_id]
+            sources.append("mock" if take.uri.startswith("mock://") else take.provenance)
+        if track.source.startswith("hilatv-test-") or any(
+            item.source.startswith("hilatv-test-") for item in payload.licenses
+        ):
+            sources.append("mock")
         return [
             AudioClip(
                 path=track.path,
                 start_s=round(start, 3),
                 duration_s=round(track.duration_s, 3),
-                provenance=(
-                    combine_provenance(
-                        [track.provenance if track.provenance != "unknown" else "mock", "mock"]
-                    )
-                    if track.source.startswith("hilatv-test-")
-                    else track.provenance
-                ),
+                provenance=combine_provenance(sources),
             )
         ]
-    takes = {item.shot_id: item for item in payload.voiceovers}
-    if len(takes) != len(payload.voiceovers):
-        raise QAError("voiceover shot ids must be unique", retryable=False)
     clips: list[AudioClip] = []
     offset = intro_s
     language = payload.script.language
@@ -483,6 +498,82 @@ def _audio(
         )
         offset += float(shot.duration_s)
     return clips
+
+
+def _validate_narration_mix(payload: N15Input, takes: dict, mix: Any, *, gateway: Any) -> None:
+    track = payload.audio_track
+    paths = (track.narration_path, track.music_path, track.sfx_path)
+    if not all(paths):
+        raise QAError(
+            "spoken soundtrack requires its actual narration/music/effects stems", retryable=False
+        )
+    try:
+        stems = [decode_audio(audio_bytes(path, allowed_roots=[project_dir()])) for path in paths]
+    except AudioError as exc:
+        raise QAError(f"soundtrack stem is unreadable: {exc}", retryable=False) from exc
+    count = round(track.duration_s * SAMPLE_RATE)
+    if len(mix) < count or any(len(stem) < count for stem in stems):
+        raise QAError("soundtrack stems do not cover the declared mix", retryable=False)
+    for index in range(count):
+        expected = max(-32768, min(32767, sum(int(stem[index]) for stem in stems)))
+        if abs(expected - int(mix[index])) > 1:
+            raise QAError("soundtrack bytes do not contain the declared stems", retryable=False)
+    narration = stems[0]
+    offset = 0.0
+    for shot in payload.script.shots:
+        if shot.voiceover.strip():
+            take = takes[shot.shot_id]
+            try:
+                actual = decode_audio(
+                    load_take(
+                        take.uri,
+                        text=shot.voiceover,
+                        speed=take.speed,
+                        pause_s=take.pause_s,
+                        seed=take.seed,
+                        language=payload.script.language,
+                        gateway=gateway,
+                        allow_mock=True if take.provenance == "mock" else None,
+                    )
+                )
+            except (AudioError, VoiceError) as exc:
+                raise QAError(
+                    f"{shot.shot_id} voiceover is unreadable: {exc}", retryable=False
+                ) from exc
+            if abs(len(actual) / SAMPLE_RATE - take.audio_s) > 1 / FPS + 0.001:
+                raise QAError(
+                    f"{shot.shot_id} audio duration does not match its take", retryable=False
+                )
+            if len(actual) / SAMPLE_RATE > shot.duration_s + 1 / FPS:
+                raise QAError(f"{shot.shot_id} audio exceeds its shot", retryable=False)
+            start = round(offset * SAMPLE_RATE)
+            if start + len(actual) > count + 1:
+                raise QAError(
+                    f"{shot.shot_id} voiceover exceeds the declared mix duration", retryable=False
+                )
+            energy = sum(int(value) ** 2 for value in actual)
+            matched = False
+            for shift in (0, -1, 1, -2, 2):
+                begin = start + shift
+                if begin < 0 or begin + len(actual) > len(narration):
+                    continue
+                segment = narration[begin : begin + len(actual)]
+                heard_energy = sum(int(value) ** 2 for value in segment)
+                dot = sum(int(a) * int(b) for a, b in zip(actual, segment, strict=True))
+                if (
+                    dot > 0
+                    and energy
+                    and heard_energy
+                    and dot * dot / (energy * heard_energy) >= 0.999
+                ):
+                    matched = True
+                    break
+            if not matched:
+                raise QAError(
+                    f"{shot.shot_id} actual voice is absent or misaligned in the mix",
+                    retryable=False,
+                )
+        offset += float(shot.duration_s)
 
 
 def _overlays(

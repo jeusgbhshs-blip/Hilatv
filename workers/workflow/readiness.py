@@ -35,7 +35,7 @@ from workers.nodes.n18_revision.concept_gate import classify_concept
 from workers.qa.scores import PASS_TOTAL, is_quality_pass
 from workers.schemas.asset import QAReport
 from workers.workflow.contract import PIPELINE
-from workers.workflow.store import contained_file, project_path, valid_project_id
+from workers.workflow.store import contained_file, project_path, project_root, valid_project_id
 
 _HASH = re.compile(r"^[a-f0-9]{64}$")
 _KINDS = {"live", "mock", "mixed", "unknown"}
@@ -134,9 +134,34 @@ def draft_context(project_id: str, media: str | Path | None = None) -> dict[str,
         "updated_at",
         "regen_count",
     }
+    semantic = [
+        row
+        for row in _rows(raw.get("edges"))
+        if isinstance(row, dict)
+        and isinstance(row.get("role"), str)
+        and row["role"] in {"reference", "feeds_final", "text"}
+    ]
+    if any(not isinstance(row.get(key), str) for row in semantic for key in ("source", "target")):
+        return {"invalid_saved_draft": True}
+    reached = {
+        row["target"]
+        for row in semantic
+        if row["target"] == "final"
+        or row["target"].startswith("shot:")
+        or row["target"] in PIPELINE
+    }
+    while True:
+        added = {row["source"] for row in semantic if row["target"] in reached} - reached
+        if not added:
+            break
+        reached.update(added)
     nodes = []
     for node in _rows(raw.get("user_nodes")):
-        if not isinstance(node, dict):
+        if (
+            not isinstance(node, dict)
+            or not isinstance(node.get("id"), str)
+            or node["id"] not in reached
+        ):
             continue
         data = node.get("data")
         nodes.append(
@@ -155,8 +180,8 @@ def draft_context(project_id: str, media: str | Path | None = None) -> dict[str,
             key: row.get(key)
             for key in ("source", "target", "source_handle", "target_handle", "role")
         }
-        for row in _rows(raw.get("edges"))
-        if isinstance(row, dict) and row.get("role") in {"reference", "feeds_final", "text"}
+        for row in semantic
+        if row["target"] in reached
     ]
     if edges:
         projection["semantic_edges"] = sorted(
@@ -177,12 +202,11 @@ def readiness(
     media: str | Path | None = None,
 ) -> dict[str, Any]:
     project_id = str(snapshot.get("project_id") or "")
+    scope_valid = _valid_project_scope(project_id)
     state = (
         dict(state)
         if state is not None
-        else (
-            state_from_directory(project_path(project_id)) if valid_project_id(project_id) else {}
-        )
+        else (state_from_directory(project_path(project_id)) if scope_valid else {})
     )
     raw = (
         str(media)
@@ -191,8 +215,8 @@ def readiness(
             snapshot.get("preview_path") or snapshot.get("deliverable") or state.get("deliverable")
         )
     )
-    located = contained_file(project_id, raw)
-    draft = draft_context(project_id, located) if valid_project_id(project_id) else {}
+    located = contained_file(project_id, raw) if scope_valid else None
+    draft = draft_context(project_id, located) if scope_valid else {}
     info = _media(project_id, located)
     evidence = evidence_for(project_id, info.get("media_hash", ""))
     provenance = _provenance(state, evidence)
@@ -267,7 +291,29 @@ def readiness(
                 for row in records
             )
         ):
+            if provenance == "live":
+                provenance = "unknown"
             reject("source_lineage_unverified", "素材来源与调用费用链尚未完整核验")
+        else:
+            from workers.workflow.source_evidence import verified_sources
+
+            root = project_path(project_id).resolve()
+            nodes = root / "nodes"
+            if located and (
+                Path(located).is_relative_to(root / "versions")
+                or Path(located).is_relative_to(root / ".restore-staging")
+            ):
+                nodes = Path(located).parent / "nodes"
+            try:
+                journal_verified = verified_sources(
+                    _source_store(), project_id, sources, state, nodes_directory=nodes
+                )
+            except Exception:
+                journal_verified = False
+            if not journal_verified:
+                if provenance == "live":
+                    provenance = "unknown"
+                reject("source_journal_unverified", "真实来源或费用尚无匹配的服务端已结算调用记录")
     if classify_concept(state.get("concept")).degraded or snapshot.get("concept_degraded") is True:
         reject("concept_degraded", "创意仍为降级草稿，不能正式交付")
     if snapshot.get("revision_incomplete") is True:
@@ -318,6 +364,8 @@ def record_delivery_evidence(
 
     from workers.workflow.versions import atomic_write
 
+    if not _valid_project_scope(project_id):
+        raise ValueError("delivery evidence requires its own authorized project directory")
     snapshot = _json(project_path(project_id) / "project.json")
     located = contained_file(project_id, str(media))
     info = _media(project_id, located)
@@ -391,11 +439,14 @@ def record_render_context(
 
     from workers.workflow.versions import atomic_write
 
+    if not _valid_project_scope(project_id):
+        raise ValueError("render context requires its own authorized project directory")
     located = contained_file(project_id, str(media))
     inspected = _media(project_id, located)
     if not inspected.get("preview_available"):
         raise ValueError("render context requires a decodable project media file")
     draft = dict(applied_draft_context or {})
+    _validate_applied_draft(state, draft)
     digest = inspected["media_hash"]
     record = {
         "producer": "n15_compose",
@@ -424,6 +475,43 @@ def _render_evidence(project_id: str, digest: Any) -> dict[str, Any]:
     root = project_path(project_id).resolve()
     path = (root / "render-evidence" / f"{digest}.json").resolve()
     return _json(path) if path.is_relative_to(root) else {}
+
+
+def _validate_applied_draft(state: Mapping[str, Any], draft: Mapping[str, Any]) -> None:
+    # N15 does not consume CanvasDoc.timeline_clips or the user-node graph yet.
+    # Do not allow a future caller to certify these merely by passing a dict.
+    if not draft:
+        return
+    if set(draft) - {"shots"} or not isinstance(draft.get("shots"), dict):
+        raise ValueError(
+            "saved clips, references and graph parameters have no verified render consumer"
+        )
+    script = state.get("script")
+    shots = (
+        {row.get("shot_id"): row for row in _rows(script.get("shots")) if isinstance(row, dict)}
+        if isinstance(script, dict)
+        else {}
+    )
+    takes = {
+        row.get("shot_id"): row for row in _rows(state.get("voiceovers")) if isinstance(row, dict)
+    }
+    from workers.nodes.n06_voiceover.audio import character_error_rate
+
+    for shot_id, edit in draft["shots"].items():
+        if not isinstance(edit, dict) or set(edit) != {"narration"}:
+            raise ValueError(
+                "saved shot references and prompt edits have no verified render consumer"
+            )
+        text = edit["narration"]
+        take = takes.get(shot_id)
+        if not (
+            isinstance(text, str)
+            and text.strip()
+            and shots.get(shot_id, {}).get("voiceover") == text
+            and take
+            and character_error_rate(text, str(take.get("transcript") or "")) < 0.02
+        ):
+            raise ValueError("saved narration does not match the supplied rendered script and take")
 
 
 def evidence_for(project_id: str, digest: str) -> dict[str, Any]:
@@ -774,3 +862,18 @@ def _authorization_reasons(
 
 def _rows(value: Any) -> list[Any]:
     return value if isinstance(value, list) else []
+
+
+def _source_store() -> Any:
+    from gateway import get_gateway
+
+    return get_gateway().store
+
+
+def _valid_project_scope(project_id: str) -> bool:
+    if not valid_project_id(project_id):
+        return False
+    try:
+        return project_path(project_id).resolve() == project_root().resolve() / project_id
+    except (OSError, ValueError):
+        return False

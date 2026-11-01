@@ -215,6 +215,7 @@ def _execute(
         narration_path=str(files.narration),
         music_path=str(files.music_ducked),
         sfx_path=str(files.sfx),
+        music_source_uri=str(spoken.get("uri") or "") or None,
     )
     aligned = _aligned_script(payload.script, cuts)
     log_event(

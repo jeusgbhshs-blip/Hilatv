@@ -43,6 +43,7 @@ class AudioTrack(BaseModel):
     narration_path: str | None = None
     music_path: str | None = None
     sfx_path: str | None = None
+    music_source_uri: str | None = None
 
 
 class TrackLicense(BaseModel):

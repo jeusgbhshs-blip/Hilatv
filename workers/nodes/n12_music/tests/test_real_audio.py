@@ -289,3 +289,99 @@ def test_decoder_does_not_follow_playlist_references(tmp_path: Path) -> None:
     playlist = f"#EXTM3U\n#EXTINF:1,\n{source}\n".encode()
     with pytest.raises(AudioError, match="could not be decoded"):
         decode_audio(playlist)
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "missing_take",
+        "duplicate_take",
+        "missing_uri",
+        "corrupt_uri",
+        "missing_stem",
+        "corrupt_stem",
+        "music_only",
+        "wrong_voice",
+        "truncated_clock",
+        "wrong_start",
+    ],
+)
+def test_mix_cannot_bypass_missing_or_unconsumed_narration(tmp_path: Path, fault: str) -> None:
+    voice, gateway = _voiced(tmp_path / "sources")
+    mixed = _mix(tmp_path / "mix", voice, gateway)
+    body = {
+        **voice,
+        "script": mixed["aligned_script"],
+        "audio_track": mixed["audio_track"],
+        "licenses": mixed["segments"],
+    }
+    if fault == "missing_take":
+        body["voiceovers"] = []
+    elif fault == "duplicate_take":
+        body["voiceovers"].append(copy.deepcopy(body["voiceovers"][0]))
+    elif fault == "missing_uri":
+        Path(body["voiceovers"][0]["uri"][7:]).unlink()
+    elif fault == "corrupt_uri":
+        Path(body["voiceovers"][0]["uri"][7:]).write_bytes(b"corrupt")
+    elif fault == "missing_stem":
+        body["audio_track"]["narration_path"] = None
+    elif fault == "corrupt_stem":
+        Path(body["audio_track"]["narration_path"]).write_bytes(b"corrupt")
+    elif fault in {"music_only", "wrong_voice"}:
+        bed = decode_audio(Path(body["audio_track"]["music_path"]).read_bytes())
+        sfx = decode_audio(Path(body["audio_track"]["sfx_path"]).read_bytes())
+        narration = decode_audio(Path(body["audio_track"]["narration_path"]).read_bytes())
+        if fault == "wrong_voice":
+            narration = _signal(len(narration) / RATE, 1230)
+            Path(body["audio_track"]["narration_path"]).write_bytes(wav_bytes(narration))
+        replacement = array.array(
+            "h",
+            (
+                max(-32768, min(32767, int(a) + int(b) + (int(c) if fault == "wrong_voice" else 0)))
+                for a, b, c in zip(bed, sfx, narration, strict=True)
+            ),
+        )
+        Path(body["audio_track"]["path"]).write_bytes(wav_bytes(replacement))
+    elif fault == "truncated_clock":
+        body["audio_track"]["duration_s"] = 0.5
+    elif fault == "wrong_start":
+        body["audio_track"]["start_s"] = 0.0
+    with pytest.raises(ComposeError):
+        _audio(N15Input.model_validate(body), tmp_path / "edit", intro_s=1.2)
+
+
+def test_default_mock_mix_remains_mock_when_the_runtime_flag_later_becomes_live(
+    tmp_path: Path, monkeypatch
+) -> None:
+    gateway = LocalAudioGateway(tmp_path / "unused-sources")
+    voice = fixture()
+    result = music_run(
+        {"project_id": "mock-lineage", "payload": {**voice, "work_dir": str(tmp_path / "mix")}},
+        gateway=gateway,
+        max_attempts=1,
+    )
+    assert result.payload["audio_track"]["provenance"] == "mock"
+    body = {
+        **voice,
+        "script": result.payload["aligned_script"],
+        "audio_track": result.payload["audio_track"],
+        "licenses": result.payload["segments"],
+    }
+    monkeypatch.setenv("HILATV_LIVE", "1")
+    clips = _audio(N15Input.model_validate(body), tmp_path / "edit", intro_s=0)
+    assert clips[0].provenance == "mock"
+
+
+def test_mock_sfx_and_voice_provenance_cannot_be_retagged_live(tmp_path: Path) -> None:
+    voice, gateway = _voiced(tmp_path / "sources")
+    mixed = _mix(tmp_path / "mix", voice, gateway)
+    body = {
+        **voice,
+        "script": mixed["aligned_script"],
+        "audio_track": mixed["audio_track"],
+        "licenses": mixed["segments"],
+    }
+    body["audio_track"]["provenance"] = "live"
+    body["audio_track"]["source"] = "claimed-real-music"
+    clips = _audio(N15Input.model_validate(body), tmp_path / "edit", intro_s=0)
+    assert clips[0].provenance == "mixed"

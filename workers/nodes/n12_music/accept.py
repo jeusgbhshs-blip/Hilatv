@@ -149,6 +149,7 @@ def _measure(payload: dict[str, Any], body: dict[str, Any], root: Path) -> dict[
         elements,
         intro_s,
         outro_s,
+        voiceovers=body["voiceovers"],
     )
     timeline = composed["timeline"]
     _assert_synced(script, aligned, cues, timeline, intro_s)
@@ -198,6 +199,7 @@ def _hard_measure(root: Path, gateway: Any) -> dict[str, Any]:
         project_id="accept-t21-hard",
         low_contrast=True,
         keep_transitions=True,
+        voiceovers=body["voiceovers"],
     )
     timeline = composed["timeline"]
     joins = max(0, len(timeline["clips"]) - 1)
@@ -353,6 +355,7 @@ def _compose_mp4(
     intro_s: float,
     outro_s: float,
     *,
+    voiceovers: list[dict[str, Any]],
     project_id: str = "accept-t21",
     low_contrast: bool = False,
     keep_transitions: bool = False,
@@ -383,6 +386,7 @@ def _compose_mp4(
                 "width": 320,
                 "height": 180,
                 "audio_track": track,
+                "voiceovers": voiceovers,
                 "shot_clips": clips,
             },
         },
