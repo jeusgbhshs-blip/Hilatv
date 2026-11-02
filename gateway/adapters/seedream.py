@@ -124,9 +124,11 @@ def _body(call: Invocation, store: ObjectStore | None = None) -> dict[str, Any]:
         "prompt": call.prompt,
         "size": size,
         "response_format": "url",
-        "sequential_image_generation": "disabled",
         "watermark": False,
     }
+    # Only the 4.x Seedream models accept this switch; newer models reject it.
+    if call.model.startswith("doubao-seedream-4"):
+        body["sequential_image_generation"] = "disabled"
     references = call.params.get("reference_images")
     if references:
         if not isinstance(references, list) or len(references) > 14:
