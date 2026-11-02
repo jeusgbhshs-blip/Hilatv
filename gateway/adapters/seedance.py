@@ -180,10 +180,8 @@ def _submit_body(call: Invocation, store: ObjectStore | None = None) -> dict[str
     image_url = call.params.get("image_url")
     last_frame = call.params.get("last_frame_url")
     if image_url or last_frame:
-        if call.model not in {
-            "doubao-seedance-1-0-pro-250528",
-            "doubao-seedance-1-0-pro-fast-251015",
-        }:
+        # 1.0/2.x 的 Seedance 模型接受首帧/尾帧角色；2.5 等新模型按官方文档逐步放开。
+        if not call.model.startswith(("doubao-seedance-1", "doubao-seedance-2")):
             raise AdapterError("this seedance model does not support first/last frame inputs")
         if call.params.get("image_role", "first_frame") != "first_frame":
             raise AdapterError("this seedance adapter only supports first and last frames")
