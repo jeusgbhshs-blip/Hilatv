@@ -350,19 +350,22 @@ def _assign_sizes(clips: list[Clip]) -> list[str]:
 
 
 def _ensure_diverse(sizes: list[str], *, locked: int | None) -> None:
-    """至少覆盖 3 种景别；角色约束可能把镜头压成同一种，这里兜底补开。"""
+    """尽量覆盖阶梯里全部景别：镜头够多时远/全/中/近/特各来一遍。"""
 
-    if len(sizes) < 3 or len(set(sizes)) >= 3:
+    if len(sizes) < 3:
         return
-    options = [item for item in _SIZE_LADDER if item != sizes[0]]
-    cursor = 0
-    for index in range(1, len(sizes)):
+    want = min(len(_SIZE_LADDER), len(sizes))
+    if len(set(sizes)) >= want:
+        return
+    missing = [item for item in _SIZE_LADDER if item not in sizes]
+    for index in range(len(sizes) - 1, -1, -1):
+        if not missing or len(set(sizes)) >= want:
+            break
         if index == locked:
             continue
-        sizes[index] = options[cursor % len(options)]
-        cursor += 1
-        if len(set(sizes)) >= 3:
-            return
+        if sizes.count(sizes[index]) <= 1:
+            continue
+        sizes[index] = missing.pop(0)
 
 
 def _repair_sizes(sizes: list[str], *, locked: int | None) -> None:
