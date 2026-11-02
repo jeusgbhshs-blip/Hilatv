@@ -642,3 +642,12 @@
 - CUA实际操作：方向键选择9:16、2:3更多选项重开自动展开、4:5键盘整卡2px蓝焦点、Escape回到原芯片；自定义17秒应用与重开数字输入有焦点、181显示错误、刷新后9:16/17保留。375×812下弹层343宽，常用比例64高、自动行与时长段44高；全部比例663高，无横向溢出。深浅主题均已截图，结束恢复自动主题与默认视口。
 - 前端43项Node+73项Vitest、全量lint、生产TypeScript、生产构建通过；相关E2E源码严格类型检查通过，未运行完整Playwright浏览器套件。视觉更改未重复执行后端完整回归，上一轮1102通过记录保持可追溯。
 - 成果：outputs/hilatv-ui-polish-20261102中保留当前轮原版与新版的真实截图、对比报告与验证记录。开发分支t11-settings-polish，未合并main、未部署；远程CI未核验。
+
+## 2026-11-02 真实接入验证、画布配音与多镜合成（开发分支，未合并）
+
+- 分支 `codex/real-api-canvas-export`，基线 `origin/t11-settings-polish`（8ed89df，领先 main 46 个提交）；本轮按指示只做三件事：真实 API（文字→分镜→图片→视频）、画布配音/多镜头合成/完整 MP4 播放下载、失败恢复与安装启动验证。未合并 main、未部署、未改生产配置。
+- 真实 API：DeepSeek 文字链真实调用通过（n01/n03/n04/n05 共 3 轮，合计约 ¥0.06，低于 song 授权的 ¥5 预算上限）；Seedream/Seedance 适配器修了当前模型不接受的参数（`sequential_image_generation` 仅 4.x 模型发送），并用 `SEEDREAM_MODEL` / `SEEDANCE_MODEL` 覆盖到账号可用的模型名。**阻塞在方舟账号侧**：图片模型返回 `SetLimitExceeded`（账号设置了用量上限，模型服务暂停），视频模型（Seedance）返回 `ModelNotOpen`（未开通）；需在方舟控制台开通视频模型、调整/关闭图片模型用量上限后才能继续真实验证。TTS 只有 Access Token、缺 `VOLC_TTS_APP_ID`，真实配音未接，本轮配音仍是 mock。
+- 画布配音：`POST /v1/projects/{id}/canvas/shots/{shot_id}/voiceover` 单镜改词并重做整片 TTS（走网关、`operation_id` 幂等、扣重生次数；整片跑是为了不打断整片时长预算），`GET` 同一路径返回可播放 wav（mock 下按同一时间轴重建）；画布镜头节点新增「生成配音」与试听播放器。
+- 多镜头合成：`POST /v1/projects/{id}/canvas/compose` 用当前镜头/配音/字幕/包装重跑 N13→N14→N15，输出新 MP4 并更新成片页预览；被人工复核拦住时 409，已放行的项目允许重新合成（按 snapshot 里的人工放行审计记录判断，不信任客户端传参）。时间轴新增「合成成片」按钮。
+- 失败恢复/安装启动：N06 显式时长预算改为按帧容差（1 帧），修掉 mock TTS 4.001s 对 4.000s 的取整误杀；`test_log_redaction` 子进程补 PYTHONPATH，本机/CI 可直接通过；mock 项目的正式下载仍被交付门拦住（`media_not_live`、`delivery_not_ready`），真实下载要等真实素材与终审证据。
+- 实测：后端定向 53 项通过（含画布 API 9、配音/合成 3、日志脱敏 16、N06 25）；前端 tsc/lint/43 Node/73 Vitest 通过、生产构建通过；浏览器实测：画布加载→生成配音可试听→合成成片提示成功→成片页视频 6.0 秒可播放（readyState=4），全程无控制台错误。截图在 `hilatv_shots/canvas_dubbing.png`、`canvas_compose.png`、`film_after_canvas_compose.png`。
