@@ -438,8 +438,19 @@ class VolcTtsV3Adapter:
         except (TypeError, ValueError):
             pause_s = 0.0
         pcm = b"".join(chunks)
-        if pause_s > 0:
-            pcm += b"\x00\x00" * int(round(sample_rate * pause_s))
+        # N06 的时长规范：音频长度 == 最后一个字的时间戳 + pause_s。
+        # V3 流式音频可能自带尾部余音，先按字级末尾裁剪再补齐停顿，保证严格对齐。
+        stamps = words
+        if stamps:
+            speech_end = max(end for _text, _start, end in stamps)
+            target_s = speech_end + pause_s
+        else:
+            target_s = len(pcm) / (sample_rate * 2) + pause_s
+        target_frames = max(1, int(round(target_s * sample_rate)))
+        if len(pcm) > target_frames * 2:
+            pcm = pcm[: target_frames * 2]
+        elif len(pcm) < target_frames * 2:
+            pcm += b"\x00\x00" * (target_frames - len(pcm) // 2)
         raw = _pcm_to_wav(pcm, sample_rate)
         uri = self.store.put(f"gateway/tts/{uuid4().hex}.wav", raw, "audio/wav")
         receipt = AdapterResult(

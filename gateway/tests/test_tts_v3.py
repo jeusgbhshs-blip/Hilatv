@@ -16,7 +16,7 @@ def _call() -> Invocation:
         prompt="你好，这是一段配音。",
         model="seed-tts-1.0",
         provider="volc_tts_v3",
-        params={"voice": "zh_female_vv_uranus_bigtts"},
+        params={"voice": "zh_female_vv_uranus_bigtts", "pause_s": 0.1},
         timeout_s=10,
         project_id="p1",
         node="n06_voiceover",
@@ -58,7 +58,9 @@ def test_v3_parses_stream_and_wraps_pcm():
     audio = store.get(result.output["uri"])
     with wave.open(__import__("io").BytesIO(audio), "rb") as handle:
         assert handle.getframerate() == 24000
-        assert handle.getnframes() == 2400
+        # 音频长度 = 最后一个字的时间戳(0.4s) + pause_s(0.1s)
+        assert handle.getnframes() == 12000
+        assert result.output["duration_s"] == 0.5
     assert result.output["mock"] is False
     assert result.output["timestamps"] == [{"text": "你好", "start_s": 0.1, "end_s": 0.4}]
     assert seen["headers"]["X-Api-Key"] == "test-key"
