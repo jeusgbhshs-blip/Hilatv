@@ -12,7 +12,7 @@ import {
   TextCursorInput,
 } from "lucide-react";
 import { useReactFlow } from "@xyflow/react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { CanvasPoint } from "@/lib/canvas-contract";
 
@@ -37,6 +37,7 @@ type Placeable = "brief" | "ref_image" | "image" | "video" | "script" | "audio";
 export function CanvasAddMenu({ onCreate }: { onCreate: (kind: Placeable, position: CanvasPoint) => void }) {
   const { screenToFlowPosition } = useReactFlow();
   const [spot, setSpot] = useState<{ x: number; y: number; flow: CanvasPoint } | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   const openAt = useCallback(
     (clientX: number, clientY: number) => {
@@ -48,6 +49,17 @@ export function CanvasAddMenu({ onCreate }: { onCreate: (kind: Placeable, positi
     },
     [screenToFlowPosition],
   );
+
+  useEffect(() => {
+    if (!spot) return;
+    function onPointerDown(event: PointerEvent) {
+      const element = menuRef.current;
+      if (element && event.target instanceof Node && element.contains(event.target)) return;
+      setSpot(null);
+    }
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [spot]);
 
   useEffect(() => {
     function onDoubleClick(event: MouseEvent) {
@@ -77,6 +89,7 @@ export function CanvasAddMenu({ onCreate }: { onCreate: (kind: Placeable, positi
 
   return (
     <div
+      ref={menuRef}
       role="dialog"
       aria-label="添加节点"
       data-testid="canvas-add-menu"
