@@ -651,3 +651,11 @@
 - 多镜头合成：`POST /v1/projects/{id}/canvas/compose` 用当前镜头/配音/字幕/包装重跑 N13→N14→N15，输出新 MP4 并更新成片页预览；被人工复核拦住时 409，已放行的项目允许重新合成（按 snapshot 里的人工放行审计记录判断，不信任客户端传参）。时间轴新增「合成成片」按钮。
 - 失败恢复/安装启动：N06 显式时长预算改为按帧容差（1 帧），修掉 mock TTS 4.001s 对 4.000s 的取整误杀；`test_log_redaction` 子进程补 PYTHONPATH，本机/CI 可直接通过；mock 项目的正式下载仍被交付门拦住（`media_not_live`、`delivery_not_ready`），真实下载要等真实素材与终审证据。
 - 实测：后端定向 53 项通过（含画布 API 9、配音/合成 3、日志脱敏 16、N06 25）；前端 tsc/lint/43 Node/73 Vitest 通过、生产构建通过；浏览器实测：画布加载→生成配音可试听→合成成片提示成功→成片页视频 6.0 秒可播放（readyState=4），全程无控制台错误。截图在 `hilatv_shots/canvas_dubbing.png`、`canvas_compose.png`、`film_after_canvas_compose.png`。
+
+## 2026-11-02 真实模型验证通过（DeepSeek + Seedream + Seedance 2.0）
+
+- 阻塞原因已定位：火山账号开启了「安心体验模式」，50 万免费 token 用完后模型服务自动暂停（错误码 SetLimitExceeded）。song 关闭该模式后，图片和视频都恢复调用。
+- 真实链路验证（`gateway` 统一入口，HILATV_LIVE=1，预算上限按 song 授权改为 ¥20）：DeepSeek 文字生成 3 镜分镜（406 字 JSON，4.9 秒）；Seedream 5.0-flash 生成 720×1280 真实图片（152KB）；Seedance 2.0 生成 720×1280 / 5.09 秒 / H.264 / 1.71MB 真实视频（130.8 秒）。三笔真实费用合计 ¥6.3021（¥0.0021 + ¥0.20 + ¥6.10），账本记在 /tmp/hilatv-real-chain.sqlite。
+- 产物：`hilatv_shots/real_chain/`（storyboard.json、keyframe.png、clip.mp4、video_frame.png）。
+- 应用内链路：n03 方案阶段已产生 2 张真实 Seedream 图片（其中 1 次因 OutputImageSensitiveContentDetected 自动回退 mock，属正常安全拦截）；整条 live 流水线仍会停在 N06 配音（缺 VOLC_TTS_APP_ID），所以应用内“真实视频→整片”还没串通；画布配音/合成在 mock 下已验证。
+- 未验证/待补：真实 TTS 配音（缺 APP ID）、应用内完整 live 流水线、真实素材的正式下载（交付门要求 live 来源 + 终审证据）。
