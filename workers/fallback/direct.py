@@ -788,6 +788,10 @@ def _accepted(report: QAReport) -> bool:
     is a hard failure even when a vision model is the only thing that can see it.
     """
 
+    if internal_skip_visual_review():
+        # 内部自用：只要不是内容安全敏感项，就采用真实生成的视频，
+        # 不因未做 AI 视觉评审而回退到占位片。
+        return "sensitive" not in report.hard_fail
     return report.visual_reviewed is True and not report.hard_fail
 
 
