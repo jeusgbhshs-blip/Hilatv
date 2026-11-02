@@ -10,6 +10,8 @@ export type CanvasActions = {
   choosingId: string | null;
   setChoosing: (id: string | null) => void;
   regenerate: (shotId: string, copy?: RegenerateWrite) => void;
+  dubShot: (shotId: string, text?: string) => void;
+  composeFilm: () => Promise<void>;
   editWords: (shotId: string) => void;
   choose: (shotId: string, candidateId: string) => void;
   uploadReference: (shotId: string, file: File) => void;

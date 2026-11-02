@@ -21,12 +21,15 @@ export function TimelineTrack({
   doc,
   busy,
   onCommit,
+  onCompose,
 }: {
   doc: CanvasSnapshot;
   busy: boolean;
   onCommit: (clips: TimelineClip[]) => void;
+  onCompose: () => Promise<void>;
 }) {
   const [clips, setClips] = useState(doc.timeline.clips);
+  const [composing, setComposing] = useState(false);
   useEffect(() => {
     setClips(doc.timeline.clips);
   }, [doc.timeline]);
@@ -43,6 +46,17 @@ export function TimelineTrack({
             <span data-testid="ai-label">{AI_LABEL_COPY}</span>
             <span className="text-text-3"> · 标识不能关闭</span>
           </p>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={busy || composing || doc.origin !== "api" || doc.status === "running"}
+            onClick={() => {
+              setComposing(true);
+              void onCompose().finally(() => setComposing(false));
+            }}
+          >
+            {composing ? "正在合成…" : "合成成片"}
+          </Button>
           {!busy && doc.origin === "api" && doc.status === "completed" ? (
             <Button asChild variant="secondary">
               <Link href={`/projects/${encodeURIComponent(doc.project_id)}/film`}>查看成片与导出</Link>

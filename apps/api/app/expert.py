@@ -5,11 +5,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.identity import owned_project, require_frame_identity, require_identity
 from workers.expert.canvas import build_canvas, media_file
+from workers.expert.canvas_audio import generate_voiceover, voiceover_wav
+from workers.expert.canvas_compose import compose_from_canvas
 from workers.expert.charge import BudgetExhausted
 from workers.expert.desk import (
     VersionConflict,
@@ -164,6 +166,23 @@ class TimelinePut(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     clips: list[TimelineClipBody]
+
+
+class VoiceoverBody(BaseModel):
+    """Optional text replaces this shot's line before the take is generated."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str | None = Field(default=None, max_length=400)
+    operation_id: str | None = Field(default=None, max_length=128)
+
+
+class ComposeBody(BaseModel):
+    """Re-compose the current canvas into one MP4."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    operation_id: str | None = Field(default=None, max_length=128)
 
 
 def _gate(exc: GateError) -> HTTPException:
@@ -465,3 +484,40 @@ def project_upload(
         raise _gate(exc) from exc
     media_type = _MEDIA.get(path.suffix.lower(), "application/octet-stream")
     return FileResponse(path, media_type=media_type, filename=path.name)
+
+
+@router.post("/v1/projects/{project_id}/canvas/shots/{shot_id}/voiceover")
+def project_canvas_voiceover(
+    project_id: str,
+    shot_id: str,
+    body: VoiceoverBody | None = None,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    payload = body.model_dump() if body is not None else {}
+    return _call(lambda: generate_voiceover(project_id, shot_id, payload))
+
+
+@router.get("/v1/projects/{project_id}/canvas/shots/{shot_id}/voiceover")
+def project_canvas_voiceover_audio(
+    project_id: str,
+    shot_id: str,
+    identity: Identity = Depends(require_frame_identity),
+) -> Response:
+    _owned(project_id, identity)
+    try:
+        data = voiceover_wav(project_id, shot_id)
+    except GateError as exc:
+        raise _gate(exc) from exc
+    return Response(content=data, media_type="audio/wav")
+
+
+@router.post("/v1/projects/{project_id}/canvas/compose")
+def project_canvas_compose(
+    project_id: str,
+    body: ComposeBody | None = None,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    payload = body.model_dump() if body is not None else {}
+    return _call(lambda: compose_from_canvas(project_id, payload))

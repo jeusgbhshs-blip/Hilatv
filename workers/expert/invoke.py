@@ -32,6 +32,7 @@ def invoke_node(
     gateway: Any | None = None,
     enterprise_id: str | None = None,
     reference_images: list[str] | None = None,
+    released: bool = False,
 ) -> dict[str, Any]:
     try:
         patch = _RUNNERS[name](
@@ -43,6 +44,7 @@ def invoke_node(
             gateway=gateway,
             enterprise_id=enterprise_id,
             reference_images=reference_images or [],
+            released=released,
         )
     except GateError:
         raise
@@ -496,7 +498,7 @@ def _n15(**kwargs: Any) -> dict[str, Any]:
     from workers.workflow.film import needs_human_review
 
     state = kwargs["state"]
-    if needs_human_review(state, {}):
+    if needs_human_review(state, {"human_release": kwargs.get("released") is True}):
         raise GateError("有镜头未经视觉评审，成片暂停，需要人工放行", status=409)
     clock = production_clock(_clock_payload(kwargs))
     if clock and any(

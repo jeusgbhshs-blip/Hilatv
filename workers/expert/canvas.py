@@ -153,6 +153,7 @@ def _shots(
     project_id: str,
 ) -> list[dict[str, Any]]:
     script = state.get("script") if isinstance(state.get("script"), dict) else {}
+    takes = [item for item in (state.get("voiceovers") or []) if isinstance(item, dict)]
     rows = script.get("shots") if isinstance(script.get("shots"), list) else []
     order: list[tuple[int, str, str]] = []
     seen: set[str] = set()
@@ -179,6 +180,7 @@ def _shots(
                     _public(item, project_id) for item in keyframes if item.shot_id == shot_id
                 ],
                 "videos": [_public(item, project_id) for item in videos if item.shot_id == shot_id],
+                "voiceovers": [item for item in takes if item.get("shot_id") == shot_id],
             }
         )
     return shots

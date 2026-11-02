@@ -85,6 +85,9 @@ export type ShotData = {
   candidates: ShotCandidate[];
   selected_candidate_id?: string | null;
   narration: string;
+  /** 服务端生成的这一镜配音；mock 下也能试听（由后端按同一时间轴重建）。 */
+  voiceover_url?: string | null;
+  voiceover_duration_s?: number | null;
   prompt_suffix?: string;
   /** 假设：这一镜上传替换的参考图，不属于连线那边的参考图节点。 */
   reference_upload_id?: string | null;

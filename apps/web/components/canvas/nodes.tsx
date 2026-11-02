@@ -20,6 +20,7 @@ import {
   type ShotCandidate,
   type ShotVerdict,
 } from "@/lib/canvas-contract";
+import { apiFetch } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 export type FlowData = {
@@ -343,6 +344,14 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
           >
             生成这一镜
           </button>
+          <button
+            type="button"
+            className={cn(actionClass, "border border-border-strong")}
+            onClick={() => actions.dubShot(data.shot_id, narration)}
+          >
+            生成配音
+          </button>
+          {data.voiceover_url ? <VoiceoverPlayer url={data.voiceover_url} /> : null}
         </div>
       ) : null}
       <button type="button" className={actionClass} onClick={() => actions.showPrompt(data.shot_id)}>
@@ -362,6 +371,36 @@ export function ShotNode({ id, selected, positionAbsoluteX, positionAbsoluteY }:
         </ul>
       ) : null}
     </Shell>
+  );
+}
+
+function VoiceoverPlayer({ url }: { url: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let revoked: string | null = null;
+    let cancelled = false;
+    setFailed(false);
+    void apiFetch(url)
+      .then(async (response) => {
+        if (!response.ok) throw new Error("配音读不到");
+        const blob = await response.blob();
+        if (cancelled) return;
+        revoked = URL.createObjectURL(blob);
+        setSrc(revoked);
+      })
+      .catch(() => {
+        if (!cancelled) setFailed(true);
+      });
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, [url]);
+  if (failed) return <span className="text-caption text-text-3">配音暂时听不了</span>;
+  if (!src) return <span className="text-caption text-text-3">正在准备配音…</span>;
+  return (
+    <audio controls src={src} preload="metadata" data-testid="voiceover-player" className="col-span-2 h-9 w-full" />
   );
 }
 

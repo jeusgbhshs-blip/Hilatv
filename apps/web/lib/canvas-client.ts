@@ -45,6 +45,8 @@ export type CanvasClient = {
   stageNodeData(nodeId: string, patch: NodeDataPatch): CanvasSnapshot;
   flushNodeData(options?: { includeLayout?: boolean }): Promise<CanvasSnapshot>;
   regenerate(shotId: string, body?: RegenerateWrite): Promise<CanvasSnapshot>;
+  generateVoiceover(shotId: string, body?: { text?: string; operation_id?: string }): Promise<CanvasSnapshot>;
+  composeFilm(body?: { operation_id?: string }): Promise<CanvasSnapshot>;
   replaceReference(shotId: string, body: ReferenceWrite): Promise<CanvasSnapshot>;
   selectCandidate(body: SelectWrite): Promise<CanvasSnapshot>;
   saveTimeline(body: TimelineWrite): Promise<CanvasSnapshot>;
@@ -348,6 +350,46 @@ export function createCanvasClient(
       const parsed = await response.json() as { canvas?: unknown };
       const remote = contractWith(parsed.canvas);
       return remember(remote || await loadFromApi());
+    },
+
+    async generateVoiceover(shotId, body) {
+      await this.flushNodeData({ includeLayout: false });
+      const current = last ?? (await this.load());
+      if (current.origin !== "api") {
+        throw new CanvasRequestError(422, "演示画布不能生成配音，请新建项目");
+      }
+      const response = await sendJson(
+        canvasPath(projectId, `/canvas/shots/${encodeURIComponent(shotId)}/voiceover`),
+        "POST",
+        { text: body?.text ?? null, operation_id: body?.operation_id || crypto.randomUUID() },
+      );
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      const parsed = (await response.json()) as { canvas?: unknown };
+      const remote = contractWith(parsed.canvas);
+      if (remote) return remember(remote);
+      const reloaded = await loadFromApi();
+      if (reloaded) return remember(reloaded);
+      throw new CanvasRequestError(502, "配音生成之后没有拿到画布");
+    },
+
+    async composeFilm(body) {
+      await this.flushNodeData({ includeLayout: false });
+      const current = last ?? (await this.load());
+      if (current.origin !== "api") {
+        throw new CanvasRequestError(422, "演示画布不能合成，请新建项目");
+      }
+      const response = await sendJson(
+        canvasPath(projectId, "/canvas/compose"),
+        "POST",
+        { operation_id: body?.operation_id || crypto.randomUUID() },
+      );
+      if (!response.ok) throw new CanvasRequestError(response.status, await errorMessage(response));
+      const parsed = (await response.json()) as { canvas?: unknown };
+      const remote = contractWith(parsed.canvas);
+      if (remote) return remember(remote);
+      const reloaded = await loadFromApi();
+      if (reloaded) return remember(reloaded);
+      throw new CanvasRequestError(502, "合成之后没有拿到画布");
     },
 
     async replaceReference(shotId, body) {

@@ -611,9 +611,20 @@ def _shot_node(
     else:
         duration_s = float(duration)
     selected = _selected_id(videos, frames)
+    takes = [item for item in shot.get("voiceovers") or [] if isinstance(item, dict)]
+    take = takes[0] if takes else None
+    voiceover_duration = None
+    if isinstance(take, dict):
+        raw_duration = take.get("duration_s")
+        if isinstance(raw_duration, (int, float)) and not isinstance(raw_duration, bool):
+            voiceover_duration = float(raw_duration)
     data: dict[str, Any] = {
         "shot_id": shot_id,
         "index": order if order else 1,
+        "voiceover_url": (
+            f"/v1/projects/{project_id}/canvas/shots/{shot_id}/voiceover" if take else None
+        ),
+        "voiceover_duration_s": voiceover_duration,
         "thumbnail_url": _thumbnail(videos, frames, selected),
         "duration_s": duration_s,
         "verdict": _shot_verdict(videos, frames, selected),

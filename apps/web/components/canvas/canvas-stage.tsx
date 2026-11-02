@@ -615,6 +615,42 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         void attemptGeneration({ operationId: request.operation_id, label: "这一镜", task: (transport) => transport.regenerate(shotId, request) })
           .finally(() => { generationLocks.current.delete(lockKey); busyRef.current = null; if (mountedRef.current) setBusyShot(null); });
       },
+      dubShot: (shotId: string, text?: string) => {
+        const lockKey = `voice:${shotId}`;
+        if (generationLocks.current.has(lockKey)) return;
+        generationLocks.current.add(lockKey);
+        const operationId = crypto.randomUUID();
+        busyRef.current = shotId;
+        setBusyShot(shotId);
+        void attemptGeneration({
+          operationId,
+          label: "这一镜的配音",
+          task: (transport) => transport.generateVoiceover(shotId, { text, operation_id: operationId }),
+        }).finally(() => {
+          generationLocks.current.delete(lockKey);
+          busyRef.current = null;
+          if (mountedRef.current) setBusyShot(null);
+        });
+      },
+      composeFilm: async () => {
+        const client = clientRef.current;
+        if (!client) return;
+        setFilmRunning(true);
+        try {
+          await enqueue(() => client.composeFilm(), "adopt");
+        } catch (error) {
+          if (mountedRef.current) {
+            setFilmRunning(false);
+            setNoticeTone("danger");
+            setNotice(error instanceof Error ? error.message : "合成没成功，原成片已保留");
+          }
+          return;
+        }
+        if (!mountedRef.current) return;
+        setFilmRunning(false);
+        setNoticeTone("neutral");
+        setNotice("已重新合成，去「成片」页播放或导出");
+      },
       editWords: (shotId: string) => {
         setSelectedIds([shotId]);
         setFocus({ shotId, field: "narration", nonce: Date.now() });
@@ -1024,6 +1060,7 @@ export function CanvasStage({ projectId }: { projectId: string }) {
         </div>
       ) : null}
       <TimelineTrack
+        onCompose={actions.composeFilm}
         doc={doc}
         busy={busyShot !== null}
         onCommit={(clips) => {
