@@ -83,7 +83,14 @@ def create_session(
     """
 
     del body
-    if live_mode() and not admin_secret_matches(request.headers.get("x-hilatv-admin-secret", "")):
+    import os
+
+    public_ok = os.getenv("HILATV_ALLOW_PUBLIC_SESSION", "0").strip() == "1"
+    if (
+        live_mode()
+        and not public_ok
+        and not admin_secret_matches(request.headers.get("x-hilatv-admin-secret", ""))
+    ):
         raise HTTPException(status_code=403, detail="live 模式不能公开注册企业")
     identity = open_session()
     return {
