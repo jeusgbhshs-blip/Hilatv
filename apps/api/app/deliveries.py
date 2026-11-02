@@ -222,7 +222,7 @@ def share_version(
         "token": token,
         "expires_at": expires_at,
         "delivery_status": version["delivery_status"],
-        "download_allowed": version["delivery_status"] == "ready",
+        "download_allowed": version["delivery_status"] in {"ready", "internal"},
         "owner_preview_path": version["preview_path"],
         "message": "分享原件需通过正式交付核验；项目成员可登录预览",
     }

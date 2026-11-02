@@ -14,6 +14,12 @@ from typing import Any
 FRAME_AUDIO_STATUS = "画面/声音未审"
 
 
+def internal_delivery() -> bool:
+    """内部使用模式：跳过内容安全门（仅审核项），AI 标识/极限词/授权仍生效。"""
+
+    return os.getenv("HILATV_INTERNAL_DELIVERY", "0").strip() == "1"
+
+
 def live_mode() -> bool:
     return os.getenv("HILATV_LIVE", "0").strip() == "1"
 

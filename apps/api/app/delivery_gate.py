@@ -55,7 +55,10 @@ def media_response(
         view = readiness(assessed, state, media)
         if expected_hash is not None and view.get("media_hash") != expected_hash:
             raise HTTPException(status_code=410, detail="分享的文件已更新，请负责人重新创建链接")
-        if not preview and view["delivery_status"] != "ready":
+        internal_download = (
+            view["delivery_status"] == "internal" and view.get("internal_only") is True
+        )
+        if not preview and view["delivery_status"] != "ready" and not internal_download:
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -79,6 +82,7 @@ def media_response(
             "X-Content-Type-Options": "nosniff",
             "ETag": f'"{view["media_hash"]}"',
             "X-HiLatv-Media-Status": str(view["delivery_status"]),
+            "X-HiLatv-Internal-Only": "1" if view.get("internal_only") else "0",
         },
     )
 

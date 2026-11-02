@@ -334,11 +334,19 @@ def readiness(
             else "needs_verification"
         )
     )
+    internal = False
+    if not passed and info.get("preview_available"):
+        from workers.compliance.moderation import internal_delivery
+
+        if internal_delivery():
+            status = "internal"
+            internal = True
     return {
         **info,
         "delivery_status": status,
         "media_provenance": provenance,
         "quality_pass": passed,
+        "internal_only": internal,
         "reasons": reasons,
     }
 

@@ -181,5 +181,23 @@ def _review(
         raise QAError(str(exc)) from exc
     if result.payload.get("passed") is not True:
         reasons = result.payload.get("block_reasons") or ["compliance review failed"]
+        from workers.compliance.moderation import classify, internal_delivery, reason_for
+
+        moderation_kind = str(result.payload.get("moderation") or "")
+        moderation_reason = reason_for(moderation_kind, result.payload.get("content_safety"))
+        # 内部使用模式只放行内容审核这一项；极限词、授权等仍然拦截。
+        only_moderation = all(str(item) == moderation_reason for item in reasons)
+        if internal_delivery() and only_moderation:
+            from workers.logging import log_event
+
+            log_event(
+                "internal_delivery_override",
+                project_id=project_id,
+                node="n17_deliver",
+                stage=stage,
+                moderation=classify(result.payload.get("content_safety")),
+                reasons=reasons,
+            )
+            return {**result.payload, "passed": True, "internal_only": True}
         raise QAError("; ".join(str(item) for item in reasons))
     return result.payload
