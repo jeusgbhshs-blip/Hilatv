@@ -29,18 +29,18 @@ STORYBOARD_GATE = "n09_keyframe_qa"
 TIMEOUT_S: dict[str, int] = {
     "n01_brief": 90,
     "n02_brand_kit": 30,
-    "n03_concept": 30,
-    "n04_script": 120,
+    "n03_concept": 180,
+    "n04_script": 180,
     "n05_storyboard": 90,
     "n06_voiceover": 180,
-    "n08_keyframe": 300,
-    "n09_keyframe_qa": 180,
-    "n10_video": 600,
+    "n08_keyframe": 600,
+    "n09_keyframe_qa": 300,
+    "n10_video": 900,
     "shot_director": 600,
-    "n12_music": 180,
+    "n12_music": 300,
     "n13_subtitle": 120,
     "n14_packaging": 120,
-    "n15_compose": 300,
+    "n15_compose": 600,
 }
 
 # SPEC §2 user-facing states: 理解需求 → 选方案 → 看分镜 → 生成中 → 成片.

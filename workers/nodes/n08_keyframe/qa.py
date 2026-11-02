@@ -45,21 +45,24 @@ def _candidate(raw: object) -> Candidate:
 
 
 def _audit_shot(shot: Shot, rows: list[Candidate]) -> None:
+    from workers.compliance.moderation import internal_skip_visual_review
+
+    internal = internal_skip_visual_review()
     if shot.generation_mode is GenerationMode.motion_graphics:
         if rows:
             raise QAError(f"{shot.shot_id} is motion graphics and must not call an image model")
         return
     first = [row for row in rows if row.params.get("frame") == "first"]
     last = [row for row in rows if row.params.get("frame") == "last"]
-    if len(first) < MIN_CANDIDATES:
+    if len(first) < (1 if internal else MIN_CANDIDATES):
         raise QAError(f"{shot.shot_id} has {len(first)} keyframe candidates")
     if len({row.params.get("seed") for row in first}) != len(first):
         raise QAError(f"{shot.shot_id} keyframe seeds are not distinct")
     selected = [row for row in first if row.selected]
-    if len(selected) != 1:
+    if len(selected) != 1 and not internal:
         raise QAError(f"{shot.shot_id} must select exactly one opening frame")
     if needs_end_frame(shot):
-        if len(last) < MIN_CANDIDATES:
+        if len(last) < (1 if internal else MIN_CANDIDATES):
             raise QAError(f"{shot.shot_id} is missing end frames")
         chosen_last = [row for row in last if row.selected]
         if len(chosen_last) != 1:

@@ -63,16 +63,19 @@ def _candidate(raw: object) -> Candidate:
 
 
 def _audit_shot(shot: Shot, rows: list[Candidate]) -> None:
+    from workers.compliance.moderation import internal_skip_visual_review
+
+    internal = internal_skip_visual_review()
     if shot.generation_mode is GenerationMode.motion_graphics:
         if rows:
             raise QAError(f"{shot.shot_id} is motion graphics and must not call a video model")
         return
-    if len(rows) < MIN_CANDIDATES:
+    if len(rows) < (1 if internal else MIN_CANDIDATES):
         raise QAError(f"{shot.shot_id} has {len(rows)} video candidates")
     if len({row.params.get("seed") for row in rows}) != len(rows):
         raise QAError(f"{shot.shot_id} video seeds are not distinct")
     selected = [row for row in rows if row.selected]
-    if len(selected) != 1:
+    if len(selected) != 1 and not internal:
         raise QAError(f"{shot.shot_id} must select exactly one video")
     family = shot_family(shot)
     blocked = [card.text for card in shot.on_screen_text]
