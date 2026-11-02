@@ -312,3 +312,184 @@ def _decimal(value: object) -> Decimal:
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+class VolcTtsV3Adapter:
+    """豆包语音合成 2.0（新版控制台 API Key，HTTP Chunked 单向流式）。
+
+    官方接口：POST https://openspeech.bytedance.com/api/v3/tts/unidirectional
+    鉴权头：X-Api-Key + X-Api-Resource-Id: seed-tts-2.0。
+    返回是逐行 JSON，音频数据在 data 字段（base64 PCM）；结束包 code=20000000。
+    """
+
+    provider = "volc_tts_v3"
+    billable = True
+    tasks = frozenset({"tts"})
+
+    def __init__(
+        self,
+        *,
+        base_url: str = "https://openspeech.bytedance.com",
+        resource_id: str = "seed-tts-2.0",
+        default_voice: str = "zh_female_vv_uranus_bigtts",
+        key_fn: Callable[[], str] | None = None,
+        speaker_fn: Callable[[], str] | None = None,
+        store: ObjectStore | None = None,
+        transport: httpx.BaseTransport | None = None,
+        pricing: Pricing | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.resource_id = resource_id
+        self.default_voice = default_voice
+        self.key_fn = key_fn
+        self.speaker_fn = speaker_fn
+        self.store = store
+        self.transport = transport
+        self._pricing = pricing
+
+    def available(self) -> bool:
+        return bool(self._key().strip() and self._speaker().strip())
+
+    def cost_upper_bound(self, call: Invocation, pricing: Any) -> Decimal | None:
+        return pricing.upper_bound(call.model, call.prompt, task=call.task, params={})
+
+    def invoke(self, call: Invocation) -> AdapterResult:
+        if self.store is None:
+            raise AdapterError("object store is not configured")
+        key = self._key().strip()
+        speaker = _v3_voice(call, self._speaker() or self.default_voice)
+        if not key or not speaker:
+            raise AdapterError("volc tts v3 api key or speaker is empty")
+        text = call.prompt.strip()
+        if not text:
+            raise AdapterError("tts text is empty")
+        sample_rate = 24000
+        body = {
+            "user": {"uid": call.project_id or "hilatv"},
+            "namespace": "BidirectionalTTS",
+            "req_params": {
+                "text": text,
+                "speaker": speaker,
+                "audio_params": {"format": "pcm", "sample_rate": sample_rate},
+            },
+        }
+        headers = {
+            "X-Api-Key": key,
+            "X-Api-Resource-Id": self.resource_id,
+            "X-Api-Request-Id": uuid4().hex,
+            "X-Control-Require-Usage-Tokens-Return": "*",
+            "Content-Type": "application/json",
+        }
+        chunks: list[bytes] = []
+        words: list[tuple[str, float, float]] = []
+        usage: dict[str, Any] = {}
+        timeout = httpx.Timeout(call.timeout_s)
+        try:
+            with httpx.Client(timeout=timeout, transport=self.transport) as client:
+                with client.stream(
+                    "POST",
+                    f"{self.base_url}/api/v3/tts/unidirectional",
+                    headers=headers,
+                    json=body,
+                ) as response:
+                    if response.status_code != 200:
+                        detail = response.read()[:240].decode("utf-8", "replace")
+                        raise AdapterError(f"volc tts v3 HTTP {response.status_code}: {detail}")
+                    for line in response.iter_lines():
+                        if not line.strip():
+                            continue
+                        try:
+                            item = json.loads(line)
+                        except json.JSONDecodeError:
+                            continue
+                        code = item.get("code")
+                        if code not in (0, 20000000) and code is not None:
+                            raise AdapterError(f"volc tts v3 failed: {item.get('message') or code}")
+                        payload = item.get("data")
+                        if isinstance(payload, str) and payload:
+                            chunks.append(decode_b64(payload))
+                        sentence = item.get("sentence")
+                        if isinstance(sentence, dict):
+                            words.extend(_sentence_words(sentence))
+                        if isinstance(item.get("usage"), dict):
+                            usage = dict(item["usage"])
+        except httpx.HTTPError as exc:
+            raise AdapterError(f"volc tts v3 request failed: {exc}") from exc
+        if not chunks:
+            raise AdapterError("volc tts v3 returned no audio")
+        raw = _pcm_to_wav(b"".join(chunks), sample_rate)
+        uri = self.store.put(f"gateway/tts/{uuid4().hex}.wav", raw, "audio/wav")
+        receipt = AdapterResult(
+            provider=self.provider,
+            model=call.model,
+            output={},
+            cost_cny=_decimal(price_media(self._pricing_table(), call, usage)),
+            usage={"characters": len(text)},
+        )
+        receipt.output = {
+            "mock": False,
+            "task": "tts",
+            "uri": uri,
+            "mime_type": "audio/wav",
+            "text": text,
+            "voice": speaker,
+            "seed": call.seed,
+            "duration_s": round(len(raw) / (sample_rate * 2), 3),
+            "timestamps": _v3_timestamps(words),
+        }
+        return receipt
+
+    def _key(self) -> str:
+        return (self.key_fn() if self.key_fn else "") or ""
+
+    def _speaker(self) -> str:
+        return (self.speaker_fn() if self.speaker_fn else "") or ""
+
+    def _pricing_table(self) -> Pricing:
+        if self._pricing is None:
+            self._pricing = Pricing.load()
+        return self._pricing
+
+
+def _v3_voice(call: Invocation, fallback: str) -> str:
+    voice = call.params.get("voice")
+    return str(voice) if isinstance(voice, str) and voice.strip() else fallback
+
+
+def _sentence_words(sentence: dict[str, Any]) -> list[tuple[str, float, float]]:
+    raw = sentence.get("words")
+    if not isinstance(raw, list):
+        return []
+    items: list[tuple[str, float, float]] = []
+    for word in raw:
+        if not isinstance(word, dict):
+            continue
+        start = word.get("startTime", word.get("start_time", word.get("start_s")))
+        end = word.get("endTime", word.get("end_time", word.get("end_s")))
+        if start is None or end is None:
+            continue
+        items.append((str(word.get("word") or word.get("text") or ""), float(start), float(end)))
+    return items
+
+
+def _v3_timestamps(words: list[tuple[str, float, float]]) -> list[dict[str, Any]]:
+    if not words:
+        return []
+    scale = 0.001 if max(end for _text, _start, end in words) > 120 else 1.0
+    return [
+        {"text": text, "start_s": round(start * scale, 3), "end_s": round(end * scale, 3)}
+        for text, start, end in words
+    ]
+
+
+def _pcm_to_wav(pcm: bytes, sample_rate: int) -> bytes:
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(sample_rate)
+        handle.writeframes(pcm)
+    return buffer.getvalue()

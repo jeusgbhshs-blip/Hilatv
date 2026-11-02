@@ -15,7 +15,7 @@ from gateway.adapters.openai_compat import OpenAICompatAdapter
 from gateway.adapters.seedance import SeedanceAdapter
 from gateway.adapters.seedream import SeedreamAdapter
 from gateway.adapters.volc_asr import VolcAsrAdapter
-from gateway.adapters.volc_tts import VolcTtsAdapter
+from gateway.adapters.volc_tts import VolcTtsAdapter, VolcTtsV3Adapter
 from gateway.constants import (
     ARK_BASE_URL,
     DASHSCOPE_BASE_URL,
@@ -100,6 +100,17 @@ def build_registry(
             cluster=os.getenv("VOLC_TTS_CLUSTER", "volcano_tts").strip() or "volcano_tts",
             default_voice=os.getenv("VOLC_TTS_VOICE", DEFAULT_TTS_VOICE).strip()
             or DEFAULT_TTS_VOICE,
+            store=media_store,
+            transport=transport,
+        ),
+        "volc_tts_v3": VolcTtsV3Adapter(
+            base_url=os.getenv("VOLC_TTS_V3_BASE_URL", "https://openspeech.bytedance.com"),
+            resource_id=os.getenv("VOLC_TTS_V3_RESOURCE_ID", "seed-tts-2.0").strip()
+            or "seed-tts-2.0",
+            default_voice=os.getenv("VOLC_TTS_V3_SPEAKER", "").strip()
+            or "zh_female_vv_uranus_bigtts",
+            key_fn=lambda: os.getenv("VOLC_TTS_V3_API_KEY", ""),
+            speaker_fn=lambda: os.getenv("VOLC_TTS_V3_SPEAKER", ""),
             store=media_store,
             transport=transport,
         ),

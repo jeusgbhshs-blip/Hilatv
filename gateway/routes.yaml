@@ -96,6 +96,18 @@ routes:
     fallbacks:
       - {provider: mock, model: mock-video}
 
+  # 新版控制台（API Key）走 V3 单向流式；没有 V3 Key 时退回旧版 HTTP 适配器。
+  # 旧版适配器默认禁用；本路由只按可用性自动回落，不改变 mock 作为最终兜底。
+  - id: tts-v3
+    task: tts
+    shot_type: "*"
+    language: "*"
+    timeout_s: 60
+    primary: {provider: volc_tts_v3, model: seed-tts-1.0}
+    fallbacks:
+      - {provider: volc_tts, model: seed-tts-1.0}
+      - {provider: mock, model: mock-tts}
+
   - id: tts-default
     task: tts
     shot_type: "*"
