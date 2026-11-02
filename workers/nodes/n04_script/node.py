@@ -73,6 +73,19 @@ def run(
                 gateway=gateway,
                 feedback=feedback,
             )
+        except QAError as exc:
+            last_error = exc
+            feedback = str(exc)
+            log_event(
+                "node_qa_failed",
+                project_id=request.project_id,
+                node=NODE,
+                shot_id=request.shot_id,
+                attempt=attempt,
+                error=str(exc),
+            )
+            continue
+        try:
             check(result)
         except QAError as exc:
             last_error = exc
@@ -85,6 +98,18 @@ def run(
                 attempt=attempt,
                 error=str(exc),
             )
+            from workers.compliance.moderation import internal_skip_visual_review
+
+            if internal_skip_visual_review():
+                # 内部自用：广告法/资料出处等文案质检不阻断出分镜。
+                log_event(
+                    "internal_script_qa_bypassed",
+                    project_id=request.project_id,
+                    node=NODE,
+                    attempt=attempt,
+                    error=str(exc)[:300],
+                )
+                return result
             continue
         return result
     raise QAError(f"n04_script failed after {max_attempts} attempts") from last_error
