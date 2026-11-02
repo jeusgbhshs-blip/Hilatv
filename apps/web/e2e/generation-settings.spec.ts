@@ -56,6 +56,7 @@ for (const theme of ["light", "dark"]) {
     await expect(ratioDialog.getByRole("radio", { name: "16:9", exact: true })).toBeChecked();
     await ratioDialog.getByRole("radio", { name: "9:16", exact: true }).check();
     await expect(ratioDialog.getByRole("radio", { name: "4:3", exact: true })).toBeVisible();
+    expect(await ratioDialog.getByTestId("common-ratios").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length)).toBe(2);
     const touch = await ratioDialog.getByRole("radio", { name: "9:16", exact: true }).evaluate((input) => input.closest("label")!.getBoundingClientRect().toJSON());
     expect(touch.width).toBeGreaterThanOrEqual(44); expect(touch.height).toBeGreaterThanOrEqual(44);
     await page.keyboard.press("Escape");
@@ -89,6 +90,15 @@ for (const theme of ["light", "dark"]) {
     await page.goto("/");
     await expect(page.getByRole("button", { name: "时长 · 60 秒", exact: true })).toBeEnabled();
     await page.getByRole("button", { name: "时长 · 60 秒", exact: true }).click();
+    await page.getByText("自定义时长", { exact: true }).click();
+    const customDuration = page.getByLabel("自定义时长（5–180 秒）", { exact: true });
+    await customDuration.fill("17"); await page.keyboard.press("Enter");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("button", { name: "时长 · 17 秒", exact: true })).toBeFocused();
+    await page.getByRole("button", { name: "时长 · 17 秒", exact: true }).click();
+    await expect(customDuration).toBeFocused();
+    await expect(customDuration).toBeVisible();
+    await expect(customDuration).toHaveValue("17");
     await page.getByLabel("自定义时长（5–180 秒）", { exact: true }).fill("181"); await page.keyboard.press("Enter");
     await expect(page.getByRole("alert")).toContainText("5 到 180");
     expect(fixture.filmStarts).toEqual([]);
@@ -96,3 +106,17 @@ for (const theme of ["light", "dark"]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
   });
 }
+
+test("desktop ratio choices use four columns in the standard dialog width", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await stubDraft(page, "light");
+  await page.goto("/");
+  await page.getByRole("button", { name: "比例 · 自动", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "画面比例" });
+  const box = await dialog.boundingBox();
+  expect(box?.width).toBe(480);
+  expect(await dialog.getByTestId("common-ratios").evaluate((grid) => getComputedStyle(grid).gridTemplateColumns.split(" ").length)).toBe(4);
+  await expect(dialog.getByRole("radio", { name: "自动", exact: true })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("button", { name: "比例 · 自动", exact: true })).toBeFocused();
+});
