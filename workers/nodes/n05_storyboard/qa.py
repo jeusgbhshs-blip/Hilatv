@@ -58,6 +58,9 @@ def audit_storyboard(
     for index in range(len(sizes) - 2):
         if sizes[index] == sizes[index + 1] == sizes[index + 2]:
             raise QAError("three identical shot sizes in a row")
+    # 景别多元化：至少覆盖 3 种景别（远/全/中/近/特中的三种），短片的 1–2 镜除外。
+    if len(sizes) >= 3 and len(set(sizes)) < 3:
+        raise QAError("shot sizes are not diverse")
     seen_product = False
     banned = banned_for(brand)
     allowed = invented_source(brief, brand)

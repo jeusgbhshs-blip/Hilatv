@@ -1,6 +1,7 @@
 id: detail_drift
 label: 细节缓移
 shot_sizes:
+  - extreme_close_up
   - close_up
 purposes:
   - selling_point

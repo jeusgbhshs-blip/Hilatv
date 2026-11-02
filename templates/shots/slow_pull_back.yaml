@@ -1,6 +1,7 @@
 id: slow_pull_back
 label: 缓慢拉远
 shot_sizes:
+  - full
   - medium
   - wide
 purposes:

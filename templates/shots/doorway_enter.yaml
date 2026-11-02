@@ -1,6 +1,7 @@
 id: doorway_enter
 label: 进门落幅
 shot_sizes:
+  - full
   - wide
   - medium
 purposes:

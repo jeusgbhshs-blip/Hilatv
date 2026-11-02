@@ -1,6 +1,7 @@
 id: demo_push
 label: 演示推近
 shot_sizes:
+  - extreme_close_up
   - medium
   - close_up
 purposes:

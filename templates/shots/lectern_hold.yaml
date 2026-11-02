@@ -1,6 +1,7 @@
 id: lectern_hold
 label: 讲师固定
 shot_sizes:
+  - full
   - medium
 purposes:
   - person

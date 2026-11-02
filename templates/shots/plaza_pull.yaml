@@ -1,6 +1,7 @@
 id: plaza_pull
 label: 广场拉远
 shot_sizes:
+  - full
   - wide
   - medium
 purposes:

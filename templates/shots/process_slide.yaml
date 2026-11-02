@@ -1,6 +1,7 @@
 id: process_slide
 label: 流程平移
 shot_sizes:
+  - full
   - wide
   - medium
 purposes:

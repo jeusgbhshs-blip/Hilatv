@@ -1,6 +1,7 @@
 id: ambient_pan
 label: 氛围横摇
 shot_sizes:
+  - full
   - wide
 purposes:
   - proof

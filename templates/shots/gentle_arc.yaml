@@ -1,6 +1,7 @@
 id: gentle_arc
 label: 小幅环绕
 shot_sizes:
+  - extreme_close_up
   - medium
   - close_up
 purposes:

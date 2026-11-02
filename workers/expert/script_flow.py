@@ -51,11 +51,22 @@ def build_storyboard(
         state.update(patch)
 
     shots = (state.get("script") or {}).get("shots") or []
+    summaries = [
+        {
+            "shot_id": str(shot.get("shot_id") or ""),
+            "order": int(shot.get("order") or index + 1),
+            "purpose": str(shot.get("purpose") or ""),
+        }
+        for index, shot in enumerate(shots)
+        if isinstance(shot, dict)
+    ]
+    state["shot_summaries"] = summaries
     update_snapshot(
         project_id,
         status="draft",
         phase="看分镜",
         message=f"分镜已生成：{len(shots)} 个镜头",
+        shots=summaries,
     )
     log_event(
         "canvas_storyboard",

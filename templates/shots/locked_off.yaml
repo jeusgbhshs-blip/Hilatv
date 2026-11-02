@@ -1,6 +1,7 @@
 id: locked_off
 label: 固定机位
 shot_sizes:
+  - full
   - medium
   - close_up
 purposes:

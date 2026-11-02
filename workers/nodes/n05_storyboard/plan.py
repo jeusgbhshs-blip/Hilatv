@@ -22,6 +22,8 @@ from workers.schemas.script import (
 )
 
 PROMO_TYPES = {"product_showcase", "factory_strength", "brand_film", "corporate"}
+# 景别阶梯：远景 → 全景 → 中景 → 近景 → 特写（用户要求多元景别）
+_SIZE_LADDER = ("wide", "full", "medium", "close_up", "extreme_close_up")
 PROMO_RANGE = (4.0, 8.0)
 SHORT_RANGE = (2.0, 6.0)
 
@@ -117,7 +119,11 @@ def plan_shots(
     language = script.language
     clips = _clips_from_sections(script)
     minimum, maximum, lo, hi = shot_bounds(duration, promo=is_promo(brief))
-    count = min(maximum, max(minimum, len(clips)))
+    # 镜头数由片长推出来，不再固定成 5 个：按平均每镜 3.2 秒（宣传片 5 秒）估算，
+    # 再夹在 N5 允许的区间内。脚本段落会被合并/拆分以匹配这个数量。
+    average_s = 5.0 if is_promo(brief) else 3.2
+    target = max(1, round(duration / average_s))
+    count = min(maximum, max(minimum, target))
     clips = _fit_count(clips, count, language)
     _apply_people(clips, brief, brand)
     sizes = _assign_sizes(clips)
@@ -318,33 +324,48 @@ def _wants_person(brief: Brief, people: list[object]) -> bool:
 
 
 def _assign_sizes(clips: list[Clip]) -> list[str]:
+    """把景别阶梯均匀铺到镜头上，保证远/全/中/近/特都会出现。"""
+
+    count = len(clips)
+    if count == 1:
+        sizes = ["medium"]
+    else:
+        sizes = [_SIZE_LADDER[(index * len(_SIZE_LADDER)) // count] for index in range(count)]
+    # 角色约束：结尾行动号召用中景；开场钩子（>=3 镜时）用远景；产品首次出现用近景。
+    for index, clip in enumerate(clips):
+        if clip.role == "cta":
+            sizes[index] = "medium"
+        if index == 0 and clip.role == "hook" and count >= 3:
+            sizes[index] = "wide"
     product_index = next(
         (index for index, clip in enumerate(clips) if clip.role == "selling_point"),
         None,
     )
-    sizes: list[str] = []
-    sell_n = 0
-    for index, clip in enumerate(clips):
-        first_product = index == product_index
-        sizes.append(_preferred_size(clip.role, sell_n, first_product=first_product))
-        if clip.role == "selling_point":
-            sell_n += 1
+    if product_index is not None:
+        sizes[product_index] = "close_up"
+    _ensure_diverse(sizes, locked=product_index)
     _repair_sizes(sizes, locked=product_index)
     return sizes
 
 
-def _preferred_size(role: str, sell_n: int, *, first_product: bool) -> str:
-    if first_product:
-        return "close_up"
-    if role == "selling_point":
-        return "medium" if sell_n % 2 else "close_up"
-    if role in {"person", "spec", "cta"}:
-        return "medium"
-    return "wide"
+def _ensure_diverse(sizes: list[str], *, locked: int | None) -> None:
+    """至少覆盖 3 种景别；角色约束可能把镜头压成同一种，这里兜底补开。"""
+
+    if len(sizes) < 3 or len(set(sizes)) >= 3:
+        return
+    options = [item for item in _SIZE_LADDER if item != sizes[0]]
+    cursor = 0
+    for index in range(1, len(sizes)):
+        if index == locked:
+            continue
+        sizes[index] = options[cursor % len(options)]
+        cursor += 1
+        if len(set(sizes)) >= 3:
+            return
 
 
 def _repair_sizes(sizes: list[str], *, locked: int | None) -> None:
-    options = ("wide", "medium", "close_up")
+    options = _SIZE_LADDER
     for _ in range(len(sizes) + 1):
         changed = False
         for index in range(2, len(sizes)):
@@ -353,6 +374,8 @@ def _repair_sizes(sizes: list[str], *, locked: int | None) -> None:
             changed = True
             choices = [item for item in options if item != sizes[index]]
             if index == locked:
+                choices = [item for item in choices if item in {"medium", "close_up"}]
+            elif index - 1 == locked:
                 choices = [item for item in choices if item != "wide"]
             if choices:
                 sizes[index] = choices[0]

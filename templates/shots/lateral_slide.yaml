@@ -1,6 +1,7 @@
 id: lateral_slide
 label: 横向平移
 shot_sizes:
+  - full
   - wide
 purposes:
   - proof
