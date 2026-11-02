@@ -380,7 +380,11 @@ class VolcTtsV3Adapter:
             "req_params": {
                 "text": text,
                 "speaker": speaker,
-                "audio_params": {"format": "pcm", "sample_rate": sample_rate},
+                "audio_params": {
+                    "format": "pcm",
+                    "sample_rate": sample_rate,
+                    "enable_subtitle": True,
+                },
             },
         }
         headers = {
