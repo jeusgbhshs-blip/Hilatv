@@ -431,7 +431,16 @@ class VolcTtsV3Adapter:
             raise AdapterError(f"volc tts v3 request failed: {exc}") from exc
         if not chunks:
             raise AdapterError("volc tts v3 returned no audio")
-        raw = _pcm_to_wav(b"".join(chunks), sample_rate)
+        # N06 的时长校验会把「字级末尾 + 停顿」当成这一条配音的真实时长；
+        # 旧版引擎会在音频里补停顿，V3 不会，所以这里按 pause_s 补静音。
+        try:
+            pause_s = max(0.0, float(call.params.get("pause_s") or 0.0))
+        except (TypeError, ValueError):
+            pause_s = 0.0
+        pcm = b"".join(chunks)
+        if pause_s > 0:
+            pcm += b"\x00\x00" * int(round(sample_rate * pause_s))
+        raw = _pcm_to_wav(pcm, sample_rate)
         uri = self.store.put(f"gateway/tts/{uuid4().hex}.wav", raw, "audio/wav")
         receipt = AdapterResult(
             provider=self.provider,
@@ -448,7 +457,7 @@ class VolcTtsV3Adapter:
             "text": text,
             "voice": speaker,
             "seed": call.seed,
-            "duration_s": round(len(raw) / (sample_rate * 2), 3),
+            "duration_s": round(len(pcm) / (sample_rate * 2), 3),
             "timestamps": _v3_timestamps(words),
         }
         return receipt
