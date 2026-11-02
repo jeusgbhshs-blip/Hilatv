@@ -7,6 +7,7 @@ import pytest
 from workers.expert.gates import GateError
 from workers.expert.script_edit import (
     add_shot,
+    bind_reference,
     delete_shot,
     load_script,
     patch_shot,
@@ -109,5 +110,17 @@ def test_meta_and_guards(project: str) -> None:
         patch_shot(project, "NOPE", {"visual": "x"})
     with pytest.raises(GateError):
         reorder_shots(project, ["S01"])
+
+
+def test_bind_reference_and_script_text(project: str) -> None:
+    bound = bind_reference(project, "S01", "first_frame", "upload-abc")
+    assert bound["shots"][0]["ext"]["reference"]["first_frame"] == "upload-abc"
+    with pytest.raises(GateError):
+        bind_reference(project, "S01", "unknown-slot", "upload-abc")
+    with pytest.raises(GateError):
+        bind_reference(project, "NOPE", "first_frame", "upload-abc")
+
+    updated = update_meta(project, {"script_text": "第一场：老板深夜加班。\n第二场：点开链接。"})
+    assert "第一场" in updated["meta"]["script_text"]
     with pytest.raises(GateError):
         patch_shot(project, "S01", {"revision": 999, "visual": "x"})

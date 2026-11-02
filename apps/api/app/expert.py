@@ -28,6 +28,7 @@ from workers.expert.node_generate import generate_node
 from workers.expert.rerun import rerun_span, save_timeline, select_candidate
 from workers.expert.script_edit import (
     add_shot,
+    bind_reference,
     delete_shot,
     load_script,
     patch_shot,
@@ -618,3 +619,75 @@ def project_script_generate_shot(
             },
         )
     )
+
+
+@router.post("/v1/projects/{project_id}/script/shots/{shot_id}/reference")
+def project_script_bind_reference(
+    project_id: str,
+    shot_id: str,
+    body: dict,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    upload_id = body.get("upload_id")
+    slot = body.get("slot") or "first_frame"
+    if not isinstance(upload_id, str) or not upload_id:
+        raise HTTPException(status_code=422, detail="缺少参考图标识")
+    if not isinstance(slot, str):
+        raise HTTPException(status_code=422, detail="参考图槽位不对")
+    try:
+        resolve_upload(upload_id, enterprise_id=identity.enterprise_id)
+    except GateError as exc:
+        raise _gate(exc) from exc
+    return _call(lambda: bind_reference(project_id, shot_id, slot, upload_id))
+
+
+@router.post("/v1/projects/{project_id}/script/generate")
+def project_script_generate_batch(
+    project_id: str,
+    body: dict,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    """按分镜表批量重生成（逐镜串行，遇到预算不足就停）。"""
+
+    _owned(project_id, identity)
+    shot_ids = body.get("shot_ids")
+    if (
+        not isinstance(shot_ids, list)
+        or not shot_ids
+        or not all(isinstance(item, str) for item in shot_ids)
+    ):
+        raise HTTPException(status_code=422, detail="要传镜头编号列表")
+    if len(shot_ids) > 8:
+        raise HTTPException(status_code=422, detail="一次最多批量 8 个镜头")
+    results: list[dict] = []
+    for shot_id in shot_ids:
+        entry: dict = {"shot_id": shot_id, "ok": False}
+        try:
+            payload = load_script(project_id)
+            shot = next((item for item in payload["shots"] if item["shot_id"] == shot_id), None)
+            if shot is None:
+                entry["error"] = "没有这个镜头"
+            else:
+                reference = (shot.get("ext") or {}).get("reference") or {}
+                first_frame = reference.get("first_frame")
+                if isinstance(first_frame, str) and first_frame:
+                    set_reference(
+                        project_id, shot_id, first_frame, enterprise_id=identity.enterprise_id
+                    )
+                regenerate_shot(
+                    project_id,
+                    shot_id,
+                    {"narration": shot.get("voiceover") or "", "prompt_suffix": ""},
+                )
+                entry["ok"] = True
+        except BudgetExhausted as exc:
+            entry["error"] = str(exc)
+            results.append(entry)
+            break
+        except GateError as exc:
+            entry["error"] = str(exc)
+        except Exception as exc:  # noqa: BLE001 - 批量里单镜失败不拖垮其它镜头
+            entry["error"] = str(exc)[:200]
+        results.append(entry)
+    return {"project_id": project_id, "results": results}

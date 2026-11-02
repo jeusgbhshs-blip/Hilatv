@@ -192,14 +192,15 @@ def update_meta(project_id: str, body: dict[str, Any]) -> dict[str, Any]:
         _guard(snapshot)
         ext = _read_ext(project_id)
         meta = dict(ext.get("meta") or {})
-        allowed = {"title", "genre", "style_bible", "aspect_ratio", "language"}
+        allowed = {"title", "genre", "style_bible", "aspect_ratio", "language", "script_text"}
         for key in allowed:
             if key in body:
                 value = body[key]
                 if value is None or str(value).strip() == "":
                     meta.pop(key, None)
                 else:
-                    meta[key] = str(value).strip()[:120]
+                    limit = 20000 if key == "script_text" else 120
+                    meta[key] = str(value).strip()[:limit]
         if meta.get("style_bible") not in STYLE_WORDS:
             meta["style_bible"] = meta.get("style_bible") or "写实电影感"
         ext["meta"] = meta
@@ -286,6 +287,30 @@ def patch_shot(project_id: str, shot_id: str, body: dict[str, Any]) -> dict[str,
             (ext.setdefault("shots", {}))[shot_id] = current
         script["shots"] = rows
         _save_script(project_id, script)
+        ext["revision"] = int(ext.get("revision") or 0) + 1
+        _write_ext(project_id, ext)
+    return _public(project_id)
+
+
+def bind_reference(project_id: str, shot_id: str, slot: str, upload_id: str) -> dict[str, Any]:
+    """给这一镜绑定参考图槽位（首帧/角色卡/场景锚点）。"""
+
+    if slot not in {"first_frame", "role_sheet", "scene_anchor"}:
+        raise GateError("未知的参考图槽位", status=422)
+    if not valid_project_id(project_id) or read_snapshot(project_id) is None:
+        raise GateError("项目不存在", status=404)
+    with locked_project(project_id):
+        snapshot = read_snapshot(project_id) or {}
+        _guard(snapshot)
+        script = _script(project_id)
+        if not any(item.get("shot_id") == shot_id for item in script["shots"]):
+            raise GateError("没有这个镜头", status=404)
+        ext = _read_ext(project_id)
+        current = dict((ext.get("shots") or {}).get(shot_id) or {})
+        reference = dict(current.get("reference") or {})
+        reference[slot] = str(upload_id)
+        current["reference"] = reference
+        (ext.setdefault("shots", {}))[shot_id] = current
         ext["revision"] = int(ext.get("revision") or 0) + 1
         _write_ext(project_id, ext)
     return _public(project_id)

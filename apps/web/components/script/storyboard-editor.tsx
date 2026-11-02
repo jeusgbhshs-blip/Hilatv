@@ -51,6 +51,10 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, ShotRow>>({});
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [scriptText, setScriptText] = useState("");
+  const [scriptOpen, setScriptOpen] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError("");
@@ -61,6 +65,7 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
     }
     const payload = (await response.json()) as ScriptPayload;
     setScript(payload);
+    setScriptText(payload.meta.script_text ?? "");
     setDrafts(Object.fromEntries(payload.shots.map((shot) => [shot.shot_id, { ...shot }])));
   }, [projectId]);
 
@@ -104,6 +109,111 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
       setError(caught instanceof Error ? caught.message : "保存失败");
     } finally {
       setBusy(null);
+    }
+  }
+
+  function togglePick(shotId: string) {
+    setPicked((current) => {
+      const next = new Set(current);
+      if (next.has(shotId)) next.delete(shotId);
+      else next.add(shotId);
+      return next;
+    });
+  }
+
+  async function uploadReference(shotId: string, file: File) {
+    setBusy(`ref:${shotId}`);
+    try {
+      const form = new FormData();
+      form.append("file", file, file.name);
+      const uploaded = await apiFetch("/v1/uploads", { method: "POST", body: form });
+      if (!uploaded.ok) throw new Error(await errorMessage(uploaded));
+      const stored = (await uploaded.json()) as { upload_id?: string };
+      if (!stored.upload_id) throw new Error("上传结果缺少标识");
+      const bound = await apiFetch(
+        `/v1/projects/${encodeURIComponent(projectId)}/script/shots/${encodeURIComponent(shotId)}/reference`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ upload_id: stored.upload_id, slot: "first_frame" }),
+        },
+      );
+      if (!bound.ok) throw new Error(await errorMessage(bound));
+      await load();
+      setNotice("参考图已绑定到这一镜");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "参考图绑定失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function saveScriptText() {
+    setBusy("script");
+    try {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/script/meta`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...meta, script_text: scriptText }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await load();
+      setNotice("剧本已保存");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "剧本保存失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function rebuildStoryboard() {
+    if (!scriptText.trim()) {
+      setError("先把剧本写进文本框");
+      return;
+    }
+    setBusy("rebuild");
+    try {
+      const response = await apiFetch(
+        `/v1/projects/${encodeURIComponent(projectId)}/canvas/script`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sentence: scriptText.slice(0, 4000) }),
+        },
+      );
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await load();
+      setNotice("已按剧本重新生成分镜");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "重新分镜失败");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function generateBatch() {
+    const ids = Array.from(picked);
+    if (ids.length === 0) {
+      setError("先勾选要生成的镜头");
+      return;
+    }
+    setBatchBusy(true);
+    try {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/script/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shot_ids: ids }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const payload = (await response.json()) as { results?: { shot_id: string; ok: boolean }[] };
+      const ok = (payload.results ?? []).filter((item) => item.ok).length;
+      await load();
+      setNotice(`批量生成完成：成功 ${ok} / ${ids.length} 镜`);
+      setPicked(new Set());
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "批量生成失败");
+    } finally {
+      setBatchBusy(false);
     }
   }
 
@@ -248,6 +358,21 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
           <button
             type="button"
             className="rounded-full border border-border-strong px-3 py-1 text-caption text-text-1 hover:bg-hover"
+            onClick={() => setScriptOpen((open) => !open)}
+          >
+            剧本
+          </button>
+          <button
+            type="button"
+            className="rounded-full border border-border-strong px-3 py-1 text-caption text-text-1 hover:bg-hover"
+            onClick={() => void generateBatch()}
+            disabled={batchBusy}
+          >
+            {batchBusy ? "批量生成中…" : `批量生成选中（${picked.size}）`}
+          </button>
+          <button
+            type="button"
+            className="rounded-full border border-border-strong px-3 py-1 text-caption text-text-1 hover:bg-hover"
             onClick={() => void addShot()}
             disabled={busy === "add"}
           >
@@ -303,6 +428,38 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
         </label>
       </div>
 
+      {scriptOpen ? (
+        <div className="mt-3 grid gap-2 rounded-lg border border-border bg-surface p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-h3 font-medium">剧本</h2>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                className="rounded-full border border-border-strong px-3 py-1 text-caption text-text-1 hover:bg-hover"
+                onClick={() => void saveScriptText()}
+                disabled={busy === "script"}
+              >
+                保存剧本
+              </button>
+              <button
+                type="button"
+                className="rounded-full border border-border-strong px-3 py-1 text-caption text-text-1 hover:bg-hover"
+                onClick={() => void rebuildStoryboard()}
+                disabled={busy === "rebuild"}
+              >
+                {busy === "rebuild" ? "重新分镜中…" : "按剧本重新出分镜"}
+              </button>
+            </div>
+          </div>
+          <textarea
+            className={`${FIELD_CLASS} min-h-40`}
+            placeholder="把故事或剧本贴进来：分场、人物、台词、动作都行"
+            value={scriptText}
+            onChange={(event) => setScriptText(event.target.value)}
+          />
+        </div>
+      ) : null}
+
       {error ? <p className="mt-3 text-caption text-danger">{error}</p> : null}
       {notice ? <p className="mt-3 text-caption text-blue-text">{notice}</p> : null}
 
@@ -337,6 +494,15 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
           <tbody>
             {shots.map((shot) => (
               <tr key={shot.shot_id} className="align-top">
+                <td className="border-b border-border py-2 pr-2">
+                  <input
+                    type="checkbox"
+                    aria-label={`选择第 ${shot.order} 镜`}
+                    checked={picked.has(shot.shot_id)}
+                    onChange={() => togglePick(shot.shot_id)}
+                    className="size-4 accent-[var(--blue-strong)]"
+                  />
+                </td>
                 <td className="border-b border-border py-2 pr-2 tabular text-text-2">{shot.order}</td>
                 <td className="border-b border-border py-2 pr-2">
                   <input
@@ -392,16 +558,24 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
                   />
                 </td>
                 <td className="border-b border-border py-2 pr-2">
-                  <input
-                    className={FIELD_CLASS}
-                    placeholder="首帧/角色卡/场景"
-                    value={shot.ext?.reference?.first_frame ?? ""}
-                    onChange={(event) =>
-                      updateExt(shot.shot_id, {
-                        reference: { ...(shot.ext?.reference ?? {}), first_frame: event.target.value },
-                      })
-                    }
-                  />
+                  <label className="inline-flex cursor-pointer flex-col gap-1 rounded-xs border border-border-strong px-2 py-1 text-text-1 hover:bg-hover">
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp"
+                      className="sr-only"
+                      aria-label={`上传第 ${shot.order} 镜参考图`}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.target.value = "";
+                        if (file) void uploadReference(shot.shot_id, file);
+                      }}
+                    />
+                    {busy === `ref:${shot.shot_id}`
+                      ? "上传中…"
+                      : shot.ext?.reference?.first_frame
+                        ? "已绑定参考图"
+                        : "上传参考图"}
+                  </label>
                 </td>
                 <td className="border-b border-border py-2 pr-2">
                   <input

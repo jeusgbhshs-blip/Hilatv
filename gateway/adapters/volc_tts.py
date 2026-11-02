@@ -357,7 +357,17 @@ class VolcTtsV3Adapter:
         if self.store is None:
             raise AdapterError("object store is not configured")
         key = self._key().strip()
-        speaker = _v3_voice(call, self._speaker() or self.default_voice)
+        requested = _v3_voice(call, self._speaker() or self.default_voice)
+        try:
+            return self._synthesize(call, key=key, speaker=requested)
+        except AdapterError as exc:
+            # 品牌音色可能是 1.0 音色，与 seed-tts-2.0 资源不匹配；退回配置的 2.0 音色。
+            fallback = self._speaker() or self.default_voice
+            if "mismatched" not in str(exc) or requested == fallback:
+                raise
+            return self._synthesize(call, key=key, speaker=fallback)
+
+    def _synthesize(self, call: Invocation, *, key: str, speaker: str) -> AdapterResult:
         if not key or not speaker:
             raise AdapterError("volc tts v3 api key or speaker is empty")
         text = call.prompt.strip()
