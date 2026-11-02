@@ -225,6 +225,9 @@ def _duration(call: Invocation) -> int:
         value = int(round(float(raw)))
     except (TypeError, ValueError):
         value = 5
+    if call.model.startswith("doubao-seedance-2"):
+        # Seedance 2.x 只接受 5 秒或 10 秒（实测请求 2 秒被拒为 invalid duration）。
+        return 5 if value <= 7 else 10
     return min(10, max(2, value))
 
 
