@@ -740,3 +740,11 @@
   `internal`（`internal_only=true`），下载接口允许内部模式并返回 `X-HiLatv-Internal-Only: 1`。
 - 默认关闭；`.env.example` 已注明「只适合企业内部自用，对外发布必须关闭」。
 - 测试：内部模式 3 项通过（放行下载、非内部模式仍 409、判定本身不变）。
+
+## 2026-11-03 内部下载母版（内部使用模式）
+
+- 新增 `GET /v1/projects/{id}/master/download`：仅内部使用模式（HILATV_INTERNAL_DELIVERY=1）
+  开放，项目成员可下载当前母版，返回 200、`X-HiLatv-Internal-Only: 1`、`X-HiLatv-Media-Status: internal`。
+- 成片页新增「内部下载母版」按钮（开关关闭时接口 403，页面提示）。
+- 实测真实母版：2,527,295 字节、720×1280、H.264 6 秒、AAC 音轨，与应用预览一致。
+- 对外正式交付仍需 N16 真实内容审核；内部模式只跳过审核项，极限词/授权/AI 标识仍强制。

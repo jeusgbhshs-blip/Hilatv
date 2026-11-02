@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from app.delivery_gate import media_response, public_readiness, public_rights
 from app.identity import owned_project, require_frame_identity, require_identity
+from workers.compliance.moderation import internal_delivery
 from workers.identity.session import Identity
 from workers.nodes.n17_deliver.node import run
 from workers.nodes.n17_deliver.qa import QAError
@@ -132,6 +133,34 @@ def create_delivery(
         ],
         "rights": public_rights(record.get("rights")),
     }
+
+
+@router.get("/v1/projects/{project_id}/master/download")
+def download_master_internal(
+    project_id: str,
+    identity: Identity = Depends(require_identity),
+) -> FileResponse:
+    """内部使用模式的母版下载；正式对外交付仍走 /deliveries。
+
+    只对项目成员开放，且必须显式开启 HILATV_INTERNAL_DELIVERY=1。
+    """
+
+    if not internal_delivery():
+        raise HTTPException(status_code=403, detail="内部下载未开启")
+    snapshot = _snapshot_or_404(project_id, identity)
+    saved = _checkpoint(project_id)
+    path = _master_in_project(project_id, snapshot, saved)
+    return FileResponse(
+        path,
+        media_type="video/mp4",
+        filename=f"{project_id}-master.mp4",
+        content_disposition_type="attachment",
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-HiLatv-Internal-Only": "1",
+            "X-HiLatv-Media-Status": "internal",
+        },
+    )
 
 
 @router.get("/v1/projects/{project_id}/versions")

@@ -64,6 +64,7 @@ export function FilmStage({ projectId }: { projectId: string }) {
   const [exportAspect, setExportAspect] = useState<string | null>(null);
   const [decodedMedia, setDecodedMedia] = useState<{ src: string; value: MediaMetadata } | null>(null);
   const [downloading, setDownloading] = useState(false);
+  const [internalDownloading, setInternalDownloading] = useState(false);
   const downloadingRef = useRef(false);
   const mountedRef = useRef(false);
   const versionsEpoch = useRef(0);
@@ -217,6 +218,32 @@ export function FilmStage({ projectId }: { projectId: string }) {
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [mediaPath, mediaHash, playerToken]);
+
+  async function downloadInternalMaster() {
+    if (internalDownloading) return;
+    setInternalDownloading(true);
+    setDownloadError(null);
+    try {
+      const response = await apiFetch(`/v1/projects/${encodeURIComponent(projectId)}/master/download`);
+      if (!response.ok) throw new Error(await errorMessage(response));
+      const blob = await response.blob();
+      if (!blob.size) throw new Error("下载文件无效");
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = `${projectId}-master.mp4`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 4000);
+    } catch (caught) {
+      if (mountedRef.current) {
+        setDownloadError(caught instanceof Error ? caught.message : "内部下载未开启");
+      }
+    } finally {
+      if (mountedRef.current) setInternalDownloading(false);
+    }
+  }
 
   async function downloadFilm() {
     if (!downloadPath || downloadingRef.current) return;
@@ -471,6 +498,15 @@ export function FilmStage({ projectId }: { projectId: string }) {
             <Button type="button" size="lg" disabled={!downloadPath || downloading} loading={downloading} onClick={() => void downloadFilm()}>
               <Download aria-hidden="true" className="size-4" />
               {formalReady ? "下载成片" : "保存预览"}
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="lg"
+              loading={internalDownloading}
+              onClick={() => void downloadInternalMaster()}
+            >
+              内部下载母版
             </Button>
             <Button asChild variant="secondary" size="lg">
               <Link href={`/projects/${projectId}/expert`}>专家模式</Link>
