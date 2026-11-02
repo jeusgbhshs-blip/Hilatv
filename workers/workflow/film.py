@@ -8,6 +8,7 @@ everything else is in order. A ``start_from`` rerun does not schedule upstream n
 from __future__ import annotations
 
 import asyncio
+import os
 from datetime import timedelta
 from typing import Any
 
@@ -52,9 +53,9 @@ def needs_human_review(state: dict[str, Any], request: dict[str, Any]) -> bool:
 
     if request.get("human_release") is True:
         return False
-    from workers.compliance.moderation import internal_skip_visual_review
-
-    if internal_skip_visual_review():
+    # 内部自用：读环境变量即可，不能在 workflow 里 import workers.compliance，
+    # 会触发 schema 模块的 Path.resolve 沙箱限制，导致 workflow activation 失败。
+    if os.getenv("HILATV_INTERNAL_SKIP_VISUAL_REVIEW", "0").strip() == "1":
         return False
     notes = state.get("shot_quality") or []
     if not isinstance(notes, list):
