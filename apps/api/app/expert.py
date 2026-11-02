@@ -26,6 +26,14 @@ from workers.expert.desk import (
 from workers.expert.gates import GateError
 from workers.expert.node_generate import generate_node
 from workers.expert.rerun import rerun_span, save_timeline, select_candidate
+from workers.expert.script_edit import (
+    add_shot,
+    delete_shot,
+    load_script,
+    patch_shot,
+    reorder_shots,
+    update_meta,
+)
 from workers.expert.script_flow import build_storyboard
 from workers.expert.shot_action import regenerate_shot, set_reference
 from workers.expert.timeline_edit import save_structured_timeline
@@ -521,3 +529,92 @@ def project_canvas_compose(
     _owned(project_id, identity)
     payload = body.model_dump() if body is not None else {}
     return _call(lambda: compose_from_canvas(project_id, payload))
+
+
+@router.get("/v1/projects/{project_id}/script")
+def project_script(
+    project_id: str,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    return _call(lambda: load_script(project_id))
+
+
+@router.put("/v1/projects/{project_id}/script/meta")
+def project_script_meta(
+    project_id: str,
+    body: dict,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    return _call(lambda: update_meta(project_id, body))
+
+
+@router.patch("/v1/projects/{project_id}/script/shots/{shot_id}")
+def project_script_shot(
+    project_id: str,
+    shot_id: str,
+    body: dict,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    return _call(lambda: patch_shot(project_id, shot_id, body))
+
+
+@router.post("/v1/projects/{project_id}/script/shots")
+def project_script_add_shot(
+    project_id: str,
+    body: dict | None = None,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    return _call(lambda: add_shot(project_id, body or {}))
+
+
+@router.delete("/v1/projects/{project_id}/script/shots/{shot_id}")
+def project_script_delete_shot(
+    project_id: str,
+    shot_id: str,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    return _call(lambda: delete_shot(project_id, shot_id))
+
+
+@router.post("/v1/projects/{project_id}/script/reorder")
+def project_script_reorder(
+    project_id: str,
+    body: dict,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    shot_ids = body.get("shot_ids")
+    if not isinstance(shot_ids, list) or not all(isinstance(item, str) for item in shot_ids):
+        raise HTTPException(status_code=422, detail="排序要传镜头编号列表")
+    return _call(lambda: reorder_shots(project_id, shot_ids))
+
+
+@router.post("/v1/projects/{project_id}/script/shots/{shot_id}/generate")
+def project_script_generate_shot(
+    project_id: str,
+    shot_id: str,
+    body: dict | None = None,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    payload = body or {}
+    narration = payload.get("narration")
+    prompt_suffix = str(payload.get("prompt_suffix") or "")
+    if not isinstance(narration, str):
+        narration = ""
+    return _call(
+        lambda: regenerate_shot(
+            project_id,
+            shot_id,
+            {
+                "narration": narration,
+                "prompt_suffix": prompt_suffix,
+                "operation_id": payload.get("operation_id"),
+            },
+        )
+    )

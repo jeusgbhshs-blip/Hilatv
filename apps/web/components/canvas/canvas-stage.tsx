@@ -783,6 +783,9 @@ export function CanvasStage({ projectId }: { projectId: string }) {
             重生次数 <span data-testid="regen-used">{doc.budget.used}</span> / {doc.budget.limit}
           </p>
           <SharePanel projectId={projectId} />
+          <Link href={`/projects/${encodeURIComponent(projectId)}/script`} className="hilatv-canvas-back">
+            分镜表
+          </Link>
           <Link href={`/projects/${projectId}`} className="hilatv-canvas-back">
             返回项目
           </Link>

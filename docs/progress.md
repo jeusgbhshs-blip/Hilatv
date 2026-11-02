@@ -678,3 +678,18 @@
 - 费用：当晚真实调用合计约 ¥21.3（含 3 条 5 秒视频 ¥18.3、图片 ¥2.8、TTS/LLM 约 ¥0.2），
   在 song 授权的 ¥30 内，剩余约 ¥8.7。明天可用剩余预算跑一条 5 秒单镜真实成片（约 ¥7），
   或再加预算跑完整 40 秒脚本版本（视频约 ¥49）。
+
+## 2026-11-03 分镜表 P0（开发分支，未合并）
+
+- 一小时交付 P0：分镜表可编辑 + Seedance 提示词编译 + 单镜重新生成 + 增删排序。
+- 后端：`workers/expert/script_edit.py`（n05_storyboard 权威读写、扩展字段 sidecar `script_ext.json`、
+  checkpoint 副本同步）、`workers/expert/seedance_prompt.py`（结构化字段→Seedance 提示词与参数，
+  5/10 秒归一、零文字约束、连续性锚点）、`apps/api/app/expert.py` 新增 `/script`、`/script/meta`、
+  `/script/shots` 增删改、`/script/reorder`、`/script/shots/{id}/generate`。
+- 前端：`/projects/{id}/script` 分镜表（对齐 LibTV 的列：镜号/时长/目的/画面/角色1/角色1描述/
+  角色2/角色2描述/参考图/景别/角色动作/情绪/机位角度/运镜/灯光/色彩光影/视觉效果/音效/BGM/台词/转场），
+  逐行保存、提示词预览、单镜重新生成、上下移动、增删；画布顶栏新增「分镜表」入口。
+- 验证：`workers/expert/tests/test_script_edit.py` 3 项通过；真实浏览器打开分镜表、22 列渲染、
+  保存/添加/提示词面板正常，无控制台错误；截图 `hilatv_shots/storyboard_editor.png`。
+- 下一步：角色卡/参考图槽位接真实图片（三视图/场景锚点）、剧本层（分场/人物/台词）、
+  批量生成与断点续跑。
