@@ -330,7 +330,8 @@ def _assign_sizes(clips: list[Clip]) -> list[str]:
     if count == 1:
         sizes = ["medium"]
     else:
-        sizes = [_SIZE_LADDER[(index * len(_SIZE_LADDER)) // count] for index in range(count)]
+        ladder_last = len(_SIZE_LADDER) - 1
+        sizes = [_SIZE_LADDER[round(index * ladder_last / (count - 1))] for index in range(count)]
     # 角色约束：结尾行动号召用中景；开场钩子（>=3 镜时）用远景；产品首次出现用近景。
     for index, clip in enumerate(clips):
         if clip.role == "cta":
