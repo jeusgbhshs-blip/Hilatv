@@ -763,3 +763,11 @@
 - `review_shot` 在 `HILATV_INTERNAL_SKIP_VISUAL_REVIEW=1` 且无硬伤时，把报告标记为
   视觉已评审/达标，避免导演决策循环「换模型/重新生成」空转烧钱。
 - 前一轮空转消耗 ¥37.86（3 条真实视频），已停；修复后用单项目预算上限 40 重跑验证。
+
+## 2026-11-03 自动挡打通（关键修复）
+
+- 真因：`needs_human_review` 在 Temporal workflow 内 import workers.compliance / 调 os.getenv
+  均触发沙箱 RestrictedWorkflowAccessError，workflow activation 反复失败，表现为「正在检查镜头」卡死。
+- 修复：内部模式标记由 make_request 写入 request，且加入 workflow `_PUBLIC` 白名单；
+  workflow 只读 request 标记，不再碰受限 API。
+- 验证：5 秒真实项目跑到成片（人工放行一次），内部下载 200，720×1280 H.264 5.0s + AAC 277,449 字节。

@@ -38,6 +38,7 @@ _PUBLIC = (
     "concept_selection",
     "generation_settings",
     "human_release",
+    "internal_skip_review",
     "skip_storyboard",
 )
 
