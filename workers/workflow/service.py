@@ -96,6 +96,7 @@ def make_request(
         "concept_selection": concept_selection,
         "generation_settings": settings,
         "human_release": human_release is True,
+        "internal_skip_review": os.getenv("HILATV_INTERNAL_SKIP_VISUAL_REVIEW", "0").strip() == "1",
         # Omitted means 直接出片. The product page sends false when it wants the cards.
         "skip_storyboard": True if skip_storyboard is None else bool(skip_storyboard),
         "storyboard_wait_s": _storyboard_wait(storyboard_wait_s),
