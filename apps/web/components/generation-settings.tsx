@@ -84,7 +84,7 @@ export function GenerationSettingsPicker({ value, disabled = false, onChange }: 
   }
 
   function durationOption(seconds: number | null) {
-    return <label key={seconds || "auto"} className={cn("tabular flex min-h-11 cursor-pointer items-center justify-center rounded-sm px-2 py-2 text-small has-focus-visible:ring-2 has-focus-visible:ring-blue", settings.duration_s === seconds ? "bg-surface font-medium text-text-1 shadow-pop" : "text-text-2 hover:bg-surface")}>
+    return <label key={seconds || "auto"} className={cn("tabular flex min-h-11 cursor-pointer items-center justify-center rounded-sm px-2 py-2 text-small has-focus-visible:ring-2 has-focus-visible:ring-blue", settings.duration_s === seconds ? "bg-surface font-medium text-text-1" : "text-text-2 hover:text-text-1")}>
       <input type="radio" name={`${id}-duration`} value={seconds === null ? "auto" : String(seconds)} aria-label={seconds === null ? "自动" : `${seconds} 秒`} checked={settings.duration_s === seconds} disabled={disabled} className="sr-only" onChange={() => { onChange({ ...settings, duration_s: seconds }); setError(null); }} />
       {seconds === null ? "自动" : `${seconds} 秒`}
     </label>;
