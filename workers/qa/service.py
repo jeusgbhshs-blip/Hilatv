@@ -95,6 +95,8 @@ def review_shot(
                 "visual_reviewed": True,
                 "total": max(report.total, PASS_TOTAL),
                 "degraded": False,
+                "evaluator": "internal-approved",
+                "notes": "internal mode: visual review skipped",
             }
         )
     return report

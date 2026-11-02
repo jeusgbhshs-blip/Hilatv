@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from workers.compliance.moderation import internal_skip_visual_review
 from workers.logging import log_event
 from workers.nodes.n05_storyboard.presets import ShotPreset, load_presets
 from workers.nodes.n08_keyframe.persist import persist_candidates
@@ -47,6 +48,8 @@ def run(
     payload = N8Input.model_validate(request.payload)
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
+    if internal_skip_visual_review():
+        max_attempts = 1
     targets = _targets(payload.script, request.shot_id)
     gateway = gateway or _default_gateway()
     done: dict[str, list[Candidate]] = {}
@@ -173,7 +176,10 @@ def _shot(
     frames = ["first"]
     if needs_end_frame(shot):
         frames.append("last")
-    seeds = variant_seeds(shot.shot_id, "keyframe", payload.keyframe_candidates)
+    count = payload.keyframe_candidates
+    if internal_skip_visual_review():
+        count = min(count, 1)
+    seeds = variant_seeds(shot.shot_id, "keyframe", count)
     built: list[Candidate] = []
     for frame in frames:
         camera = _camera_line(preset, frame)

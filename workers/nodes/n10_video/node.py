@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from workers.compliance.moderation import internal_skip_visual_review
 from workers.logging import log_event
 from workers.media.trim import best_generation_s, margin_s, plan_trim, probe_duration_s, trim_mp4
 from workers.nodes.n05_storyboard.presets import ShotPreset, load_presets
@@ -51,6 +52,8 @@ def run(
     payload = N10Input.model_validate(request.payload)
     if max_attempts < 1:
         raise ValueError("max_attempts must be >= 1")
+    if internal_skip_visual_review():
+        max_attempts = 1
     targets = _targets(payload.script, request.shot_id)
     gateway = gateway or _default_gateway()
     done: dict[str, list[Candidate]] = {}
@@ -195,7 +198,10 @@ def _shot(
     )
     generation = best_generation_s(shot.duration_s, margin=margin_s())
     ratio = _ratio(payload)
-    seeds = variant_seeds(shot.shot_id, "video", payload.video_candidates)
+    count = payload.video_candidates
+    if internal_skip_visual_review():
+        count = min(count, 1)
+    seeds = variant_seeds(shot.shot_id, "video", count)
     built: list[Candidate] = []
     for seed in seeds:
         deadline.check()
@@ -224,6 +230,12 @@ def _shot(
         candidate_id = candidate_uuid(
             request.project_id, shot.shot_id, CANDIDATE_NODE, "video", seed
         )
+        # 供应商（Seedance 2.x）只接受 5/10 秒，会自行归一；候选参数要记真实时长，
+        # 否则质检会按 2–3 秒判定不合法而反复重生成。
+        reported = output.get("duration_s") if isinstance(output, dict) else None
+        duration_record = generation
+        if isinstance(reported, (int, float)) and int(round(reported)) in (5, 10):
+            duration_record = int(round(reported))
         uri, window = _trim_clip(
             gateway,
             output,
@@ -249,7 +261,7 @@ def _shot(
                     "seed": seed,
                     "prompt": prompt,
                     "negative_prompt": negative,
-                    "duration": generation,
+                    "duration": duration_record,
                     "generation_duration_s": generation,
                     "motion_strength": motion,
                     "shot_type": family,

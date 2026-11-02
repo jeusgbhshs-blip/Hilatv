@@ -49,6 +49,16 @@ def decide(
 
     if attempt < 1:
         raise ValueError("attempt starts at 1")
+    from workers.compliance.moderation import internal_skip_visual_review
+
+    if internal_skip_visual_review() and not report.hard_fail:
+        return DirectorDecision(
+            action=DecisionAction.pass_,
+            target=DecisionTarget(node=node, shot_id=shot_id),
+            reason="内部模式：跳过 AI 视觉评审",
+            changes={},
+            max_attempts_left=max(0, MAX_REVIEWS - attempt),
+        )
     policy = _policy(
         report,
         node=node,

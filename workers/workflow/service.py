@@ -47,7 +47,7 @@ def candidate_count(env_name: str) -> int:
         value = int(raw)
     except ValueError:
         value = 3
-    return min(8, max(3, value))
+    return min(8, max(1, value))
 
 
 def make_request(
