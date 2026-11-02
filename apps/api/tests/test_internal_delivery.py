@@ -89,3 +89,13 @@ def test_internal_mode_only_skips_content_review(monkeypatch) -> None:
     assert internal_delivery() is True
     assert blocks_delivery("unreviewed") is True
     assert classify({"mock": False, "reviewed": False, "unreviewed": True}) == "unreviewed"
+
+
+def test_internal_skip_visual_review_unholds_pipeline(monkeypatch) -> None:
+    from workers.workflow.film import needs_human_review
+
+    notes = {"shot_quality": [{"shot_id": "S01", "needs_review": True}]}
+    monkeypatch.setenv("HILATV_INTERNAL_SKIP_VISUAL_REVIEW", "0")
+    assert needs_human_review(notes, {}) is True
+    monkeypatch.setenv("HILATV_INTERNAL_SKIP_VISUAL_REVIEW", "1")
+    assert needs_human_review(notes, {}) is False

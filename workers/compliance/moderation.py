@@ -14,6 +14,12 @@ from typing import Any
 FRAME_AUDIO_STATUS = "画面/声音未审"
 
 
+def internal_skip_visual_review() -> bool:
+    """内部使用模式：不强制 AI 视觉评审，真实候选不因「未评审」被降级。"""
+
+    return os.getenv("HILATV_INTERNAL_SKIP_VISUAL_REVIEW", "0").strip() == "1"
+
+
 def internal_delivery() -> bool:
     """内部使用模式：跳过内容安全门（仅审核项），AI 标识/极限词/授权仍生效。"""
 

@@ -52,6 +52,10 @@ def needs_human_review(state: dict[str, Any], request: dict[str, Any]) -> bool:
 
     if request.get("human_release") is True:
         return False
+    from workers.compliance.moderation import internal_skip_visual_review
+
+    if internal_skip_visual_review():
+        return False
     notes = state.get("shot_quality") or []
     if not isinstance(notes, list):
         return False

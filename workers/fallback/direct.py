@@ -125,7 +125,9 @@ def _one(
     language: str,
 ) -> tuple[ShotClip, ShotDelivery]:
     opening = _pick(keyframes, shot.shot_id, "first")
-    key_path = _materialize(opening, folder / f"{shot.shot_id}-key.png", kind="image")
+    key_path = _materialize(
+        opening, folder / f"{shot.shot_id}-key.png", kind="image", gateway=gateway
+    )
     if shot.generation_mode is GenerationMode.motion_graphics:
         return _from_level(
             4,
@@ -141,11 +143,21 @@ def _one(
             previous=opening,
         )
     video = _pick(videos, shot.shot_id, None)
-    video_path = _materialize(video, folder / f"{shot.shot_id}-src.mp4", kind="video")
+    video_path = _materialize(
+        video, folder / f"{shot.shot_id}-src.mp4", kind="video", gateway=gateway
+    )
     report = (
         _review(video_path, shot, project_id, gateway, node="n11_video_qa") if video_path else None
     )
-    if report is not None and is_quality_pass(report):
+    from workers.compliance.moderation import internal_skip_visual_review
+
+    internal_keep = (
+        internal_skip_visual_review()
+        and report is not None
+        and not report.hard_fail
+        and video_path is not None
+    )
+    if report is not None and (is_quality_pass(report) or internal_keep):
         return _keep(shot, video_path, report)
     if report is not None and "sensitive" in report.hard_fail:
         return _from_level(
@@ -746,11 +758,13 @@ def _cutout(kit: BrandKit | None, gateway: Any, project_id: str) -> Image.Image 
     return None
 
 
-def _materialize(candidate: Candidate | None, dest: Path, *, kind: str) -> Path | None:
+def _materialize(
+    candidate: Candidate | None, dest: Path, *, kind: str, gateway: Any = None
+) -> Path | None:
     if candidate is None:
         return None
     payload = {"uri": candidate.uri, **candidate.params}
-    return write_output(payload, dest, kind=kind)
+    return write_output(payload, dest, kind=kind, gateway=gateway)
 
 
 def _pick(rows: list[Candidate], shot_id: str, frame: str | None) -> Candidate | None:
