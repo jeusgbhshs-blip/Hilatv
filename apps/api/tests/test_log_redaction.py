@@ -174,7 +174,16 @@ for name in ('uvicorn.error', 'uvicorn.access'):
     filters = logging.getLogger(name).filters
     assert any(getattr(f, '_hilatv_session_redaction', False) for f in filters)
 """
-    env = {**os.environ, "HILATV_LIVE": "0", "HILATV_PROJECT_DIR": str(tmp_path)}
+    # The subprocess imports the API package directly; same path the API server uses.
+    existing = os.environ.get("PYTHONPATH", "")
+    env = {
+        **os.environ,
+        "HILATV_LIVE": "0",
+        "HILATV_PROJECT_DIR": str(tmp_path),
+        "PYTHONPATH": os.pathsep.join(
+            item for item in (str(root / "apps" / "api"), str(root), existing) if item
+        ),
+    }
     subprocess.run(
         [sys.executable, "-c", script],
         cwd=root,

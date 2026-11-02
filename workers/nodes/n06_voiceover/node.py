@@ -144,6 +144,9 @@ def _execute(
     if exact:
         reserved = sum(1 / FPS for shot in script.shots if not shot.voiceover.strip())
     budget = None if target is None else max(0.0, target - reserved)
+    # Explicit whole-film settings budget in frames; audio seconds are float
+    # approximations of the same frame grid, so one frame of slack is rounding.
+    slack = 1.0 / FPS if exact else DURATION_TOLERANCE
     factor = 1.0
     if budget is not None:
         factor = _maybe_speed_up(
@@ -154,7 +157,7 @@ def _execute(
             speeds=speeds,
             request=request,
             attempt=attempt,
-            tolerance=0.0 if exact else DURATION_TOLERANCE,
+            tolerance=slack,
         )
         if factor > 1:
             spoken = _speak_all(
@@ -176,7 +179,7 @@ def _execute(
                 brief_s=target if target is not None else budget,
                 request=request,
                 attempt=attempt,
-                tolerance=0.0 if exact else DURATION_TOLERANCE,
+                tolerance=slack,
             )
     fitted = fit_durations(
         [item["audio_s"] for item in spoken],
