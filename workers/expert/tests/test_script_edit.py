@@ -124,3 +124,18 @@ def test_bind_reference_and_script_text(project: str) -> None:
     assert "第一场" in updated["meta"]["script_text"]
     with pytest.raises(GateError):
         patch_shot(project, "S01", {"revision": 999, "visual": "x"})
+
+
+def test_apply_storyboard_template(project: str) -> None:
+    from workers.expert.storyboard_templates import apply_template, list_templates
+
+    templates = list_templates()
+    assert templates and len(templates) >= 4
+    payload = apply_template(project, "hook_problem_turn_result")
+    assert len(payload["shots"]) == 4
+    assert [row["purpose"] for row in payload["shots"]] == ["钩子", "问题", "转变", "结果"]
+    assert payload["shots"][0]["duration_s"] == 4.0
+    assert "第一秒" in payload["shots"][0]["visual"]
+
+    with pytest.raises(GateError):
+        apply_template(project, "not-a-template")

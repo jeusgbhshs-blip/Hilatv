@@ -53,6 +53,14 @@ video_types:
 default_video_type: hero_video
 keywords:
   - {text: 带货, weight: 5}
+  - {text: 绿植, weight: 4}
+  - {text: 盆栽, weight: 4}
+  - {text: 植物, weight: 3}
+  - {text: 虎皮兰, weight: 4}
+  - {text: 花卉, weight: 3}
+  - {text: 家居, weight: 4}
+  - {text: 摆件, weight: 3}
+  - {text: 好物, weight: 3}
   - {text: 主图, weight: 5}
   - {text: 电商, weight: 5}
   - {text: SKU, weight: 4}

@@ -34,6 +34,13 @@ type ShotRow = {
   prompt?: { prompt: string; negative_prompt: string; parts: { kind: string; text: string }[]; params: Record<string, unknown> };
 };
 
+type StoryboardTemplate = {
+  id: string;
+  title: string;
+  description: string;
+  shot_count: number;
+};
+
 type ScriptPayload = {
   revision: number;
   meta: Record<string, string>;
@@ -55,6 +62,9 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
   const [scriptText, setScriptText] = useState("");
   const [scriptOpen, setScriptOpen] = useState(false);
   const [batchBusy, setBatchBusy] = useState(false);
+  const [templates, setTemplates] = useState<StoryboardTemplate[]>([]);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
+  const [applying, setApplying] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError("");
@@ -72,6 +82,37 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    void apiFetch("/v1/storyboard-templates")
+      .then(async (response) => (response.ok ? ((await response.json()) as { templates?: StoryboardTemplate[] }) : null))
+      .then((payload) => {
+        if (payload?.templates) setTemplates(payload.templates);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  async function applyTemplate(templateId: string) {
+    setApplying(templateId);
+    try {
+      const response = await apiFetch(
+        `/v1/projects/${encodeURIComponent(projectId)}/script/apply-template`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ template_id: templateId }),
+        },
+      );
+      if (!response.ok) throw new Error(await errorMessage(response));
+      await load();
+      setTemplatesOpen(false);
+      setNotice("已套用分镜模板");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "套用模板失败");
+    } finally {
+      setApplying(null);
+    }
+  }
 
   const meta = script?.meta ?? {};
   const shots = useMemo(() => Object.values(drafts).sort((a, b) => a.order - b.order), [drafts]);
@@ -358,6 +399,13 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
           <button
             type="button"
             className="rounded-full border border-border-strong px-3 py-1 text-caption text-text-1 hover:bg-hover"
+            onClick={() => setTemplatesOpen((open) => !open)}
+          >
+            模板
+          </button>
+          <button
+            type="button"
+            className="rounded-full border border-border-strong px-3 py-1 text-caption text-text-1 hover:bg-hover"
             onClick={() => setScriptOpen((open) => !open)}
           >
             剧本
@@ -427,6 +475,30 @@ export function StoryboardEditor({ projectId }: { projectId: string }) {
           </select>
         </label>
       </div>
+
+      {templatesOpen ? (
+        <div className="mt-3 grid gap-2 rounded-lg border border-border bg-surface p-3 md:grid-cols-2">
+          {templates.map((template) => (
+            <div key={template.id} className="rounded-md border border-border p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-small font-medium text-text-1">{template.title}</h3>
+                  <p className="mt-1 text-caption text-text-3">{template.description}</p>
+                  <p className="mt-1 text-caption text-text-3">{template.shot_count} 个镜头</p>
+                </div>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-full border border-blue-strong px-3 py-1 text-caption text-text-1 hover:bg-blue-hover"
+                  onClick={() => void applyTemplate(template.id)}
+                  disabled={applying !== null}
+                >
+                  {applying === template.id ? "套用中…" : "套用"}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       {scriptOpen ? (
         <div className="mt-3 grid gap-2 rounded-lg border border-border bg-surface p-3">

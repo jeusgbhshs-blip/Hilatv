@@ -36,6 +36,7 @@ from workers.expert.script_edit import (
     update_meta,
 )
 from workers.expert.script_flow import build_storyboard
+from workers.expert.storyboard_templates import apply_template, list_templates
 from workers.expert.shot_action import regenerate_shot, set_reference
 from workers.expert.timeline_edit import save_structured_timeline
 from workers.expert.uploads import resolve_upload
@@ -691,3 +692,22 @@ def project_script_generate_batch(
             entry["error"] = str(exc)[:200]
         results.append(entry)
     return {"project_id": project_id, "results": results}
+
+
+@router.get("/v1/storyboard-templates")
+def storyboard_templates(identity: Identity = Depends(require_identity)) -> dict:
+    del identity
+    return {"templates": list_templates()}
+
+
+@router.post("/v1/projects/{project_id}/script/apply-template")
+def project_script_apply_template(
+    project_id: str,
+    body: dict,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    _owned(project_id, identity)
+    template_id = body.get("template_id")
+    if not isinstance(template_id, str) or not template_id:
+        raise HTTPException(status_code=422, detail="缺少模板标识")
+    return _call(lambda: apply_template(project_id, template_id))
